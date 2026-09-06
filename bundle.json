@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "vitor.perfo",
+  "version": "0.1.2",
+  "target": "x86_64-unknown-linux-gnu",
+  "omarchyContract": 1,
+  "sourceCommit": "361429faad5dd37b431b5227fe8ac5a53fdabafa",
+  "buildRun": "https://github.com/VitorHolandaI/perfo-src/actions/runs/34061981328",
+  "files": [
+    {
+      "path": "BarWidget.qml",
+      "sha256": "11e6fa386fd169e6c6222ab309acae6a2804ac15ac775988ee2083940b8e02d4",
+      "size": 3484,
+      "mode": "0644"
+    },
+    {
+      "path": "Panel.qml",
+      "sha256": "115956b4a66e8c83286ba1fa1eb3bdc79735b2f74ff89f9d25052a256f2441e0",
+      "size": 29482,
+      "mode": "0644"
+    },
+    {
+      "path": "ProcessGrid.qml",
+      "sha256": "b601245455e64f282e2c133b66e47cde298dcdf581986d434bdce5dd27976d5d",
+      "size": 1471,
+      "mode": "0644"
+    },
+    {
+      "path": "GpuPage.qml",
+      "sha256": "8fb183ebab21841f98ea14cf5db55b246a41772997dd3f075845fe9c15e4ea5b",
+      "size": 7089,
+      "mode": "0644"
+    },
+    {
+      "path": "PlainText.qml",
+      "sha256": "a8bfa2ea5e13cbd50bf7e9c70995bea06ceeaca9c9d61e63b243ce18a830e354",
+      "size": 54,
+      "mode": "0644"
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "b07533dfade48785ac7ee83aeb3ef36ec2128a7ddc36dfa6b394e868ccae93ee",
+      "size": 475,
+      "mode": "0644"
+    },
+    {
+      "path": "preview.png",
+      "sha256": "4bc1bd90a6afa883398b9130f6417815b8c86de6d0b54826e56c12d08463e7f4",
+      "size": 201363,
+      "mode": "0644"
+    },
+    {
+      "path": "README.md",
+      "sha256": "6c9041e4132c2e9d19348674e2c11d6c82fe93ccc003eb464adc0f0f5e12484f",
+      "size": 6436,
+      "mode": "0644"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "b5c3eec6b468146b4f725cf77d597ea5379d594f06a0f3dc8dd99dfa36b3cb16",
+      "size": 1070,
+      "mode": "0644"
+    },
+    {
+      "path": "bin/perfo",
+      "sha256": "c9b2e2c4c382e0a6977aa72de69556541a56093476fb56d6cd3320af83fd9906",
+      "size": 1582536,
+      "mode": "0755"
+    }
+  ]
+}
