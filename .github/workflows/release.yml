@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '*.qml'
+      - 'manifest.json'
+      - '.github/workflows/*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  actions: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.head_commit.message, 'release:')
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+
+      - name: Validate version consistency
+        id: version
+        run: |
+          set -euo pipefail
+          cargo_version=$(cargo metadata --format-version 1 --no-deps --locked | jq -r '.packages[0].version')
+          manifest_version=$(jq -r '.version' manifest.json)
+          test "$cargo_version" = "$manifest_version"
+
+          # Fail before the build rather than after `git tag`. The stamp step
+          # commits bin/perfo and bundle.json before tagging, so a collision
+          # discovered there aborts between the commit and the atomic push and
+          # leaves main carrying digests that no longer match its own files.
+          if git rev-parse -q --verify "refs/tags/v${cargo_version}" >/dev/null; then
+            echo "::error::Tag v${cargo_version} already exists. Bump the version in Cargo.toml and manifest.json before releasing."
+            exit 1
+          fi
+
+          echo "version=${cargo_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Rust gates
+        run: |
+          cargo fmt --check
+          cargo test --all-features --locked
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Stamp plugin artifacts
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          cp target/release/perfo bin/perfo
+          chmod 755 bin/perfo
+
+          SOURCE_COMMIT="$(git rev-parse HEAD)"
+          BUILD_RUN="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          VERSION="${{ steps.version.outputs.version }}"
+
+          python3 -c "
+          import hashlib, json, os, stat
+          version = '$VERSION'
+          source_commit = '$SOURCE_COMMIT'
+          build_run = '$BUILD_RUN'
+
+          tracked = [
+              'BarWidget.qml', 'Panel.qml', 'ProcessGrid.qml', 'GpuPage.qml',
+              'PlainText.qml',
+              'manifest.json', 'preview.png', 'README.md', 'LICENSE',
+          ]
+          files = []
+          for path in tracked:
+              if not os.path.exists(path):
+                  continue
+              st = os.lstat(path)
+              digest = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+              files.append({
+                  'path': path,
+                  'sha256': digest,
+                  'size': st.st_size,
+                  'mode': '{:04o}'.format(stat.S_IMODE(st.st_mode)),
+              })
+          st = os.lstat('bin/perfo')
+          digest = hashlib.sha256(open('bin/perfo', 'rb').read()).hexdigest()
+          files.append({
+              'path': 'bin/perfo',
+              'sha256': digest,
+              'size': st.st_size,
+              'mode': '{:04o}'.format(stat.S_IMODE(st.st_mode)),
+          })
+
+          bundle = {
+              'schemaVersion': 1,
+              'pluginId': 'vitor.perfo',
+              'version': version,
+              'target': 'x86_64-unknown-linux-gnu',
+              'omarchyContract': 1,
+              'sourceCommit': source_commit,
+              'buildRun': build_run,
+              'files': files,
+          }
+          json.dump(bundle, open('bundle.json', 'w'), indent=2)
+          print(f'Bundle: {len(files)} files, version {version}, commit {source_commit[:12]}')
+          "
+
+      - name: Validate plugin structure
+        run: |
+          set -euo pipefail
+          test -f bin/perfo
+          test -x bin/perfo
+          test -f bundle.json
+          test -f manifest.json
+          file bin/perfo | grep -qE 'ELF 64-bit|x86-64'
+          bin/perfo --version 2>&1 | head -1
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: bin/perfo
+
+      - name: Commit, tag, push, release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add bin/perfo bundle.json
+          git commit -m "release: v${VERSION}"
+          git tag "v${VERSION}"
+          git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
+
+          tar --create --gzip --file "perfo-linux-x86_64.tar.gz" --directory=bin perfo
+          sha256sum "perfo-linux-x86_64.tar.gz" > "perfo-linux-x86_64.sha256"
+
+          gh release create "v${VERSION}" \
+            --title "Perfo ${VERSION}" \
+            --notes-file - <<EON
+          Perfo ${VERSION}
+
+          ## Assets
+          - \`perfo-linux-x86_64.tar.gz\` — standalone binary for terminal use
+          - \`bin/perfo\` — plugin-embedded binary (committed to repo)
+
+          ## Plugin
+          Install with: \`omarchy plugin add https://github.com/VitorHolandaI/perfo.git\`
+          EON
+
+          gh release upload "v${VERSION}" \
+            "perfo-linux-x86_64.tar.gz" \
+            "perfo-linux-x86_64.sha256" \
+            --clobber
+
+      - name: Dispatch verify-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: gh workflow run verify-release.yml --ref "v${VERSION}"

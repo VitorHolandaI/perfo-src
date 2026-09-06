@@ -1,0 +1,83 @@
+name: quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUSTQUAL_BASELINE: .github/rustqual-baseline.json
+  # Ratatui 0.30 removes the vulnerable lru 0.12, but introduces a tracked
+  # thiserror major-version split in the dependency graph.
+  RUSTDOCTOR_THRESHOLD: 69
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - name: Instala rustqual + rust-doctor
+        run: |
+          cargo install rustqual --version 1.8.2 --locked
+          cargo install rust-doctor --version 0.6.0 --locked
+      - name: rustqual — gate de regressao vs baseline (findings + score)
+        run: |
+          rustqual . --json --no-fail > current.json
+          cur_total=$(jq -r '.summary.total' current.json)
+          cur_score=$(jq -r '.summary.quality_score' current.json)
+          base_total=$(jq -r '.total' "$RUSTQUAL_BASELINE")
+          base_score=$(jq -r '.quality_score' "$RUSTQUAL_BASELINE")
+          echo "findings: $base_total -> $cur_total | score: $base_score -> $cur_score"
+          jq -e \
+            --argjson ct "$cur_total" --argjson cs "$cur_score" \
+            --argjson bt "$base_total" --argjson bs "$base_score" \
+            '($ct <= $bt) and ($cs >= $bs - 0.001)' \
+            <<< '{}' >/dev/null
+          rustqual . --format github --no-fail
+      - name: rustqual — SARIF (code scanning)
+        run: rustqual . --format sarif --no-fail > rustqual.sarif
+      - name: Store rustqual SARIF
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustqual-sarif
+          path: rustqual.sarif
+          if-no-files-found: error
+      - name: rust-doctor — gate de score
+        run: |
+          score=$(rust-doctor --json . | jq -r '.audit.score.value')
+          echo "rust-doctor score: $score/100"
+          if [ "$score" -lt "$RUSTDOCTOR_THRESHOLD" ]; then
+            echo "::error::score $score abaixo do limite $RUSTDOCTOR_THRESHOLD"
+            exit 1
+          fi
+
+  upload-sarif:
+    name: Upload quality report
+    if: github.event_name == 'push'
+    needs: analyze
+    permissions:
+      contents: read
+      security-events: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: rustqual-sarif
+      - uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: rustqual.sarif

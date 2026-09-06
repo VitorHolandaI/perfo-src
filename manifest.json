@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "vitor.perfo",
+  "name": "Perfo",
+  "version": "0.1.2",
+  "author": "Vitor",
+  "description": "CPU, memory, I/O, network, filesystem, fan, and GPU performance",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Perfo",
+    "description": "CPU, memory, I/O, network, filesystem, fan, and GPU performance",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

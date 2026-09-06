@@ -1,0 +1,96 @@
+name: Verify release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Release tag or commit to verify
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  attestations: read
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 2
+
+      - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Release commit shape
+        run: |
+          set -euo pipefail
+          test -x bin/perfo
+          test -f bundle.json
+          git log -1 --format=%s | grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+$'
+          SOURCE_COMMIT="$(python3 -c 'import json;print(json.load(open("bundle.json"))["sourceCommit"])')"
+          PARENT="$(git rev-parse HEAD^)"
+          test "$SOURCE_COMMIT" = "$PARENT" || {
+            echo "bundle.json sourceCommit $SOURCE_COMMIT != parent $PARENT" >&2
+            exit 1
+          }
+
+      - name: Rebuild binary reproducibly
+        run: cargo build --release --locked
+
+      - name: Committed binary equals rebuilt binary
+        run: |
+          set -euo pipefail
+          REBUILT="$(sha256sum target/release/perfo | cut -d' ' -f1)"
+          COMMITTED="$(sha256sum bin/perfo | cut -d' ' -f1)"
+          echo "rebuilt   $REBUILT"
+          echo "committed $COMMITTED"
+          test "$REBUILT" = "$COMMITTED" || {
+            echo "bin/perfo is not reproducible from this commit" >&2
+            exit 1
+          }
+
+      - name: bundle.json entries match the tree
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import hashlib, json, os, stat, sys
+          receipt = json.load(open('bundle.json'))
+          bad = []
+          for f in receipt['files']:
+              p = f['path']
+              if not os.path.isfile(p):
+                  bad.append(f'{p}: not a regular file'); continue
+              digest = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+              mode = '{:04o}'.format(stat.S_IMODE(os.lstat(p).st_mode))
+              if digest != f['sha256']: bad.append(f'{p}: sha256 mismatch')
+              if os.path.getsize(p) != f['size']: bad.append(f'{p}: size mismatch')
+              if mode != f['mode']: bad.append(f'{p}: mode mismatch')
+          if bad: sys.exit('\\n'.join(bad))
+          print(f'{len(receipt[\"files\"])} receipt entries match the tree')
+          "
+
+      - name: Verify provenance attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BUILD_RUN="$(python3 -c 'import json;print(json.load(open("bundle.json")).get("buildRun",""))')"
+          test -n "$BUILD_RUN" || { echo 'bundle.json has no buildRun' >&2; exit 1; }
+          echo "buildRun: $BUILD_RUN"
+          gh attestation verify bin/perfo \
+            --repo "${GITHUB_REPOSITORY}" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+            --format json > attestation.json
+          RUN_ID="${BUILD_RUN##*/}"
+          grep -q "/actions/runs/${RUN_ID}" attestation.json || {
+            echo "attestation was not produced by buildRun ${BUILD_RUN}" >&2
+            exit 1
+          }
+          echo 'provenance attestation verified'

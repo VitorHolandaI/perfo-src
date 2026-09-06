@@ -1,0 +1,30 @@
+[advisories]
+version = 2
+
+[bans]
+multiple-versions = "deny"
+skip = [
+  # syn 2.x + 3.x coexistem transitivamente (proc-macro2 / macros);
+  # divergencia rastreada pelo rust-doctor, sem fix disponivel.
+  { name = "syn", version = "2.0.119" },
+  # Ratatui 0.30 usa hashbrown 0.16 via kasuari, enquanto lru 0.18 usa 0.17.
+  { name = "hashbrown", version = "0.16.1" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[licenses]
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "Unlicense",
+  "BSL-1.0",
+]

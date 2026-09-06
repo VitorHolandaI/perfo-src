@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "quality_score": 0.21755746026887057,
+  "iosp_score": 0.954337899543379,
+  "violations": 10,
+  "total": 358,
+  "complexity_warnings": 10,
+  "magic_number_warnings": 129,
+  "nesting_depth_warnings": 3,
+  "function_length_warnings": 17,
+  "unsafe_warnings": 18,
+  "error_handling_warnings": 2,
+  "duplicate_groups": 8,
+  "dead_code_warnings": 1,
+  "dead_type_warnings": 0,
+  "fragment_groups": 4,
+  "boilerplate_warnings": 1,
+  "srp_struct_warnings": 0,
+  "srp_module_warnings": 11,
+  "wildcard_import_warnings": 0,
+  "sdp_violations": 0,
+  "coupling_warnings": 0,
+  "coupling_cycles": 0,
+  "tq_no_assertion_warnings": 0,
+  "tq_no_sut_warnings": 0,
+  "tq_untested_warnings": 4,
+  "tq_uncovered_warnings": 0,
+  "tq_untested_logic_warnings": 0,
+  "structural_srp_warnings": 0,
+  "structural_coupling_warnings": 0,
+  "total_findings": 218,
+  "violation_details": [
+    {
+      "name": "CpuMonitor::refresh",
+      "file": "src/data/cpu.rs",
+      "line": 505
+    },
+    {
+      "name": "NvmlApi::load",
+      "file": "src/data/nvidia.rs",
+      "line": 86
+    },
+    {
+      "name": "run_loop",
+      "file": "src/tui/mod.rs",
+      "line": 102
+    },
+    {
+      "name": "prepare",
+      "file": "src/tui/mod.rs",
+      "line": 205
+    },
+    {
+      "name": "build_tree",
+      "file": "src/tui/mod.rs",
+      "line": 257
+    },
+    {
+      "name": "stop_current_trace",
+      "file": "src/trace/mod.rs",
+      "line": 29
+    },
+    {
+      "name": "wait_tracee",
+      "file": "src/trace/mod.rs",
+      "line": 62
+    },
+    {
+      "name": "run_loop",
+      "file": "src/trace/mod.rs",
+      "line": 212
+    },
+    {
+      "name": "attach_preamble",
+      "file": "src/trace/mod.rs",
+      "line": 299
+    },
+    {
+      "name": "spawn",
+      "file": "src/trace/mod.rs",
+      "line": 343
+    }
+  ]
+}

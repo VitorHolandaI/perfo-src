@@ -1,0 +1,36 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@928a909c424ccbbe9d023b1739c42bdf24e079e2 # v2
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+      - name: cargo-audit (RustSec advisories)
+        run: |
+          # taiki-e/install-action instala em ~/.install-action/bin; o act
+          # runner do Gitea nao propaga o PATH do action pro run step.
+          export PATH="$HOME/.install-action/bin:$PATH"
+          cargo audit
+      - name: cargo-deny (licencas, bans, advisories)
+        run: |
+          export PATH="$HOME/.install-action/bin:$PATH"
+          cargo deny check
