@@ -455,6 +455,27 @@ Column {
       }
     }
 
+    // Prominent Timer badge
+    Rectangle {
+      height: Style.space(18)
+      width: timerBadgeText.implicitWidth + Style.space(12)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: historyPage.isLive ? "transparent" : Color.accent
+      border.color: Color.accent
+      border.width: 1
+
+      PlainText {
+        id: timerBadgeText
+        anchors.centerIn: parent
+        text: "⏱ " + historyPage.timerClockString()
+        color: historyPage.isLive ? Color.accent : "#000000"
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+    }
+
     // Timing summary / export status text
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
@@ -464,7 +485,7 @@ Column {
       font.pixelSize: Style.font.caption
       font.bold: historyPage.exportStatus.length > 0 || !historyPage.isLive
       elide: Text.ElideRight
-      width: historyPage.width - Style.space(282)
+      width: historyPage.width - Style.space(350)
     }
   }
 
@@ -512,15 +533,38 @@ Column {
             anchors.bottom: parent.top
             anchors.bottomMargin: 1
           }
+        }
+      }
+    }
 
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: {
-              historyPage.scrubIndex = modelData.rawIndex
-              historyPage.isPlaying = false
-            }
-          }
+    // Vertical needle cursor line running through the bars
+    Rectangle {
+      id: needleCursor
+      visible: historyPage.history.length > 0
+      width: 2
+      height: parent.height - 4
+      anchors.verticalCenter: parent.verticalCenter
+      color: Color.accent
+      z: 5
+      x: {
+        var w = parent.width - 6
+        var r = historyPage.rulerCursorRatio()
+        return 3 + Math.round(r * (w - 2))
+      }
+    }
+
+    // Interactive drag and click scrubbing on the entire bars area
+    MouseArea {
+      anchors.fill: parent
+      z: 10
+      hoverEnabled: true
+      preventStealing: true
+      onClicked: function(mouse) {
+        historyPage.scrubToX(mouse.x - 3, width - 6)
+      }
+      onPositionChanged: function(mouse) {
+        if (pressed) {
+          historyPage.scrubToX(mouse.x - 3, width - 6)
         }
       }
     }
@@ -533,6 +577,208 @@ Column {
       opacity: 0.5
       font.family: historyPage.fontFamily
       font.pixelSize: Style.font.caption
+    }
+  }
+
+  // Timeline Ruler and Time Axis: |------|------|------|< with timestamps below
+  Item {
+    id: timelineRuler
+    width: historyPage.width
+    height: Style.space(34)
+
+    // Ruler track with horizontal line and tick marks
+    Item {
+      id: rulerTrack
+      width: parent.width
+      height: Style.space(14)
+      anchors.top: parent.top
+
+      // Horizontal baseline
+      Rectangle {
+        width: parent.width
+        height: 1
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.35
+      }
+
+      // Major tick: Start (0%)
+      Rectangle {
+        width: 1
+        height: Style.space(10)
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.75
+      }
+
+      // Minor tick: 12.5%
+      Rectangle {
+        width: 1
+        height: Style.space(5)
+        x: Math.round(parent.width * 0.125)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.3
+      }
+
+      // Major tick: 25%
+      Rectangle {
+        width: 1
+        height: Style.space(8)
+        x: Math.round(parent.width * 0.25)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.6
+      }
+
+      // Minor tick: 37.5%
+      Rectangle {
+        width: 1
+        height: Style.space(5)
+        x: Math.round(parent.width * 0.375)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.3
+      }
+
+      // Major tick: 50% (Center)
+      Rectangle {
+        width: 1
+        height: Style.space(10)
+        x: Math.round(parent.width * 0.5)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.75
+      }
+
+      // Minor tick: 62.5%
+      Rectangle {
+        width: 1
+        height: Style.space(5)
+        x: Math.round(parent.width * 0.625)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.3
+      }
+
+      // Major tick: 75%
+      Rectangle {
+        width: 1
+        height: Style.space(8)
+        x: Math.round(parent.width * 0.75)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.6
+      }
+
+      // Minor tick: 87.5%
+      Rectangle {
+        width: 1
+        height: Style.space(5)
+        x: Math.round(parent.width * 0.875)
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.3
+      }
+
+      // Major tick: End (100% / Live)
+      Rectangle {
+        width: 1
+        height: Style.space(10)
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.foreground
+        opacity: 0.75
+      }
+
+      // Dynamic cursor marker: ▲ pointing up to the tick track
+      Item {
+        id: rulerCursorMarker
+        visible: historyPage.history.length > 0
+        width: Style.space(14)
+        height: parent.height
+        x: Math.round(historyPage.rulerCursorRatio() * (parent.width - width))
+
+        PlainText {
+          anchors.centerIn: parent
+          text: "▲"
+          color: Color.accent
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
+      // Drag and click mouse area on ruler
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        preventStealing: true
+        onClicked: function(mouse) {
+          historyPage.scrubToX(mouse.x, width)
+        }
+        onPositionChanged: function(mouse) {
+          if (pressed) {
+            historyPage.scrubToX(mouse.x, width)
+          }
+        }
+      }
+    }
+
+    // Timestamps row below the ruler track
+    Item {
+      width: parent.width
+      height: Style.space(16)
+      anchors.top: rulerTrack.bottom
+
+      // Start time (left)
+      PlainText {
+        anchors.left: parent.left
+        anchors.verticalCenter: parent.verticalCenter
+        text: historyPage.rulerStartTime()
+        color: historyPage.foreground
+        opacity: 0.65
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      // Cursor position time badge (center / floating)
+      Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.verticalCenter: parent.verticalCenter
+        height: Style.space(16)
+        width: cursorTimeBadgeText.implicitWidth + Style.space(10)
+        radius: Style.cornerRadius
+        color: historyPage.isLive ? "transparent" : Color.accent
+        border.color: Color.accent
+        border.width: 1
+        visible: historyPage.history.length > 0
+
+        PlainText {
+          id: cursorTimeBadgeText
+          anchors.centerIn: parent
+          text: historyPage.isLive
+            ? ("LIVE " + (historyPage.selectedSample ? historyPage.selectedSample.timestamp : "--"))
+            : (historyPage.selectedSample ? (historyPage.selectedSample.timestamp + " (" + historyPage.timerOffsetLabel() + ")") : "--")
+          color: historyPage.isLive ? Color.accent : "#000000"
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
+
+      // End time (right / Live)
+      PlainText {
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        text: historyPage.rulerEndTime()
+        color: historyPage.foreground
+        opacity: 0.65
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignRight
+      }
     }
   }
 
@@ -631,8 +877,80 @@ Column {
     if (zoomLabel === "2m") return 120
     if (zoomLabel === "15m") return 900
     if (zoomLabel === "1h") return 3600
-    if (zoomLabel === "ALL") return history.length
+    if (zoomLabel === "ALL") return Math.max(1, history.length)
     return customSpanSeconds
+  }
+
+  function rulerCursorRatio() {
+    if (!history || history.length === 0) return 1.0
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var sliceCount = history.length - startIdx
+    if (sliceCount <= 1) return 1.0
+    var eff = effectiveIndex
+    if (eff < startIdx) return 0.0
+    return Math.max(0.0, Math.min(1.0, (eff - startIdx) / (sliceCount - 1)))
+  }
+
+  function rulerStartTime() {
+    if (!history || history.length === 0) return "--:--:--"
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var sample = history[startIdx]
+    var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
+    var dur = formatDuration(history.length - 1 - startIdx)
+    return t + " (-" + dur + ")"
+  }
+
+  function rulerEndTime() {
+    if (!history || history.length === 0) return "--:--:--"
+    var sample = history[history.length - 1]
+    var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
+    return t + " (LIVE)"
+  }
+
+  function timerClockString() {
+    if (!history || history.length === 0) return "00:00 / 00:00"
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var sliceCount = Math.max(1, history.length - startIdx)
+    var elapsed = Math.max(0, effectiveIndex - startIdx)
+    return formatTimerClock(elapsed) + " / " + formatTimerClock(sliceCount)
+  }
+
+  function timerOffsetLabel() {
+    if (!history || history.length === 0 || !selectedSample) return "LIVE"
+    if (isLive) return "LIVE"
+    var offset = history.length - 1 - effectiveIndex
+    return "-" + formatDuration(offset)
+  }
+
+  function formatTimerClock(seconds) {
+    var s = Math.max(0, Math.floor(Number(seconds) || 0))
+    var m = Math.floor(s / 60)
+    var remS = s % 60
+    if (m >= 60) {
+      var h = Math.floor(m / 60)
+      var remM = m % 60
+      return ("0" + h).slice(-2) + ":" + ("0" + remM).slice(-2) + ":" + ("0" + remS).slice(-2)
+    }
+    return ("0" + m).slice(-2) + ":" + ("0" + remS).slice(-2)
+  }
+
+  function scrubToX(mouseX, totalWidth) {
+    if (!history || history.length === 0) return
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var sliceCount = history.length - startIdx
+    if (sliceCount <= 0) return
+    var ratio = Math.max(0.0, Math.min(1.0, mouseX / Math.max(1, totalWidth)))
+    var target = Math.round(startIdx + ratio * (sliceCount - 1))
+    if (target >= history.length - 1) {
+      scrubIndex = -1
+    } else {
+      scrubIndex = Math.max(0, target)
+    }
+    isPlaying = false
   }
 
   function applyCustomDuration(input) {

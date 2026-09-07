@@ -251,7 +251,7 @@ Panel {
 
       Item {
         width: parent.width
-        height: root.page === 8 ? Style.space(290) : Style.space(260)
+        height: root.page === 8 ? Style.space(340) : Style.space(260)
         clip: true
 
         Column {

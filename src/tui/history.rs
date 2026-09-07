@@ -507,7 +507,7 @@ pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState
 
     let [controls_area, sparkline_area, stats_area, table_area] = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(6),
+        Constraint::Length(8),
         Constraint::Length(3),
         Constraint::Min(0),
     ])
@@ -568,12 +568,28 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
             Span::styled(format!("  {label}  "), Style::default().fg(ui.theme.muted))
         }
     };
+    let total = state.samples.len();
+    let span_secs = state.span.seconds(total);
+    let start_idx = total.saturating_sub(span_secs);
+    let elapsed = eff.saturating_sub(start_idx);
+    let total_in_span = total.saturating_sub(start_idx).max(1);
+    let el_m = elapsed / 60;
+    let el_s = elapsed % 60;
+    let tot_m = total_in_span / 60;
+    let tot_s = total_in_span % 60;
+
+    let timer_tag = Span::styled(
+        format!(" ⏱ {:02}:{:02}/{:02}:{:02} ", el_m, el_s, tot_m, tot_s),
+        Style::default().fg(Color::Black).bg(ui.theme.accent).add_modifier(Modifier::BOLD),
+    );
 
     let line1 = Line::from(vec![
         Span::styled("STATUS: ", Style::default().fg(ui.theme.muted)),
         rec_tag,
         play_tag,
         time_mode,
+        Span::raw(" "),
+        timer_tag,
         Span::raw("  │  "),
         Span::styled("METRIC: ", Style::default().fg(ui.theme.muted)),
         metric_pill(HistoryMetric::Cpu),
@@ -723,16 +739,53 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     let end_time = state.samples.back().map(|s| s.timestamp.as_str()).unwrap_or("--");
     let cur_time = state.samples.get(eff).map(|s| s.timestamp.as_str()).unwrap_or("--");
 
-    let axis_line = Line::from(vec![
-        Span::styled(format!("{:<10}", start_time), Style::default().fg(ui.theme.muted)),
+    let mut ruler_spans = Vec::with_capacity(w);
+    for col in 0..w {
+        if col == cursor_pos {
+            ruler_spans.push(Span::styled("▲", Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)));
+        } else if col == 0 || col == w.saturating_sub(1) {
+            ruler_spans.push(Span::styled("|", Style::default().fg(ui.theme.fg)));
+        } else if col == w / 4 || col == w / 2 || col == (3 * w) / 4 {
+            ruler_spans.push(Span::styled("+", Style::default().fg(ui.theme.muted)));
+        } else {
+            ruler_spans.push(Span::styled("-", Style::default().fg(ui.theme.muted)));
+        }
+    }
+    let ruler_line = Line::from(ruler_spans);
+
+    let offset_secs = total.saturating_sub(1).saturating_sub(eff);
+    let offset_str = if state.is_live() {
+        "LIVE".to_string()
+    } else {
+        format!("-{}s", offset_secs)
+    };
+
+    let elapsed = eff.saturating_sub(start_idx);
+    let total_in_span = total.saturating_sub(start_idx).max(1);
+    let el_m = elapsed / 60;
+    let el_s = elapsed % 60;
+    let tot_m = total_in_span / 60;
+    let tot_s = total_in_span % 60;
+
+    let time_axis_line = Line::from(vec![
+        Span::styled(format!("{:<12}", start_time), Style::default().fg(ui.theme.muted)),
         Span::styled(
-            format!("{:^width$}", format!("SCRUBBED: {}", cur_time), width = w.saturating_sub(20)),
+            format!("{:^width$}", format!("▲ {} ({})", cur_time, offset_str), width = w.saturating_sub(24)),
             Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("{:>10}", end_time), Style::default().fg(ui.theme.muted)),
+        Span::styled(format!("{:>12}", end_time), Style::default().fg(ui.theme.muted)),
     ]);
 
-    let par = Paragraph::new(vec![cursor_line, bars_line, axis_line]);
+    let timer_axis_line = Line::from(vec![
+        Span::styled(format!("{:<12}", format!("-{}s", span_secs)), Style::default().fg(ui.theme.muted)),
+        Span::styled(
+            format!("{:^width$}", format!("[⏱ {:02}:{:02} / {:02}:{:02}]", el_m, el_s, tot_m, tot_s), width = w.saturating_sub(24)),
+            Style::default().fg(ui.theme.fg),
+        ),
+        Span::styled(format!("{:>12}", "NOW"), Style::default().fg(ui.theme.muted)),
+    ]);
+
+    let par = Paragraph::new(vec![cursor_line, bars_line, ruler_line, time_axis_line, timer_axis_line]);
     frame.render_widget(par, inner);
 }
 
