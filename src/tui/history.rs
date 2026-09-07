@@ -527,7 +527,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     };
 
     let play_tag = if state.playing {
-        Span::styled(" [PLAYING]", Style::default().fg(ui.theme.yellow).add_modifier(Modifier::BOLD))
+        Span::styled(" [PLAYING REC]", Style::default().fg(ui.theme.yellow).add_modifier(Modifier::BOLD))
     } else {
         Span::raw("")
     };
@@ -630,7 +630,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         Span::styled("[ ]", Style::default().fg(ui.theme.yellow)),
         Span::raw(" jump  "),
         Span::styled("Space", Style::default().fg(ui.theme.yellow)),
-        Span::raw(" play  "),
+        Span::raw(" play rec  "),
         Span::styled("0", Style::default().fg(ui.theme.yellow)),
         Span::raw(" live  "),
         Span::styled("Tab", Style::default().fg(ui.theme.yellow)),

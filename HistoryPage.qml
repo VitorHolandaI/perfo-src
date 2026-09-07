@@ -277,9 +277,9 @@ Column {
       }
     }
 
-    // PLAY / PAUSE button
+    // PLAY REC / PAUSE button
     Rectangle {
-      width: Style.space(46)
+      width: playButtonText.implicitWidth + Style.space(12)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -288,8 +288,9 @@ Column {
       border.width: 1
 
       PlainText {
+        id: playButtonText
         anchors.centerIn: parent
-        text: historyPage.isPlaying ? "PAUSE" : "PLAY"
+        text: historyPage.isPlaying ? "PAUSE" : "PLAY REC"
         color: historyPage.isPlaying ? "#000000" : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
