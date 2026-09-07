@@ -185,6 +185,15 @@ Panel {
       }
       onCloseRequested: root.close()
       onTextKey: function(text) {
+        if (root.page === 8 && typeof historyPageComp !== "undefined" && historyPageComp) {
+          if (text === "," || text === "<") { historyPageComp.stepTimeline(-1); return }
+          if (text === "." || text === ">") { historyPageComp.stepTimeline(1); return }
+          if (text === "[" || text === "{") { historyPageComp.jumpTimeline(-1); return }
+          if (text === "]" || text === "}") { historyPageComp.jumpTimeline(1); return }
+          if (text === " ") { historyPageComp.togglePlayback(); return }
+          if (text === "0") { historyPageComp.jumpToLive(); return }
+          if (text === "r" || text === "R") { root.historyRecording = !root.historyRecording; return }
+        }
         if (text === "h" || text === "H") root.switchPage(-1)
         else if (text === "l" || text === "L") root.switchPage(1)
       }
@@ -597,8 +606,24 @@ Panel {
       : 0
 
     var gpuPct = 0
-    if (root.snapshot.gpu && root.snapshot.gpu.devices && root.snapshot.gpu.devices.length > 0 && root.snapshot.gpu.devices[0].usage_percent !== null) {
-      gpuPct = Number(root.snapshot.gpu.devices[0].usage_percent) || 0
+    var gpuProcs = []
+    if (root.snapshot.gpu && root.snapshot.gpu.devices && root.snapshot.gpu.devices.length > 0) {
+      if (root.snapshot.gpu.devices[0].usage_percent !== null) {
+        gpuPct = Number(root.snapshot.gpu.devices[0].usage_percent) || 0
+      }
+      for (var d = 0; d < root.snapshot.gpu.devices.length; d++) {
+        var dev = root.snapshot.gpu.devices[d]
+        if (dev.processes) {
+          for (var gp = 0; gp < dev.processes.length; gp++) {
+            var g = dev.processes[gp]
+            gpuProcs.push({
+              pid: g.pid,
+              gpu_percent: Number(g.gpu_percent) || 0,
+              vram_bytes: Number(g.memory_used_bytes) || 0
+            })
+          }
+        }
+      }
     }
 
     var readRate = root.totalRead()
@@ -608,15 +633,51 @@ Panel {
     var procs = []
     if (root.snapshot.processes) {
       var raw = root.snapshot.processes
-      for (var i = 0; i < Math.min(raw.length, 12); i++) {
+      for (var i = 0; i < Math.min(raw.length, 30); i++) {
         var p = raw[i]
+        var gpuMatch = null
+        for (var gi = 0; gi < gpuProcs.length; gi++) {
+          if (gpuProcs[gi].pid === p.pid) {
+            gpuMatch = gpuProcs[gi]
+            break
+          }
+        }
         procs.push({
           pid: p.pid,
           name: p.name || "",
           cmd: p.cmd || "",
           cpu_percent: Number(p.cpu_percent) || 0,
           mem_bytes: Number(p.mem_bytes) || 0,
-          user: p.user || ""
+          user: p.user || "",
+          read_bps: Number(p.read_bps) || 0,
+          write_bps: Number(p.write_bps) || 0,
+          gpu_percent: gpuMatch ? gpuMatch.gpu_percent : 0,
+          vram_bytes: gpuMatch ? gpuMatch.vram_bytes : 0
+        })
+      }
+    }
+
+    for (var g2 = 0; g2 < gpuProcs.length; g2++) {
+      var gpItem = gpuProcs[g2]
+      var alreadyIn = false
+      for (var pi = 0; pi < procs.length; pi++) {
+        if (procs[pi].pid === gpItem.pid) {
+          alreadyIn = true
+          break
+        }
+      }
+      if (!alreadyIn) {
+        procs.push({
+          pid: gpItem.pid,
+          name: "",
+          cmd: "",
+          cpu_percent: 0,
+          mem_bytes: 0,
+          user: "",
+          read_bps: 0,
+          write_bps: 0,
+          gpu_percent: gpItem.gpu_percent,
+          vram_bytes: gpItem.vram_bytes
         })
       }
     }

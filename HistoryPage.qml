@@ -111,7 +111,7 @@ Column {
           PlainText {
             anchors.centerIn: parent
             text: modelData
-            color: historyPage.metric === modelData ? Color.background : historyPage.foreground
+            color: historyPage.metric === modelData ? "#000000" : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: historyPage.metric === modelData
@@ -155,7 +155,7 @@ Column {
           PlainText {
             anchors.centerIn: parent
             text: modelData
-            color: historyPage.zoomLabel === modelData ? Color.background : historyPage.foreground
+            color: historyPage.zoomLabel === modelData ? "#000000" : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: historyPage.zoomLabel === modelData
@@ -187,7 +187,7 @@ Column {
         anchors.leftMargin: 2
         anchors.rightMargin: 2
         text: historyPage.customSpanText
-        color: historyPage.isCustomZoom ? Color.background : historyPage.foreground
+        color: historyPage.isCustomZoom ? "#000000" : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: historyPage.isCustomZoom
@@ -235,15 +235,15 @@ Column {
     }
   }
 
-  // Row 2: Playback & Action Controls (REC, PLAY, LIVE, step buttons)
+  // Row 2: Playback & Action Controls (REC, PLAY, LIVE, jump & step buttons)
   Row {
     width: historyPage.width
     height: Style.space(20)
-    spacing: Style.space(5)
+    spacing: Style.space(4)
 
     // REC / FREEZE button
     Rectangle {
-      width: Style.space(54)
+      width: Style.space(50)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -279,7 +279,7 @@ Column {
 
     // PLAY / PAUSE button
     Rectangle {
-      width: Style.space(48)
+      width: Style.space(46)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -290,29 +290,46 @@ Column {
       PlainText {
         anchors.centerIn: parent
         text: historyPage.isPlaying ? "PAUSE" : "PLAY"
-        color: historyPage.isPlaying ? Color.background : historyPage.foreground
+        color: historyPage.isPlaying ? "#000000" : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
+        font.bold: historyPage.isPlaying
       }
 
       MouseArea {
         anchors.fill: parent
-        onClicked: {
-          if (historyPage.isPlaying) {
-            historyPage.isPlaying = false
-          } else {
-            if (historyPage.effectiveIndex >= historyPage.history.length - 1) {
-              historyPage.scrubIndex = Math.max(0, historyPage.history.length - historyPage.currentZoomSeconds())
-            }
-            historyPage.isPlaying = true
-          }
-        }
+        onClicked: historyPage.togglePlayback()
       }
     }
 
-    // Step -1s button
+    // Jump back button (<<)
     Rectangle {
       width: Style.space(22)
+      height: Style.space(18)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: "transparent"
+      border.color: historyPage.foreground
+      border.width: 1
+
+      PlainText {
+        anchors.centerIn: parent
+        text: "<<"
+        color: historyPage.foreground
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: historyPage.jumpTimeline(-1)
+      }
+    }
+
+    // Step -1s button (<)
+    Rectangle {
+      width: Style.space(18)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -331,19 +348,13 @@ Column {
 
       MouseArea {
         anchors.fill: parent
-        onClicked: {
-          var target = historyPage.effectiveIndex - 1
-          if (target >= 0) {
-            historyPage.scrubIndex = target
-            historyPage.isPlaying = false
-          }
-        }
+        onClicked: historyPage.stepTimeline(-1)
       }
     }
 
-    // Step +1s button
+    // Step +1s button (>)
     Rectangle {
-      width: Style.space(22)
+      width: Style.space(18)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -362,19 +373,38 @@ Column {
 
       MouseArea {
         anchors.fill: parent
-        onClicked: {
-          var target = historyPage.effectiveIndex + 1
-          if (target < historyPage.history.length) {
-            historyPage.scrubIndex = target
-            historyPage.isPlaying = false
-          }
-        }
+        onClicked: historyPage.stepTimeline(1)
+      }
+    }
+
+    // Jump forward button (>>)
+    Rectangle {
+      width: Style.space(22)
+      height: Style.space(18)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: "transparent"
+      border.color: historyPage.foreground
+      border.width: 1
+
+      PlainText {
+        anchors.centerIn: parent
+        text: ">>"
+        color: historyPage.foreground
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: historyPage.jumpTimeline(1)
       }
     }
 
     // Jump to LIVE button
     Rectangle {
-      width: Style.space(38)
+      width: Style.space(36)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -386,7 +416,7 @@ Column {
       PlainText {
         anchors.centerIn: parent
         text: "LIVE"
-        color: historyPage.isLive ? Color.background : historyPage.foreground
+        color: historyPage.isLive ? "#000000" : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: historyPage.isLive
@@ -394,14 +424,11 @@ Column {
 
       MouseArea {
         anchors.fill: parent
-        onClicked: {
-          historyPage.scrubIndex = -1
-          historyPage.isPlaying = false
-        }
+        onClicked: historyPage.jumpToLive()
       }
     }
 
-    // Export to TXT button
+    // Export to TXT + JSON button
     Rectangle {
       width: Style.space(48)
       height: Style.space(18)
@@ -437,7 +464,7 @@ Column {
       font.pixelSize: Style.font.caption
       font.bold: historyPage.exportStatus.length > 0 || !historyPage.isLive
       elide: Text.ElideRight
-      width: historyPage.width - Style.space(262)
+      width: historyPage.width - Style.space(282)
     }
   }
 
@@ -528,9 +555,9 @@ Column {
 
     PlainText { width: Style.space(48); text: "PID"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
     PlainText { width: Style.space(120); text: "PROCESS"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
-    PlainText { width: Style.space(56); text: historyPage.metric; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
-    PlainText { width: Style.space(48); text: "RAM"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
-    PlainText { width: parent.width - Style.space(296); text: "COMMAND"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
+    PlainText { width: Style.space(60); text: historyPage.metricHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
+    PlainText { width: Style.space(48); text: historyPage.secondaryHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
+    PlainText { width: parent.width - Style.space(300); text: "COMMAND"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
   }
 
   // Process rows at selected sample
@@ -561,7 +588,7 @@ Column {
       }
 
       PlainText {
-        width: Style.space(56)
+        width: Style.space(60)
         text: historyPage.metricCellText(modelData)
         color: Color.accent
         font.family: historyPage.fontFamily
@@ -571,7 +598,7 @@ Column {
 
       PlainText {
         width: Style.space(48)
-        text: historyPage.formatBytes(modelData.mem_bytes)
+        text: historyPage.secondaryCellText(modelData)
         color: historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -579,7 +606,7 @@ Column {
       }
 
       PlainText {
-        width: parent.width - Style.space(296)
+        width: parent.width - Style.space(300)
         text: String(modelData.cmd || "")
         color: historyPage.foreground
         opacity: 0.7
@@ -592,7 +619,7 @@ Column {
 
   PlainText {
     visible: historyPage.sortedProcesses().length === 0
-    text: "no process activity recorded for this sample"
+    text: historyPage.metric === "GPU" ? "no active GPU processes for this sample" : "no process activity recorded for this sample"
     color: historyPage.foreground
     opacity: 0.55
     font.family: historyPage.fontFamily
@@ -703,6 +730,65 @@ Column {
     return maxVal
   }
 
+  function stepTimeline(delta) {
+    if (!history || history.length === 0) return
+    var target = effectiveIndex + delta
+    if (target >= 0 && target < history.length) {
+      scrubIndex = target
+      isPlaying = false
+    }
+  }
+
+  function jumpStepSeconds() {
+    var span = currentZoomSeconds()
+    if (span <= 120) return 10
+    if (span <= 900) return 30
+    if (span <= 3600) return 60
+    return 300
+  }
+
+  function jumpTimeline(direction) {
+    if (!history || history.length === 0) return
+    var step = jumpStepSeconds() * (direction < 0 ? -1 : 1)
+    var target = effectiveIndex + step
+    if (target < 0) target = 0
+    if (target >= history.length - 1) {
+      scrubIndex = -1
+    } else {
+      scrubIndex = target
+    }
+    isPlaying = false
+  }
+
+  function togglePlayback() {
+    if (isPlaying) {
+      isPlaying = false
+    } else {
+      if (effectiveIndex >= history.length - 1) {
+        scrubIndex = Math.max(0, history.length - currentZoomSeconds())
+      }
+      isPlaying = true
+    }
+  }
+
+  function jumpToLive() {
+    scrubIndex = -1
+    isPlaying = false
+  }
+
+  function metricHeader() {
+    if (metric === "CPU") return "CPU%"
+    if (metric === "MEM") return "MEM%"
+    if (metric === "GPU") return "GPU%"
+    if (metric === "IO") return "IO RATE"
+    return metric
+  }
+
+  function secondaryHeader() {
+    if (metric === "GPU") return "VRAM"
+    return "RAM"
+  }
+
   function timingLabel() {
     if (!selectedSample) return "No history recorded yet"
     var offset = history.length - 1 - effectiveIndex
@@ -713,11 +799,30 @@ Column {
   function sortedProcesses() {
     if (!selectedSample || !selectedSample.processes) return []
     var list = selectedSample.processes.slice()
+    if (metric === "GPU") {
+      var gpuList = list.filter(function(p) {
+        return (Number(p.gpu_percent) || 0) > 0 || (Number(p.vram_bytes) || 0) > 0
+      })
+      gpuList.sort(function(a, b) {
+        var diff = (Number(b.gpu_percent) || 0) - (Number(a.gpu_percent) || 0)
+        if (diff !== 0) return diff
+        return (Number(b.vram_bytes) || 0) - (Number(a.vram_bytes) || 0)
+      })
+      return gpuList.slice(0, 5)
+    }
+    if (metric === "IO") {
+      list.sort(function(a, b) {
+        var aIo = (Number(a.read_bps) || 0) + (Number(a.write_bps) || 0)
+        var bIo = (Number(b.read_bps) || 0) + (Number(b.write_bps) || 0)
+        return bIo - aIo
+      })
+      return list.slice(0, 5)
+    }
     if (metric === "MEM") {
       list.sort(function(a, b) { return (Number(b.mem_bytes) || 0) - (Number(a.mem_bytes) || 0) })
-    } else {
-      list.sort(function(a, b) { return (Number(b.cpu_percent) || 0) - (Number(a.cpu_percent) || 0) })
+      return list.slice(0, 5)
     }
+    list.sort(function(a, b) { return (Number(b.cpu_percent) || 0) - (Number(a.cpu_percent) || 0) })
     return list.slice(0, 5)
   }
 
@@ -725,7 +830,21 @@ Column {
     if (metric === "MEM") {
       return formatBytes(proc.mem_bytes)
     }
+    if (metric === "GPU") {
+      return (Number(proc.gpu_percent) || 0) > 0 ? (Math.round(proc.gpu_percent) + "%") : "--"
+    }
+    if (metric === "IO") {
+      var totalIo = (Number(proc.read_bps) || 0) + (Number(proc.write_bps) || 0)
+      return totalIo > 0 ? formatRate(totalIo) : "--"
+    }
     return Math.round(Number(proc.cpu_percent) || 0) + "%"
+  }
+
+  function secondaryCellText(proc) {
+    if (metric === "GPU") {
+      return (Number(proc.vram_bytes) || 0) > 0 ? formatBytes(proc.vram_bytes) : "--"
+    }
+    return formatBytes(proc.mem_bytes)
   }
 
   function cleanName(command, pid) {
@@ -762,94 +881,7 @@ Column {
     return h + "h" + (m > 0 ? " " + m + "m" : "")
   }
 
-  function exportReport() {
-    if (!history || history.length === 0) {
-      exportStatus = "No history to export"
-      exportStatusTimer.restart()
-      return
-    }
-    var now = new Date()
-    var datePart = now.getFullYear() +
-      ("0" + (now.getMonth() + 1)).slice(-2) +
-      ("0" + now.getDate()).slice(-2)
-    var timePart = ("0" + now.getHours()).slice(-2) +
-      ("0" + now.getMinutes()).slice(-2) +
-      ("0" + now.getSeconds()).slice(-2)
-    var filename = "perfo-history-" + datePart + "-" + timePart + ".txt"
-    var fullPath = "~/" + filename
-    var report = generateExportText(now)
-
-    exportProc.targetFilename = filename
-    exportProc.command = [
-      "python3",
-      "-c",
-      "import sys, pathlib; p = pathlib.Path(sys.argv[1]).expanduser(); p.write_text(sys.argv[2], encoding='utf-8')",
-      fullPath,
-      report
-    ]
-    exportProc.running = true
-  }
-
-  function padRight(str, len) {
-    var s = String(str === undefined || str === null ? "" : str)
-    while (s.length < len) s += " "
-    return s
-  }
-
-  function padLeft(str, len) {
-    var s = String(str === undefined || str === null ? "" : str)
-    while (s.length < len) s = " " + s
-    return s
-  }
-
-  function generateExportText(dateObj) {
-    var lines = []
-    var border = "================================================================================"
-    var subBorder = "--------------------------------------------------------------------------------"
-
-    lines.push(border)
-    lines.push("                   PERFO - SYSTEM HISTORY & ANALYSIS REPORT")
-    lines.push(border)
-    lines.push("Generated at         : " + dateObj.toISOString().replace("T", " ").substr(0, 19))
-    lines.push("Active Metric Focus  : " + historyPage.metric)
-    lines.push("Timeline View Span   : " + historyPage.zoomLabel + " (" + historyPage.currentZoomSeconds() + "s)")
-    lines.push("Total Recorded Time  : " + historyPage.formatDuration(historyPage.history.length) + " (" + historyPage.history.length + " samples in RAM)")
-    lines.push("Current View State   : " + (historyPage.isLive ? "LIVE" : "SCRUBBED (Index: " + historyPage.effectiveIndex + ")"))
-    lines.push("")
-
-    var sample = historyPage.selectedSample
-    lines.push(border)
-    lines.push("                   1. SNAPSHOT AT SELECTED TIMING (" + (sample ? sample.timestamp : "--") + ")")
-    lines.push(border)
-    if (sample) {
-      lines.push("Overall CPU Usage    : " + sample.cpu + "%")
-      lines.push("Overall Memory Usage : " + sample.mem + "%")
-      lines.push("Total Disk I/O Rate  : " + (Number(sample.io_mb) || 0).toFixed(1) + " MB/s (Read: " + historyPage.formatBytes(sample.read_bps) + "/s, Write: " + historyPage.formatBytes(sample.write_bps) + "/s)")
-      lines.push("GPU Usage            : " + sample.gpu + "%")
-      lines.push("")
-      lines.push("Active Processes at this timing:")
-      lines.push(padRight("PID", 8) + " | " + padLeft("% CPU", 7) + " | " + padLeft("RAM", 10) + " | " + padRight("PROCESS", 18) + " | COMMAND")
-      lines.push(subBorder)
-      var procs = historyPage.sortedProcesses()
-      for (var i = 0; i < procs.length; i++) {
-        var p = procs[i]
-        var pName = historyPage.cleanName(p.name || p.cmd, p.pid)
-        lines.push(
-          padRight(p.pid, 8) + " | " +
-          padLeft((Number(p.cpu_percent) || 0).toFixed(1) + "%", 7) + " | " +
-          padLeft(historyPage.formatBytes(p.mem_bytes), 10) + " | " +
-          padRight(pName, 18) + " | " +
-          (p.cmd || pName)
-        )
-      }
-    } else {
-      lines.push("No sample data available.")
-    }
-    lines.push("")
-
-    lines.push(border)
-    lines.push("                   2. TIMELINE METRICS & PEAKS SUMMARY")
-    lines.push(border)
+  function computeSummaryStats() {
     var peakCpu = 0, peakCpuTime = "--", peakCpuProc = "--"
     var peakMem = 0, peakMemTime = "--"
     var peakIo = 0, peakIoTime = "--"
@@ -885,12 +917,167 @@ Column {
     var avgCpu = historyPage.history.length > 0 ? (totalCpu / historyPage.history.length).toFixed(1) : "0"
     var avgMem = historyPage.history.length > 0 ? (totalMem / historyPage.history.length).toFixed(1) : "0"
 
-    lines.push("Peak CPU Usage       : " + peakCpu + "% at " + peakCpuTime + " (Top: " + peakCpuProc + ")")
-    lines.push("Peak Memory Usage    : " + peakMem + "% at " + peakMemTime)
-    lines.push("Peak Disk I/O Rate   : " + peakIo.toFixed(1) + " MB/s at " + peakIoTime)
-    lines.push("Peak GPU Usage       : " + peakGpu + "% at " + peakGpuTime)
-    lines.push("Average CPU Usage    : " + avgCpu + "%")
-    lines.push("Average Memory Usage : " + avgMem + "%")
+    return {
+      peakCpu: peakCpu,
+      peakCpuTime: peakCpuTime,
+      peakCpuProc: peakCpuProc,
+      peakMem: peakMem,
+      peakMemTime: peakMemTime,
+      peakIo: peakIo,
+      peakIoTime: peakIoTime,
+      peakGpu: peakGpu,
+      peakGpuTime: peakGpuTime,
+      avgCpu: avgCpu,
+      avgMem: avgMem
+    }
+  }
+
+  function exportReport() {
+    if (!history || history.length === 0) {
+      exportStatus = "No history to export"
+      exportStatusTimer.restart()
+      return
+    }
+    var now = new Date()
+    var datePart = now.getFullYear() +
+      ("0" + (now.getMonth() + 1)).slice(-2) +
+      ("0" + now.getDate()).slice(-2)
+    var timePart = ("0" + now.getHours()).slice(-2) +
+      ("0" + now.getMinutes()).slice(-2) +
+      ("0" + now.getSeconds()).slice(-2)
+    var baseName = "perfo-history-" + datePart + "-" + timePart
+    var txtFullPath = "~/" + baseName + ".txt"
+    var jsonFullPath = "~/" + baseName + ".json"
+    var report = generateExportText(now)
+    var reportJson = generateExportJson(now)
+
+    exportProc.targetFilename = baseName + ".{txt,json}"
+    exportProc.command = [
+      "python3",
+      "-c",
+      "import sys, pathlib; pathlib.Path(sys.argv[1]).expanduser().write_text(sys.argv[3], encoding='utf-8'); pathlib.Path(sys.argv[2]).expanduser().write_text(sys.argv[4], encoding='utf-8')",
+      txtFullPath,
+      jsonFullPath,
+      report,
+      reportJson
+    ]
+    exportProc.running = true
+  }
+
+  function padRight(str, len) {
+    var s = String(str === undefined || str === null ? "" : str)
+    while (s.length < len) s += " "
+    return s
+  }
+
+  function padLeft(str, len) {
+    var s = String(str === undefined || str === null ? "" : str)
+    while (s.length < len) s = " " + s
+    return s
+  }
+
+  function generateExportJson(dateObj) {
+    var sample = historyPage.selectedSample
+    var out = {
+      version: "1.0",
+      generator: "perfo",
+      generated_at: dateObj.toISOString(),
+      metric_focus: historyPage.metric,
+      zoom_span: historyPage.zoomLabel,
+      zoom_seconds: historyPage.currentZoomSeconds(),
+      total_recorded_samples: historyPage.history.length,
+      current_scrub_index: historyPage.effectiveIndex,
+      is_live: historyPage.isLive,
+      selected_sample: sample ? {
+        timestamp: sample.timestamp,
+        cpu_percent: sample.cpu,
+        mem_percent: sample.mem,
+        read_bps: sample.read_bps,
+        write_bps: sample.write_bps,
+        io_mb: sample.io_mb,
+        gpu_percent: sample.gpu,
+        processes: sample.processes || []
+      } : null,
+      summary: computeSummaryStats(),
+      timeline: []
+    }
+
+    var step = Math.max(1, Math.floor(historyPage.history.length / 1000))
+    for (var i = 0; i < historyPage.history.length; i += step) {
+      var s = historyPage.history[i]
+      out.timeline.push({
+        index: i,
+        timestamp: s.timestamp,
+        cpu_percent: s.cpu,
+        mem_percent: s.mem,
+        io_mb: s.io_mb,
+        read_bps: s.read_bps,
+        write_bps: s.write_bps,
+        gpu_percent: s.gpu,
+        top_process: (s.processes && s.processes.length > 0) ? (s.processes[0].name || s.processes[0].cmd || "") : ""
+      })
+    }
+    return JSON.stringify(out, null, 2)
+  }
+
+  function generateExportText(dateObj) {
+    var lines = []
+    var border = "================================================================================"
+    var subBorder = "--------------------------------------------------------------------------------"
+    var stats = computeSummaryStats()
+
+    lines.push(border)
+    lines.push("                   PERFO - SYSTEM HISTORY & ANALYSIS REPORT")
+    lines.push(border)
+    lines.push("Generated at         : " + dateObj.toISOString().replace("T", " ").substr(0, 19))
+    lines.push("Active Metric Focus  : " + historyPage.metric)
+    lines.push("Timeline View Span   : " + historyPage.zoomLabel + " (" + historyPage.currentZoomSeconds() + "s)")
+    lines.push("Total Recorded Time  : " + historyPage.formatDuration(historyPage.history.length) + " (" + historyPage.history.length + " samples in RAM)")
+    lines.push("Current View State   : " + (historyPage.isLive ? "LIVE" : "SCRUBBED (Index: " + historyPage.effectiveIndex + ")"))
+    lines.push("")
+
+    var sample = historyPage.selectedSample
+    lines.push(border)
+    lines.push("                   1. SNAPSHOT AT SELECTED TIMING (" + (sample ? sample.timestamp : "--") + ")")
+    lines.push(border)
+    if (sample) {
+      lines.push("Overall CPU Usage    : " + sample.cpu + "%")
+      lines.push("Overall Memory Usage : " + sample.mem + "%")
+      lines.push("Total Disk I/O Rate  : " + (Number(sample.io_mb) || 0).toFixed(1) + " MB/s (Read: " + historyPage.formatBytes(sample.read_bps) + "/s, Write: " + historyPage.formatBytes(sample.write_bps) + "/s)")
+      lines.push("GPU Usage            : " + sample.gpu + "%")
+      lines.push("")
+      lines.push("Active Processes at this timing:")
+      lines.push(padRight("PID", 8) + " | " + padLeft(historyPage.metricHeader(), 8) + " | " + padLeft(historyPage.secondaryHeader(), 10) + " | " + padRight("PROCESS", 18) + " | COMMAND")
+      lines.push(subBorder)
+      var procs = historyPage.sortedProcesses()
+      for (var i = 0; i < procs.length; i++) {
+        var p = procs[i]
+        var pName = historyPage.cleanName(p.name || p.cmd, p.pid)
+        lines.push(
+          padRight(p.pid, 8) + " | " +
+          padLeft(historyPage.metricCellText(p), 8) + " | " +
+          padLeft(historyPage.secondaryCellText(p), 10) + " | " +
+          padRight(pName, 18) + " | " +
+          (p.cmd || pName)
+        )
+      }
+      if (procs.length === 0) {
+        lines.push("No active " + historyPage.metric + " processes recorded for this sample.")
+      }
+    } else {
+      lines.push("No sample data available.")
+    }
+    lines.push("")
+
+    lines.push(border)
+    lines.push("                   2. TIMELINE METRICS & PEAKS SUMMARY")
+    lines.push(border)
+    lines.push("Peak CPU Usage       : " + stats.peakCpu + "% at " + stats.peakCpuTime + " (Top: " + stats.peakCpuProc + ")")
+    lines.push("Peak Memory Usage    : " + stats.peakMem + "% at " + stats.peakMemTime)
+    lines.push("Peak Disk I/O Rate   : " + stats.peakIo.toFixed(1) + " MB/s at " + stats.peakIoTime)
+    lines.push("Peak GPU Usage       : " + stats.peakGpu + "% at " + stats.peakGpuTime)
+    lines.push("Average CPU Usage    : " + stats.avgCpu + "%")
+    lines.push("Average Memory Usage : " + stats.avgMem + "%")
     lines.push("")
 
     lines.push(border)
