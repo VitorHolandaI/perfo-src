@@ -12,8 +12,8 @@ use ratatui::{
 };
 use serde::Serialize;
 
-use crate::data::cpu::CpuSnapshot;
 use super::cpu::{self, Pane, Ui};
+use crate::data::cpu::CpuSnapshot;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum HistoryMetric {
@@ -310,7 +310,9 @@ impl HistoryState {
         let date_str = format_local_datetime(now);
         let base_name = format!("perfo-history-{}", date_str);
 
-        let home_dir = std::env::var("HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."));
+        let home_dir = std::env::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
         let txt_path = home_dir.join(format!("{}.txt", base_name));
         let json_path = home_dir.join(format!("{}.json", base_name));
 
@@ -332,23 +334,39 @@ impl HistoryState {
 
     fn generate_export_text(&self, date_str: &str) -> String {
         let mut lines = Vec::new();
-        let border = "================================================================================";
-        let sub_border = "--------------------------------------------------------------------------------";
+        let border =
+            "================================================================================";
+        let sub_border =
+            "--------------------------------------------------------------------------------";
 
         lines.push(border.to_string());
         lines.push("                   PERFO - SYSTEM HISTORY & ANALYSIS REPORT".to_string());
         lines.push(border.to_string());
         lines.push(format!("Generated at         : {}", date_str));
         lines.push(format!("Active Metric Focus  : {}", self.metric.label()));
-        lines.push(format!("Timeline View Span   : {} ({}s)", self.span.label(), self.span.seconds(self.samples.len())));
-        lines.push(format!("Total Recorded Time  : {}s ({} samples in RAM)", self.samples.len(), self.samples.len()));
-        lines.push(format!("Current View State   : {}", if self.is_live() { "LIVE" } else { "SCRUBBED" }));
+        lines.push(format!(
+            "Timeline View Span   : {} ({}s)",
+            self.span.label(),
+            self.span.seconds(self.samples.len())
+        ));
+        lines.push(format!(
+            "Total Recorded Time  : {}s ({} samples in RAM)",
+            self.samples.len(),
+            self.samples.len()
+        ));
+        lines.push(format!(
+            "Current View State   : {}",
+            if self.is_live() { "LIVE" } else { "SCRUBBED" }
+        ));
         lines.push(String::new());
 
         let eff = self.effective_index();
         let sample = self.samples.get(eff);
         lines.push(border.to_string());
-        lines.push(format!("                   1. SNAPSHOT AT SELECTED TIMING ({})", sample.map(|s| s.timestamp.as_str()).unwrap_or("--")));
+        lines.push(format!(
+            "                   1. SNAPSHOT AT SELECTED TIMING ({})",
+            sample.map(|s| s.timestamp.as_str()).unwrap_or("--")
+        ));
         lines.push(border.to_string());
 
         if let Some(s) = sample {
@@ -358,7 +376,13 @@ impl HistoryState {
             lines.push(format!("GPU Usage            : {:.1}%", s.gpu));
             lines.push(String::new());
             lines.push("Active Processes at this timing:".to_string());
-            lines.push(format!("{:<8} | {:>8} | {:>10} | {:<18} | COMMAND", "PID", self.metric.label(), "RAM/VRAM", "PROCESS"));
+            lines.push(format!(
+                "{:<8} | {:>8} | {:>10} | {:<18} | COMMAND",
+                "PID",
+                self.metric.label(),
+                "RAM/VRAM",
+                "PROCESS"
+            ));
             lines.push(sub_border.to_string());
 
             let mut procs = s.top_procs.clone();
@@ -394,10 +418,18 @@ impl HistoryState {
         for s in &self.samples {
             total_cpu += s.cpu as f64;
             total_mem += s.mem as f64;
-            if s.cpu > peak_cpu { peak_cpu = s.cpu; }
-            if s.mem > peak_mem { peak_mem = s.mem; }
-            if s.io_mb > peak_io { peak_io = s.io_mb; }
-            if s.gpu > peak_gpu { peak_gpu = s.gpu; }
+            if s.cpu > peak_cpu {
+                peak_cpu = s.cpu;
+            }
+            if s.mem > peak_mem {
+                peak_mem = s.mem;
+            }
+            if s.io_mb > peak_io {
+                peak_io = s.io_mb;
+            }
+            if s.gpu > peak_gpu {
+                peak_gpu = s.gpu;
+            }
         }
 
         let count = self.samples.len().max(1) as f64;
@@ -455,7 +487,9 @@ impl HistoryState {
             HistoryMetric::Gpu => {
                 list.retain(|p| p.gpu_percent > 0.0 || p.vram_bytes > 0);
                 list.sort_by(|a, b| {
-                    b.gpu_percent.partial_cmp(&a.gpu_percent).unwrap_or(std::cmp::Ordering::Equal)
+                    b.gpu_percent
+                        .partial_cmp(&a.gpu_percent)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                         .then_with(|| b.vram_bytes.cmp(&a.vram_bytes))
                 });
             }
@@ -467,7 +501,9 @@ impl HistoryState {
             }
             HistoryMetric::Cpu => {
                 list.sort_by(|a, b| {
-                    b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap_or(std::cmp::Ordering::Equal)
+                    b.cpu_percent
+                        .partial_cmp(&a.cpu_percent)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
         }
@@ -521,13 +557,23 @@ pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState
 
 fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let rec_tag = if state.recording {
-        Span::styled("● REC", Style::default().fg(ui.theme.red).add_modifier(Modifier::BOLD))
+        Span::styled(
+            "● REC",
+            Style::default()
+                .fg(ui.theme.red)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled("⏸ PAUSED", Style::default().fg(ui.theme.muted))
     };
 
     let play_tag = if state.playing {
-        Span::styled(" [PLAYING REC]", Style::default().fg(ui.theme.yellow).add_modifier(Modifier::BOLD))
+        Span::styled(
+            " [PLAYING REC]",
+            Style::default()
+                .fg(ui.theme.yellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::raw("")
     };
@@ -545,16 +591,24 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         let ratio = (eff.saturating_sub(start_idx) as f64) / (span_samples as f64);
         ((ratio * total_span as f64).round() as usize).min(total_span)
     };
-    let time_str = state.samples.get(eff).map(|s| s.timestamp.as_str()).unwrap_or("--");
+    let time_str = state
+        .samples
+        .get(eff)
+        .map(|s| s.timestamp.as_str())
+        .unwrap_or("--");
     let time_mode = if is_live {
         Span::styled(
             format!(" LIVE [+{}s] ({})", total_span, time_str),
-            Style::default().fg(ui.theme.green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ui.theme.green)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::styled(
             format!(" +{}s ({})", elapsed, time_str),
-            Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
         )
     };
 
@@ -563,7 +617,10 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         if state.metric == m {
             Span::styled(
                 format!(" [{label}] "),
-                Style::default().fg(Color::Black).bg(ui.theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::styled(format!("  {label}  "), Style::default().fg(ui.theme.fg))
@@ -575,7 +632,10 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         if state.span == sp {
             Span::styled(
                 format!(" [{label}] "),
-                Style::default().fg(Color::Black).bg(ui.theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::styled(format!("  {label}  "), Style::default().fg(ui.theme.muted))
@@ -589,7 +649,10 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let timer_tag = Span::styled(
         format!(" ⏱ {:02}:{:02}/{:02}:{:02} ", el_m, el_s, tot_m, tot_s),
-        Style::default().fg(Color::Black).bg(ui.theme.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Black)
+            .bg(ui.theme.accent)
+            .add_modifier(Modifier::BOLD),
     );
 
     let line1 = Line::from(vec![
@@ -615,7 +678,12 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let export_text = if let Some((msg, inst)) = &state.export_status {
         if inst.elapsed().as_secs() < 4 {
-            Span::styled(format!("  [{msg}]"), Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD))
+            Span::styled(
+                format!("  [{msg}]"),
+                Style::default()
+                    .fg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
         } else {
             Span::raw("")
         }
@@ -666,7 +734,8 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     let visible_count = total.saturating_sub(start_idx);
 
     if visible_count == 0 {
-        let msg = Paragraph::new("Collecting history samples...").style(Style::default().fg(ui.theme.muted));
+        let msg = Paragraph::new("Collecting history samples...")
+            .style(Style::default().fg(ui.theme.muted));
         frame.render_widget(msg, inner);
         return;
     }
@@ -694,7 +763,9 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
         HistoryMetric::Io => {
             let mut m = 10.0f32;
             for s in &state.samples {
-                if s.io_mb > m { m = s.io_mb; }
+                if s.io_mb > m {
+                    m = s.io_mb;
+                }
             }
             m
         }
@@ -716,7 +787,9 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
                     HistoryMetric::Io => s.io_mb,
                     HistoryMetric::Gpu => s.gpu,
                 };
-                if v > peak { peak = v; }
+                if v > peak {
+                    peak = v;
+                }
             }
         }
 
@@ -726,7 +799,10 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
 
         let is_cur = col == cursor_pos;
         let style = if is_cur {
-            Style::default().fg(Color::Black).bg(ui.theme.accent).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Black)
+                .bg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD)
         } else if peak >= 80.0 {
             Style::default().fg(ui.theme.red)
         } else if peak >= 50.0 {
@@ -740,18 +816,37 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
 
     let cursor_line = Line::from(Span::styled(
         cursor_chars.into_iter().collect::<String>(),
-        Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(ui.theme.accent)
+            .add_modifier(Modifier::BOLD),
     ));
     let bars_line = Line::from(bar_spans);
 
-    let start_time = state.samples.get(start_idx).map(|s| s.timestamp.as_str()).unwrap_or("--");
-    let end_time = state.samples.back().map(|s| s.timestamp.as_str()).unwrap_or("--");
-    let cur_time = state.samples.get(eff).map(|s| s.timestamp.as_str()).unwrap_or("--");
+    let start_time = state
+        .samples
+        .get(start_idx)
+        .map(|s| s.timestamp.as_str())
+        .unwrap_or("--");
+    let end_time = state
+        .samples
+        .back()
+        .map(|s| s.timestamp.as_str())
+        .unwrap_or("--");
+    let cur_time = state
+        .samples
+        .get(eff)
+        .map(|s| s.timestamp.as_str())
+        .unwrap_or("--");
 
     let mut ruler_spans = Vec::with_capacity(w);
     for col in 0..w {
         if col == cursor_pos {
-            ruler_spans.push(Span::styled("▲", Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)));
+            ruler_spans.push(Span::styled(
+                "▲",
+                Style::default()
+                    .fg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ));
         } else if col == 0 || col == w.saturating_sub(1) {
             ruler_spans.push(Span::styled("|", Style::default().fg(ui.theme.fg)));
         } else if col == w / 4 || col == w / 2 || col == (3 * w) / 4 {
@@ -782,24 +877,52 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     };
 
     let time_axis_line = Line::from(vec![
-        Span::styled(format!("{:<12}", start_time), Style::default().fg(ui.theme.muted)),
         Span::styled(
-            format!("{:^width$}", format!("▲ {} ({})", cur_time, cur_str), width = w.saturating_sub(24)),
-            Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
+            format!("{:<12}", start_time),
+            Style::default().fg(ui.theme.muted),
         ),
-        Span::styled(format!("{:>12}", end_time), Style::default().fg(ui.theme.muted)),
+        Span::styled(
+            format!(
+                "{:^width$}",
+                format!("▲ {} ({})", cur_time, cur_str),
+                width = w.saturating_sub(24)
+            ),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("{:>12}", end_time),
+            Style::default().fg(ui.theme.muted),
+        ),
     ]);
 
     let timer_axis_line = Line::from(vec![
-        Span::styled(format!("{:<12}", "+0s"), Style::default().fg(ui.theme.muted)),
         Span::styled(
-            format!("{:^width$}", format!("[⏱ {:02}:{:02} / {:02}:{:02}]", el_m, el_s, tot_m, tot_s), width = w.saturating_sub(24)),
+            format!("{:<12}", "+0s"),
+            Style::default().fg(ui.theme.muted),
+        ),
+        Span::styled(
+            format!(
+                "{:^width$}",
+                format!("[⏱ {:02}:{:02} / {:02}:{:02}]", el_m, el_s, tot_m, tot_s),
+                width = w.saturating_sub(24)
+            ),
             Style::default().fg(ui.theme.fg),
         ),
-        Span::styled(format!("{:>12}", format!("+{}s LIVE", total_span)), Style::default().fg(ui.theme.muted)),
+        Span::styled(
+            format!("{:>12}", format!("+{}s LIVE", total_span)),
+            Style::default().fg(ui.theme.muted),
+        ),
     ]);
 
-    let par = Paragraph::new(vec![cursor_line, bars_line, ruler_line, time_axis_line, timer_axis_line]);
+    let par = Paragraph::new(vec![
+        cursor_line,
+        bars_line,
+        ruler_line,
+        time_axis_line,
+        timer_axis_line,
+    ]);
     frame.render_widget(par, inner);
 }
 
@@ -822,10 +945,18 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
     for s in &state.samples {
         total_cpu += s.cpu as f64;
         total_mem += s.mem as f64;
-        if s.cpu > peak_cpu { peak_cpu = s.cpu; }
-        if s.mem > peak_mem { peak_mem = s.mem; }
-        if s.io_mb > peak_io { peak_io = s.io_mb; }
-        if s.gpu > peak_gpu { peak_gpu = s.gpu; }
+        if s.cpu > peak_cpu {
+            peak_cpu = s.cpu;
+        }
+        if s.mem > peak_mem {
+            peak_mem = s.mem;
+        }
+        if s.io_mb > peak_io {
+            peak_io = s.io_mb;
+        }
+        if s.gpu > peak_gpu {
+            peak_gpu = s.gpu;
+        }
     }
 
     let count = state.samples.len().max(1) as f64;
@@ -834,22 +965,63 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
 
     let line1 = Line::from(vec![
         Span::styled("SAMPLE: ", Style::default().fg(ui.theme.muted)),
-        Span::styled(format!("CPU {:>4.1}%  ", cur_cpu), Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("MEM {:>4.1}%  ", cur_mem), Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("IO {:>5.1} MB/s  ", cur_io), Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)),
-        Span::styled(format!("GPU {:>4.1}%", cur_gpu), Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("CPU {:>4.1}%  ", cur_cpu),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("MEM {:>4.1}%  ", cur_mem),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("IO {:>5.1} MB/s  ", cur_io),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("GPU {:>4.1}%", cur_gpu),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]);
 
     let line2 = Line::from(vec![
         Span::styled("PEAKS : ", Style::default().fg(ui.theme.muted)),
-        Span::styled(format!("CPU {:.1}%  ", peak_cpu), Style::default().fg(ui.theme.yellow)),
-        Span::styled(format!("MEM {:.1}%  ", peak_mem), Style::default().fg(ui.theme.yellow)),
-        Span::styled(format!("IO {:.1} MB/s  ", peak_io), Style::default().fg(ui.theme.yellow)),
-        Span::styled(format!("GPU {:.1}%  │  ", peak_gpu), Style::default().fg(ui.theme.yellow)),
+        Span::styled(
+            format!("CPU {:.1}%  ", peak_cpu),
+            Style::default().fg(ui.theme.yellow),
+        ),
+        Span::styled(
+            format!("MEM {:.1}%  ", peak_mem),
+            Style::default().fg(ui.theme.yellow),
+        ),
+        Span::styled(
+            format!("IO {:.1} MB/s  ", peak_io),
+            Style::default().fg(ui.theme.yellow),
+        ),
+        Span::styled(
+            format!("GPU {:.1}%  │  ", peak_gpu),
+            Style::default().fg(ui.theme.yellow),
+        ),
         Span::styled("AVG: ", Style::default().fg(ui.theme.muted)),
-        Span::styled(format!("CPU {:.1}%  ", avg_cpu), Style::default().fg(ui.theme.fg)),
-        Span::styled(format!("MEM {:.1}%  ", avg_mem), Style::default().fg(ui.theme.fg)),
-        Span::styled(format!("({} samples)", state.samples.len()), Style::default().fg(ui.theme.muted)),
+        Span::styled(
+            format!("CPU {:.1}%  ", avg_cpu),
+            Style::default().fg(ui.theme.fg),
+        ),
+        Span::styled(
+            format!("MEM {:.1}%  ", avg_mem),
+            Style::default().fg(ui.theme.fg),
+        ),
+        Span::styled(
+            format!("({} samples)", state.samples.len()),
+            Style::default().fg(ui.theme.muted),
+        ),
     ]);
 
     let par = Paragraph::new(vec![line1, line2]);
@@ -907,7 +1079,12 @@ fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryS
             };
             TableRow::new(vec![
                 Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
-                Span::styled(p_name, Style::default().fg(ui.theme.fg).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    p_name,
+                    Style::default()
+                        .fg(ui.theme.fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(primary, Style::default().fg(ui.theme.accent)),
                 Span::styled(secondary, Style::default().fg(ui.theme.fg)),
                 Span::styled(p.cmd.clone(), Style::default().fg(ui.theme.muted)),
@@ -957,7 +1134,9 @@ fn clean_process_name(name: &str, cmd: &str, pid: u32) -> String {
 }
 
 fn format_local_time(time: std::time::SystemTime) -> String {
-    let dur = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let dur = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let sec = dur.as_secs() as libc::time_t;
     unsafe {
         let mut tm = std::mem::zeroed::<libc::tm>();
@@ -967,7 +1146,9 @@ fn format_local_time(time: std::time::SystemTime) -> String {
 }
 
 fn format_local_datetime(time: std::time::SystemTime) -> String {
-    let dur = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    let dur = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
     let sec = dur.as_secs() as libc::time_t;
     unsafe {
         let mut tm = std::mem::zeroed::<libc::tm>();
@@ -1056,7 +1237,10 @@ mod tests {
     fn clean_process_name_removes_path_and_quotes() {
         assert_eq!(clean_process_name("/usr/bin/bash", "", 1234), "bash");
         assert_eq!(clean_process_name("\"rustc\"", "", 5678), "rustc");
-        assert_eq!(clean_process_name("", "/usr/local/bin/python3 main.py", 999), "python3");
+        assert_eq!(
+            clean_process_name("", "/usr/local/bin/python3 main.py", 999),
+            "python3"
+        );
         assert_eq!(clean_process_name("", "", 42), "42");
     }
 }

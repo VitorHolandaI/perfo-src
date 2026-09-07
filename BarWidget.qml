@@ -93,8 +93,13 @@ BarWidget {
     function toggle() { root.toggle() }
     function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
     function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
-    function toggleRecording() { if (panelLoader.item) panelLoader.item.historyRecording = !panelLoader.item.historyRecording }
-    function isRecording(): bool { return panelLoader.item ? panelLoader.item.historyRecording : true }
+    function toggleRecording() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleSessionRecording() }
+    function isRecording(): bool { return (panelLoader.item && panelLoader.item.historyPageComp) ? panelLoader.item.historyPageComp.isSessionRecording : false }
+    function toggleSessionsMenu() { if (panelLoader.item) panelLoader.item.toggleSessionsMenu() }
+    function setMetric(m: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.metric = m }
+    function setZoom(z: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.zoomLabel = z }
+    function openCustomInput() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.customInputOpen = true }
+    function applyCustomMinutes(m: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.applyCustomMinutes(String(m)) }
   }
 
   Loader {
@@ -114,10 +119,14 @@ BarWidget {
     bar: root.bar
     text: root.label
     horizontalMargin: 6
-    tooltipText: "Left click for metrics, right click for full TUI"
+    tooltipText: "Left: metrics | Middle: timeline & play | Right: full TUI"
 
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.toggle()
+      else if (b === Qt.MiddleButton && panelLoader.item) {
+        panelLoader.item.page = 8
+        root.open()
+      }
       else if (b === Qt.RightButton && panelLoader.item) panelLoader.item.openTerminal()
     }
   }

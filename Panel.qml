@@ -18,6 +18,7 @@ Panel {
   property int maxHistorySamples: 36000
   property bool historyRecording: true
   property var currentLiveSample: null
+  property alias historyPageComp: historyPageComp
 
   onSnapshotChanged: root.recordHistorySample()
 
@@ -50,6 +51,10 @@ Panel {
 
   function movePage(delta) {
     root.page = (root.page + delta + root.pageNames.length) % root.pageNames.length
+  }
+
+  function toggleSessionsMenu() {
+    if (historyPageComp) historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu
   }
 
   function formatBytes(bytes) {
@@ -174,7 +179,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(500))
+    contentWidth: panel.fittedContentWidth(Style.space(540))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
@@ -193,7 +198,8 @@ Panel {
           if (text === "]" || text === "}") { historyPageComp.jumpTimeline(1); return }
           if (text === " ") { historyPageComp.togglePlayback(); return }
           if (text === "0") { historyPageComp.jumpToLive(); return }
-          if (text === "r" || text === "R") { root.historyRecording = !root.historyRecording; return }
+          if (text === "r" || text === "R") { historyPageComp.toggleSessionRecording(); return }
+          if (text === "s" || text === "S") { historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu; return }
         }
         if (text === "h" || text === "H") root.switchPage(-1)
         else if (text === "l" || text === "L") root.switchPage(1)
@@ -252,7 +258,7 @@ Panel {
 
       Item {
         width: parent.width
-        height: root.page === 8 ? Style.space(340) : Style.space(260)
+        height: root.page === 8 ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(340)) : Style.space(260)
         clip: true
 
         Column {
@@ -283,6 +289,11 @@ Panel {
                 model: root.snapshot ? root.snapshot.cpu_history : []
                 delegate: Rectangle { width: Math.max(1, (parent.width / Math.max(1, dashboardHistoryRepeater.count)) - 1); height: Math.max(2, parent.height * root.percent(modelData) / 100); anchors.bottom: parent.bottom; color: Color.accent }
               }
+            }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.page = 8
             }
           }
            Row {
@@ -628,6 +639,24 @@ Panel {
       }
     }
 
+    var netRx = (root.snapshot.net && root.snapshot.net.totals) ? (Number(root.snapshot.net.totals.rx_bps) || 0) : 0
+    var netTx = (root.snapshot.net && root.snapshot.net.totals) ? (Number(root.snapshot.net.totals.tx_bps) || 0) : 0
+    var netRate = netRx + netTx
+
+    var netProcs = []
+    if (root.snapshot.net && root.snapshot.net.proc_net) {
+      for (var np = 0; np < root.snapshot.net.proc_net.length; np++) {
+        var npItem = root.snapshot.net.proc_net[np]
+        netProcs.push({
+          pid: npItem.pid,
+          tcp_est: Number(npItem.tcp_est) || 0,
+          tcp_listen: Number(npItem.tcp_listen) || 0,
+          udp: Number(npItem.udp) || 0,
+          total_sockets: (Number(npItem.tcp_est) || 0) + (Number(npItem.tcp_listen) || 0) + (Number(npItem.udp) || 0)
+        })
+      }
+    }
+
     var readRate = root.totalRead()
     var writeRate = root.totalWrite()
     var ioMb = (readRate + writeRate) / 1048576
@@ -644,6 +673,13 @@ Panel {
             break
           }
         }
+        var netMatch = null
+        for (var ni = 0; ni < netProcs.length; ni++) {
+          if (netProcs[ni].pid === p.pid) {
+            netMatch = netProcs[ni]
+            break
+          }
+        }
         procs.push({
           pid: p.pid,
           name: p.name || "",
@@ -654,7 +690,11 @@ Panel {
           read_bps: Number(p.read_bps) || 0,
           write_bps: Number(p.write_bps) || 0,
           gpu_percent: gpuMatch ? gpuMatch.gpu_percent : 0,
-          vram_bytes: gpuMatch ? gpuMatch.vram_bytes : 0
+          vram_bytes: gpuMatch ? gpuMatch.vram_bytes : 0,
+          tcp_est: netMatch ? netMatch.tcp_est : 0,
+          tcp_listen: netMatch ? netMatch.tcp_listen : 0,
+          udp: netMatch ? netMatch.udp : 0,
+          total_sockets: netMatch ? netMatch.total_sockets : 0
         })
       }
     }
@@ -679,7 +719,49 @@ Panel {
           read_bps: 0,
           write_bps: 0,
           gpu_percent: gpItem.gpu_percent,
-          vram_bytes: gpItem.vram_bytes
+          vram_bytes: gpItem.vram_bytes,
+          tcp_est: 0,
+          tcp_listen: 0,
+          udp: 0,
+          total_sockets: 0
+        })
+      }
+    }
+
+    for (var n2 = 0; n2 < netProcs.length; n2++) {
+      var npSock = netProcs[n2]
+      var netAlreadyIn = false
+      for (var pi2 = 0; pi2 < procs.length; pi2++) {
+        if (procs[pi2].pid === npSock.pid) {
+          netAlreadyIn = true
+          break
+        }
+      }
+      if (!netAlreadyIn) {
+        var matchedCmd = ""
+        if (root.snapshot.processes) {
+          for (var prIdx = 0; prIdx < root.snapshot.processes.length; prIdx++) {
+            if (root.snapshot.processes[prIdx].pid === npSock.pid) {
+              matchedCmd = root.snapshot.processes[prIdx].cmd || root.snapshot.processes[prIdx].name || ""
+              break
+            }
+          }
+        }
+        procs.push({
+          pid: npSock.pid,
+          name: matchedCmd,
+          cmd: matchedCmd,
+          cpu_percent: 0,
+          mem_bytes: 0,
+          user: "",
+          read_bps: 0,
+          write_bps: 0,
+          gpu_percent: 0,
+          vram_bytes: 0,
+          tcp_est: npSock.tcp_est,
+          tcp_listen: npSock.tcp_listen,
+          udp: npSock.udp,
+          total_sockets: npSock.total_sockets
         })
       }
     }
@@ -692,6 +774,9 @@ Panel {
       gpu: Math.round(gpuPct),
       read_bps: readRate,
       write_bps: writeRate,
+      net_rx_bps: netRx,
+      net_tx_bps: netTx,
+      net_rate: netRate,
       processes: procs
     }
   }

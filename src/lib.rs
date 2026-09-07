@@ -6,6 +6,7 @@
 //! ptrace tracer live here.
 
 pub mod data;
+pub mod recordings;
 pub mod theme;
 pub mod trace;
 pub mod tui;
@@ -19,6 +20,10 @@ enum Command {
     TuiHistory,
     CpuJson,
     StreamJson,
+    Record {
+        subcmd: String,
+        arg: Option<String>,
+    },
     Bench {
         secs: u64,
     },
@@ -37,6 +42,11 @@ fn parse(args: &[String]) -> Command {
         Some("-V") | Some("--version") | Some("version") => Command::Version,
         Some("cpu") => Command::CpuJson,
         Some("stream") => Command::StreamJson,
+        Some("record") | Some("records") | Some("recordings") => {
+            let subcmd = args.get(1).cloned().unwrap_or_else(|| "list".to_string());
+            let arg = args.get(2).cloned();
+            Command::Record { subcmd, arg }
+        }
         Some("bench") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
             Command::Bench { secs }
@@ -78,6 +88,10 @@ USAGE:
   perfo hist | history  interactive history mode (timeline replay & export)
   perfo cpu --json      one-shot JSON snapshot (for widgets/scripts)
   perfo stream --json   continuous JSON snapshots (for widgets)
+  perfo record list     list saved session recordings (JSON)
+  perfo record save <f> save session recording JSON file
+  perfo record get <id> output recorded session JSON
+  perfo record delete <id> delete recorded session
   perfo trace <pid> [name]
                         trace a process's syscalls (ptrace, no strace needed)
   perfo trace -- <cmd...>
@@ -153,6 +167,13 @@ pub fn run() -> ExitCode {
                 }
             }
         }
+        Command::Record { subcmd, arg } => match recordings::dispatch(&subcmd, arg.as_deref()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("perfo record: {e}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Trace { pid, filter, cmd } => {
             let result = match cmd {
                 Some(c) => trace::spawn(&c, filter.as_deref()),

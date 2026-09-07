@@ -782,9 +782,21 @@ fn status_line(state: &State) -> String {
         return msg.clone();
     }
     if state.pane == Pane::History {
-        let rec = if state.history.recording { "● REC" } else { "⏸ PAUSED" };
-        let play = if state.history.playing { " [PLAYING]" } else { "" };
-        let live = if state.history.is_live() { "LIVE" } else { "SCRUB" };
+        let rec = if state.history.recording {
+            "● REC"
+        } else {
+            "⏸ PAUSED"
+        };
+        let play = if state.history.playing {
+            " [PLAYING]"
+        } else {
+            ""
+        };
+        let live = if state.history.is_live() {
+            "LIVE"
+        } else {
+            "SCRUB"
+        };
         return format!(
             "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | q quit",
             state.history.metric.label(),

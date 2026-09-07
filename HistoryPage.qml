@@ -16,28 +16,57 @@ Column {
   property bool isRecording: true
   property bool isPlaying: false
   property string zoomLabel: "2m"
-  property string customSpanText: "40m"
-  property int customSpanSeconds: 2400
+  property int customMinutes: 5
+  property int customSpanSeconds: 300
+  property bool customInputOpen: false
   property string exportStatus: ""
+  property var loadedHistory: []
+  property string loadedSessionId: ""
+  property string loadedSessionTitle: ""
+  property string loadedSessionDuration: ""
+  property var savedRecordings: []
+  property bool showSessionsMenu: false
+  property string sessionNotification: ""
+
+  property bool isSessionRecording: false
+  property var sessionRecordBuffer: []
+  property int targetRecordSeconds: 120
 
   signal toggleRecordingRequested()
   signal requestCapacity(int samples)
 
-  readonly property bool inputActiveFocus: spanInput.activeFocus
-  readonly property bool isCustomZoom: zoomLabel === customSpanText
+  readonly property bool inputActiveFocus: customInputOpen
+  readonly property bool isCustomZoom: zoomLabel === "CUSTOM"
+  readonly property var activeHistory: isSessionRecording ? sessionRecordBuffer : (loadedSessionId.length > 0 ? loadedHistory : history)
+  readonly property string perfoBinPath: {
+    var p = String(Qt.resolvedUrl("bin/perfo"))
+    if (p.indexOf("file://") === 0) p = p.substring(7)
+    return p
+  }
 
   readonly property int effectiveIndex: {
-    if (history.length === 0) return -1
-    if (scrubIndex < 0 || scrubIndex >= history.length) return history.length - 1
+    if (activeHistory.length === 0) return -1
+    if (scrubIndex < 0 || scrubIndex >= activeHistory.length) return activeHistory.length - 1
     return scrubIndex
   }
 
-  readonly property bool isLive: scrubIndex < 0 || (history.length > 0 && effectiveIndex >= history.length - 1)
+  readonly property bool isLive: !isSessionRecording && loadedSessionId.length === 0 && (scrubIndex < 0 || (activeHistory.length > 0 && effectiveIndex >= activeHistory.length - 1))
 
   readonly property var selectedSample: {
     if (isLive && liveSample) return liveSample
-    if (history.length === 0 || effectiveIndex < 0) return liveSample
-    return history[effectiveIndex]
+    if (activeHistory.length === 0 || effectiveIndex < 0) return liveSample
+    return activeHistory[effectiveIndex]
+  }
+
+  onLiveSampleChanged: {
+    if (isSessionRecording && liveSample) {
+      var nextBuf = sessionRecordBuffer.slice()
+      nextBuf.push(liveSample)
+      sessionRecordBuffer = nextBuf
+      if (sessionRecordBuffer.length >= targetRecordSeconds) {
+        historyPage.stopAndSaveSession()
+      }
+    }
   }
 
   spacing: Style.space(5)
@@ -46,11 +75,15 @@ Column {
     id: playbackTimer
     interval: 1000
     repeat: true
-    running: historyPage.isPlaying && historyPage.history.length > 0
+    running: historyPage.isPlaying && historyPage.activeHistory.length > 0
     onTriggered: {
       var next = historyPage.effectiveIndex + 1
-      if (next >= historyPage.history.length) {
-        historyPage.scrubIndex = -1
+      if (next >= historyPage.activeHistory.length) {
+        if (historyPage.loadedSessionId.length > 0) {
+          historyPage.scrubIndex = historyPage.activeHistory.length - 1
+        } else {
+          historyPage.scrubIndex = -1
+        }
         historyPage.isPlaying = false
       } else {
         historyPage.scrubIndex = next
@@ -63,6 +96,93 @@ Column {
     interval: 4000
     repeat: false
     onTriggered: historyPage.exportStatus = ""
+  }
+
+  Timer {
+    id: sessionNotificationTimer
+    interval: 3500
+    repeat: false
+    onTriggered: historyPage.sessionNotification = ""
+  }
+
+  FileView {
+    id: recordingFileReader
+    printErrors: false
+    blockLoading: true
+  }
+
+  Process {
+    id: listRecordingsProc
+    command: [historyPage.perfoBinPath, "record", "list"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        try {
+          historyPage.savedRecordings = JSON.parse(line)
+        } catch(e) {
+          console.warn("Failed to parse recordings list:", e)
+        }
+      }
+    }
+  }
+
+  Process {
+    id: saveRecordingProc
+    property string lastSavedPath: ""
+    property string lastSavedId: ""
+    property string lastSavedDuration: ""
+    stdout: SplitParser {
+      onRead: function(line) {
+        try {
+          var res = JSON.parse(line)
+          if (res && res.path) {
+            saveRecordingProc.lastSavedPath = res.path
+            saveRecordingProc.lastSavedId = res.id || ""
+            saveRecordingProc.lastSavedDuration = res.duration || ""
+          }
+        } catch(e) {}
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        var dur = saveRecordingProc.lastSavedDuration.length > 0 ? saveRecordingProc.lastSavedDuration : "session"
+        historyPage.sessionNotification = "Saved " + dur + "!"
+        historyPage.refreshRecordings()
+        if (saveRecordingProc.lastSavedPath.length > 0) {
+          historyPage.loadSession(saveRecordingProc.lastSavedPath, saveRecordingProc.lastSavedId, false)
+        }
+      } else {
+        historyPage.sessionNotification = "Save failed"
+      }
+      sessionNotificationTimer.restart()
+    }
+  }
+
+  Process {
+    id: deleteRecordingProc
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        historyPage.sessionNotification = "Deleted recording"
+        historyPage.refreshRecordings()
+      }
+      sessionNotificationTimer.restart()
+    }
+  }
+
+  function refreshRecordings() {
+    if (listRecordingsProc.running) {
+      listRecordingsProc.running = false
+    }
+    listRecordingsProc.running = true
+  }
+
+  Component.onCompleted: {
+    historyPage.refreshRecordings()
+  }
+
+  onShowSessionsMenuChanged: {
+    if (showSessionsMenu) {
+      historyPage.refreshRecordings()
+    }
   }
 
   Process {
@@ -78,11 +198,11 @@ Column {
     }
   }
 
-  // Row 1: Title, metric selector, zoom presets, and custom span input (e.g. 40m, 40h)
+  // Row 1: Title, metric selector, zoom presets, and custom span input
   Row {
     width: historyPage.width
     height: Style.space(22)
-    spacing: Style.space(5)
+    spacing: Style.space(4)
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
@@ -94,15 +214,15 @@ Column {
       font.bold: true
     }
 
-    // Metric selector pills: CPU, MEM, IO, GPU
+    // Metric selector pills: CPU, MEM, IO, NET, GPU
     Row {
       spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
 
       Repeater {
-        model: ["CPU", "MEM", "IO", "GPU"]
+        model: ["CPU", "MEM", "IO", "NET", "GPU"]
         delegate: Rectangle {
-          width: Style.space(36)
+          width: Style.space(30)
           height: Style.space(18)
           radius: Style.cornerRadius
           color: historyPage.metric === modelData ? Color.accent : "transparent"
@@ -127,366 +247,825 @@ Column {
       }
     }
 
-    Item { width: Style.space(4); height: 1 }
+    Item { width: Style.space(2); height: 1 }
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
-      text: "SPAN"
-      color: historyPage.foreground
-      opacity: 0.5
+      text: historyPage.isSessionRecording ? "REC TIME" : "SPAN"
+      color: historyPage.isSessionRecording ? Color.urgent : historyPage.foreground
+      opacity: historyPage.isSessionRecording ? 1.0 : 0.55
       font.family: historyPage.fontFamily
       font.pixelSize: Style.font.caption
+      font.bold: historyPage.isSessionRecording
     }
 
-    // Zoom/Span range presets: 2m, 15m, 1h, ALL
+    // Duration presets: 2m, 5m, 10m, 15m (Locked during recording!)
     Row {
       spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
+      opacity: historyPage.isSessionRecording ? 0.35 : 1.0
 
       Repeater {
-        model: ["2m", "15m", "1h", "ALL"]
+        model: ["2m", "5m", "10m", "15m"]
         delegate: Rectangle {
-          width: Style.space(30)
+          width: Style.space(26)
           height: Style.space(18)
           radius: Style.cornerRadius
-          color: historyPage.zoomLabel === modelData ? Color.accent : "transparent"
+          color: (!historyPage.isCustomZoom && historyPage.zoomLabel === modelData) ? Color.accent : "transparent"
           border.color: historyPage.foreground
           border.width: 1
-          opacity: historyPage.zoomLabel === modelData ? 1.0 : 0.55
+          opacity: (!historyPage.isCustomZoom && historyPage.zoomLabel === modelData) ? 1.0 : 0.55
 
           PlainText {
             anchors.centerIn: parent
             text: modelData
-            color: historyPage.zoomLabel === modelData ? "#000000" : historyPage.foreground
+            color: (!historyPage.isCustomZoom && historyPage.zoomLabel === modelData) ? "#000000" : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
-            font.bold: historyPage.zoomLabel === modelData
+            font.bold: (!historyPage.isCustomZoom && historyPage.zoomLabel === modelData)
           }
 
           MouseArea {
             anchors.fill: parent
-            onClicked: historyPage.zoomLabel = modelData
+            enabled: !historyPage.isSessionRecording
+            onClicked: {
+              historyPage.zoomLabel = modelData
+              historyPage.customInputOpen = false
+            }
           }
         }
       }
     }
 
-    // Custom span input: user can enter 40m, 40h, 10h, 30s, etc.
+    // Custom duration button & input
     Rectangle {
       id: customSpanBox
-      width: Style.space(46)
+      width: historyPage.customInputOpen ? Style.space(92) : (historyPage.isCustomZoom ? Style.space(72) : Style.space(52))
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: historyPage.isCustomZoom ? Color.accent : "transparent"
-      border.color: spanInput.activeFocus ? Color.accent : historyPage.foreground
+      border.color: historyPage.customInputOpen ? Color.accent : historyPage.foreground
       border.width: 1
-      opacity: (historyPage.isCustomZoom || spanInput.activeFocus) ? 1.0 : 0.65
+      opacity: historyPage.isSessionRecording ? 0.35 : 1.0
 
-      TextInput {
-        id: spanInput
+      // Editing mode: text input + 'm' + OK + Cancel
+      Row {
+        visible: historyPage.customInputOpen
         anchors.fill: parent
-        anchors.leftMargin: 2
-        anchors.rightMargin: 2
-        text: historyPage.customSpanText
+        anchors.margins: 1
+        spacing: 2
+
+        TextInput {
+          id: customMinutesInput
+          width: Style.space(30)
+          height: parent.height
+          color: historyPage.isCustomZoom ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          horizontalAlignment: TextInput.AlignHCenter
+          verticalAlignment: TextInput.AlignVCenter
+          selectByMouse: true
+          maximumLength: 4
+          validator: IntValidator { bottom: 1; top: 1440 }
+
+          Keys.onEscapePressed: function(event) {
+            historyPage.customInputOpen = false
+            event.accepted = true
+          }
+          Keys.onReturnPressed: function(event) {
+            historyPage.applyCustomMinutes(customMinutesInput.text)
+            event.accepted = true
+          }
+        }
+
+        PlainText {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "m"
+          color: historyPage.isCustomZoom ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+
+        Rectangle {
+          width: Style.space(16)
+          height: parent.height
+          radius: 2
+          color: Color.accent
+          PlainText {
+            anchors.centerIn: parent
+            text: "✓"
+            color: "#000000"
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+          MouseArea {
+            anchors.fill: parent
+            onClicked: historyPage.applyCustomMinutes(customMinutesInput.text)
+          }
+        }
+
+        Rectangle {
+          width: Style.space(16)
+          height: parent.height
+          radius: 2
+          color: "transparent"
+          border.color: historyPage.foreground
+          border.width: 1
+          PlainText {
+            anchors.centerIn: parent
+            text: "✕"
+            color: historyPage.foreground
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          MouseArea {
+            anchors.fill: parent
+            onClicked: historyPage.customInputOpen = false
+          }
+        }
+      }
+
+      // Display mode: "CUSTOM" or "CUSTOM: 5m"
+      PlainText {
+        visible: !historyPage.customInputOpen
+        anchors.centerIn: parent
+        text: historyPage.isCustomZoom ? ("CUSTOM: " + historyPage.customMinutes + "m") : "CUSTOM"
         color: historyPage.isCustomZoom ? "#000000" : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: historyPage.isCustomZoom
-        horizontalAlignment: TextInput.AlignHCenter
-        verticalAlignment: TextInput.AlignVCenter
-        selectByMouse: true
-        clip: true
-
-        Keys.onEscapePressed: function(event) {
-          spanInput.focus = false
-          event.accepted = true
-        }
-
-        onAccepted: {
-          historyPage.applyCustomDuration(text)
-          spanInput.focus = false
-        }
-
-        onEditingFinished: {
-          historyPage.applyCustomDuration(text)
-        }
       }
 
       MouseArea {
         anchors.fill: parent
-        visible: !spanInput.activeFocus
+        visible: !historyPage.customInputOpen
+        enabled: !historyPage.isSessionRecording
         onClicked: {
-          historyPage.applyCustomDuration(spanInput.text)
-          spanInput.forceActiveFocus()
-          spanInput.selectAll()
+          customMinutesInput.text = String(historyPage.customMinutes)
+          historyPage.customInputOpen = true
+          customMinutesInput.forceActiveFocus()
+          customMinutesInput.selectAll()
         }
       }
     }
-
   }
 
-  // Row 2: Playback & Action Controls (REC, PLAY, LIVE, jump & step buttons)
-  Row {
+  // Row 2: Playback & Action Controls (left) and Timer Badge (right)
+  Item {
     width: historyPage.width
     height: Style.space(20)
-    spacing: Style.space(4)
 
-    // REC / FREEZE button
-    Rectangle {
-      width: Style.space(50)
-      height: Style.space(18)
-      radius: Style.cornerRadius
+    Row {
+      anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.isRecording ? Color.urgent : historyPage.foreground
-      border.width: 1
+      spacing: Style.space(3)
 
-      Row {
-        anchors.centerIn: parent
-        spacing: 4
-        Rectangle {
-          width: 6
-          height: 6
-          radius: 3
-          anchors.verticalCenter: parent.verticalCenter
-          color: historyPage.isRecording ? Color.urgent : historyPage.foreground
-          opacity: historyPage.isRecording ? 1.0 : 0.4
+      // REC / STOP button
+      Rectangle {
+        width: historyPage.isSessionRecording ? Style.space(52) : Style.space(46)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.isSessionRecording ? Color.urgent : "transparent"
+        border.color: Color.urgent
+        border.width: 1
+
+        Row {
+          anchors.centerIn: parent
+          spacing: 3
+          Rectangle {
+            width: 6
+            height: 6
+            radius: 3
+            anchors.verticalCenter: parent.verticalCenter
+            color: historyPage.isSessionRecording ? "#ffffff" : Color.urgent
+          }
+          PlainText {
+            anchors.verticalCenter: parent.verticalCenter
+            text: historyPage.isSessionRecording ? "STOP" : "REC"
+            color: historyPage.isSessionRecording ? "#ffffff" : Color.urgent
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
         }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.toggleSessionRecording()
+        }
+      }
+
+      // PLAY REC / PAUSE button
+      Rectangle {
+        width: playButtonText.implicitWidth + Style.space(10)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.isPlaying ? Color.accent : "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+
         PlainText {
-          anchors.verticalCenter: parent.verticalCenter
-          text: historyPage.isRecording ? "REC" : "PAUSED"
+          id: playButtonText
+          anchors.centerIn: parent
+          text: historyPage.isPlaying ? "PAUSE" : "PLAY REC"
+          color: historyPage.isPlaying ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: historyPage.isPlaying
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: {
+            if (historyPage.isPlaying) {
+              historyPage.togglePlayback()
+            } else if (historyPage.loadedSessionId.length > 0) {
+              historyPage.togglePlayback()
+            } else if (!historyPage.showSessionsMenu) {
+              historyPage.showSessionsMenu = true
+            } else {
+              historyPage.togglePlayback()
+            }
+          }
+        }
+      }
+
+      // SESSIONS selector toggle button
+      Rectangle {
+        width: sessionsButtonText.implicitWidth + Style.space(10)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: (historyPage.showSessionsMenu || historyPage.loadedSessionId.length > 0) ? Color.accent : "transparent"
+        border.color: (historyPage.showSessionsMenu || historyPage.loadedSessionId.length > 0) ? Color.accent : historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          id: sessionsButtonText
+          anchors.centerIn: parent
+          text: {
+            var arrow = historyPage.showSessionsMenu ? " ▲" : " ▾"
+            if (historyPage.loadedSessionId.length > 0) {
+              var dur = historyPage.loadedSessionDuration ? historyPage.loadedSessionDuration : "REC"
+              return "📁 " + dur + arrow
+            }
+            return "📁 SESSIONS" + arrow
+          }
+          color: (historyPage.showSessionsMenu || historyPage.loadedSessionId.length > 0) ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: (historyPage.showSessionsMenu || historyPage.loadedSessionId.length > 0)
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.showSessionsMenu = !historyPage.showSessionsMenu
+        }
+      }
+
+      // Jump back button (<<)
+      Rectangle {
+        width: Style.space(18)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          anchors.centerIn: parent
+          text: "<<"
           color: historyPage.foreground
           font.family: historyPage.fontFamily
           font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.jumpTimeline(-1)
         }
       }
 
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.toggleRecordingRequested()
+      // Step -1s button (<)
+      Rectangle {
+        width: Style.space(16)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          anchors.centerIn: parent
+          text: "<"
+          color: historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.stepTimeline(-1)
+        }
+      }
+
+      // Step +1s button (>)
+      Rectangle {
+        width: Style.space(16)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          anchors.centerIn: parent
+          text: ">"
+          color: historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.stepTimeline(1)
+        }
+      }
+
+      // Jump forward button (>>)
+      Rectangle {
+        width: Style.space(18)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          anchors.centerIn: parent
+          text: ">>"
+          color: historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.jumpTimeline(1)
+        }
+      }
+
+      // Jump to LIVE button
+      Rectangle {
+        width: Style.space(32)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.isLive ? Color.accent : "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+        opacity: historyPage.isLive ? 1.0 : 0.6
+
+        PlainText {
+          anchors.centerIn: parent
+          text: "LIVE"
+          color: historyPage.isLive ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: historyPage.isLive
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.jumpToLive()
+        }
+      }
+
+      // Export to TXT + JSON button
+      Rectangle {
+        width: Style.space(42)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: "transparent"
+        border.color: historyPage.foreground
+        border.width: 1
+        opacity: exportProc.running ? 0.4 : 0.75
+
+        PlainText {
+          anchors.centerIn: parent
+          text: "EXPORT"
+          color: historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          enabled: !exportProc.running
+          onClicked: historyPage.exportReport()
+        }
       }
     }
 
-    // PLAY REC / PAUSE button
-    Rectangle {
-      width: playButtonText.implicitWidth + Style.space(12)
-      height: Style.space(18)
-      radius: Style.cornerRadius
+    // Right side: Status notification and Prominent Timer badge anchored to right
+    Row {
+      anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      color: historyPage.isPlaying ? Color.accent : "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
+      spacing: Style.space(4)
 
-      PlainText {
-        id: playButtonText
-        anchors.centerIn: parent
-        text: historyPage.isPlaying ? "PAUSE" : "PLAY REC"
-        color: historyPage.isPlaying ? "#000000" : historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: historyPage.isPlaying
+      // Status notification badge (session notification or export status)
+      Rectangle {
+        visible: historyPage.sessionNotification.length > 0 || historyPage.exportStatus.length > 0
+        height: Style.space(18)
+        width: notifStatusText.implicitWidth + Style.space(10)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: Color.accent
+
+        PlainText {
+          id: notifStatusText
+          anchors.centerIn: parent
+          text: historyPage.sessionNotification.length > 0 ? historyPage.sessionNotification : historyPage.exportStatus
+          color: "#000000"
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
       }
 
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.togglePlayback()
+      // Prominent Timer badge
+      Rectangle {
+        height: Style.space(18)
+        width: timerBadgeText.implicitWidth + Style.space(10)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.isSessionRecording ? Color.urgent : (historyPage.isLive ? "transparent" : Color.accent)
+        border.color: historyPage.isSessionRecording ? Color.urgent : Color.accent
+        border.width: 1
+
+        PlainText {
+          id: timerBadgeText
+          anchors.centerIn: parent
+          text: {
+            if (historyPage.isSessionRecording) {
+              return "● REC " + historyPage.timerClockString()
+            }
+            if (historyPage.loadedSessionId.length > 0) {
+              return (historyPage.isPlaying ? "▶ REC " : "📁 REC ") + historyPage.timerClockString()
+            }
+            return historyPage.isPlaying
+              ? ("▶ REPLAY " + historyPage.timerClockString())
+              : ("⏱ " + historyPage.timerClockString())
+          }
+          color: (historyPage.isSessionRecording || !historyPage.isLive) ? "#000000" : Color.accent
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
       }
     }
+  }
 
-    // Jump back button (<<)
-    Rectangle {
-      width: Style.space(22)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
+  // Submenu panel for selecting which session to play, inspect, or manage
+  Rectangle {
+    id: sessionsPanel
+    visible: historyPage.showSessionsMenu
+    width: historyPage.width
+    height: sessionsColumn.implicitHeight + Style.space(14)
+    color: "transparent"
+    border.color: Color.accent
+    border.width: 1
+    radius: Style.cornerRadius
 
-      PlainText {
-        anchors.centerIn: parent
-        text: "<<"
+    Column {
+      id: sessionsColumn
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      spacing: Style.space(5)
+
+      // Submenu Header
+      Item {
+        width: parent.width
+        height: Style.space(20)
+
+        PlainText {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: "SELECT RECORDING TO PLAY (MAX 5)"
+          color: Color.accent
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        // "+ SAVE CURRENT" button
+        Rectangle {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(100)
+          height: Style.space(18)
+          radius: Style.cornerRadius
+          color: "transparent"
+          border.color: Color.accent
+          border.width: 1
+
+          PlainText {
+            anchors.centerIn: parent
+            text: "+ SAVE CURRENT"
+            color: Color.accent
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            onClicked: historyPage.saveCurrentSession()
+          }
+        }
+      }
+
+      // Divider line
+      Rectangle {
+        width: parent.width
+        height: 1
         color: historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
+        opacity: 0.2
       }
 
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.jumpTimeline(-1)
+      // Item 0: Live Buffer (Current Active Session)
+      Rectangle {
+        width: parent.width
+        height: Style.space(24)
+        radius: Style.cornerRadius
+        color: historyPage.loadedSessionId.length === 0 ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15) : "transparent"
+        border.color: historyPage.loadedSessionId.length === 0 ? Color.accent : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.2)
+        border.width: 1
+
+        Item {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(8)
+          anchors.rightMargin: Style.space(6)
+
+          Row {
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(8)
+
+            Rectangle {
+              width: 6
+              height: 6
+              radius: 3
+              anchors.verticalCenter: parent.verticalCenter
+              color: historyPage.loadedSessionId.length === 0 ? Color.accent : historyPage.foreground
+              opacity: historyPage.loadedSessionId.length === 0 ? 1.0 : 0.5
+            }
+
+            PlainText {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "LIVE BUFFER (Current Session)"
+              color: historyPage.loadedSessionId.length === 0 ? Color.accent : historyPage.foreground
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: historyPage.loadedSessionId.length === 0
+            }
+
+            PlainText {
+              anchors.verticalCenter: parent.verticalCenter
+              text: historyPage.formatDuration(historyPage.history.length) + " (" + historyPage.history.length + "s)"
+              color: historyPage.foreground
+              opacity: 0.6
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Row {
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+
+            // PLAY button for live buffer
+            Rectangle {
+              width: Style.space(50)
+              height: Style.space(16)
+              radius: Style.cornerRadius
+              color: Color.accent
+              border.color: Color.accent
+              border.width: 1
+
+              PlainText {
+                anchors.centerIn: parent
+                text: "▶ PLAY"
+                color: "#000000"
+                font.family: historyPage.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                  historyPage.jumpToLive()
+                  historyPage.togglePlayback()
+                  historyPage.showSessionsMenu = false
+                }
+              }
+            }
+
+            // SWITCH TO LIVE button
+            Rectangle {
+              width: Style.space(46)
+              height: Style.space(16)
+              radius: Style.cornerRadius
+              color: historyPage.loadedSessionId.length === 0 ? Color.accent : "transparent"
+              border.color: historyPage.loadedSessionId.length === 0 ? Color.accent : historyPage.foreground
+              border.width: 1
+              opacity: historyPage.loadedSessionId.length === 0 ? 1.0 : 0.75
+
+              PlainText {
+                anchors.centerIn: parent
+                text: historyPage.loadedSessionId.length === 0 ? "ACTIVE" : "LIVE"
+                color: historyPage.loadedSessionId.length === 0 ? "#000000" : historyPage.foreground
+                font.family: historyPage.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                  historyPage.jumpToLive()
+                  historyPage.showSessionsMenu = false
+                }
+              }
+            }
+          }
+        }
       }
-    }
 
-    // Step -1s button (<)
-    Rectangle {
-      width: Style.space(18)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
+      // Items 1..5: Saved recordings
+      Repeater {
+        model: historyPage.savedRecordings
+        delegate: Rectangle {
+          id: recItemBox
+          width: sessionsColumn.width
+          height: Style.space(24)
+          radius: Style.cornerRadius
+          readonly property bool isCurrent: historyPage.loadedSessionId === modelData.id
+          color: isCurrent ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15) : "transparent"
+          border.color: isCurrent ? Color.accent : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.2)
+          border.width: 1
 
+          Item {
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(8)
+            anchors.rightMargin: Style.space(6)
+
+            Row {
+              id: recInfoRow
+              anchors.left: parent.left
+              anchors.right: recButtonsRow.left
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
+
+              PlainText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "📁 " + modelData.date + " " + modelData.time
+                color: recItemBox.isCurrent ? Color.accent : historyPage.foreground
+                font.family: historyPage.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: recItemBox.isCurrent
+              }
+
+              PlainText {
+                anchors.verticalCenter: parent.verticalCenter
+                text: modelData.duration + " (" + modelData.sample_count + "s)"
+                color: historyPage.foreground
+                opacity: 0.6
+                font.family: historyPage.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+              }
+            }
+
+            // Right side buttons: [▶ PLAY] [LOAD] [✕]
+            Row {
+              id: recButtonsRow
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(4)
+
+              // PLAY button
+              Rectangle {
+                width: Style.space(48)
+                height: Style.space(16)
+                radius: Style.cornerRadius
+                color: Color.accent
+                border.color: Color.accent
+                border.width: 1
+
+                PlainText {
+                  anchors.centerIn: parent
+                  text: "▶ PLAY"
+                  color: "#000000"
+                  font.family: historyPage.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: {
+                    historyPage.loadSession(modelData.path, modelData.id, true)
+                    historyPage.showSessionsMenu = false
+                  }
+                }
+              }
+
+              // LOAD / INSPECT button
+              Rectangle {
+                width: Style.space(40)
+                height: Style.space(16)
+                radius: Style.cornerRadius
+                color: "transparent"
+                border.color: historyPage.foreground
+                border.width: 1
+                opacity: 0.8
+
+                PlainText {
+                  anchors.centerIn: parent
+                  text: "LOAD"
+                  color: historyPage.foreground
+                  font.family: historyPage.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: {
+                    historyPage.loadSession(modelData.path, modelData.id, false)
+                    historyPage.showSessionsMenu = false
+                  }
+                }
+              }
+
+              // DELETE [✕] button
+              Rectangle {
+                width: Style.space(18)
+                height: Style.space(16)
+                radius: Style.cornerRadius
+                color: "transparent"
+                border.color: Color.urgent
+                border.width: 1
+
+                PlainText {
+                  anchors.centerIn: parent
+                  text: "✕"
+                  color: Color.urgent
+                  font.family: historyPage.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: historyPage.deleteSession(modelData.id)
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Empty placeholder when no saved files exist yet
       PlainText {
-        anchors.centerIn: parent
-        text: "<"
+        visible: (!historyPage.savedRecordings || historyPage.savedRecordings.length === 0)
+        width: parent.width - Style.space(16)
+        text: "No saved recordings yet. Click '+ SAVE CURRENT' to save."
         color: historyPage.foreground
+        opacity: 0.5
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.stepTimeline(-1)
-      }
-    }
-
-    // Step +1s button (>)
-    Rectangle {
-      width: Style.space(18)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
-
-      PlainText {
-        anchors.centerIn: parent
-        text: ">"
-        color: historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.stepTimeline(1)
-      }
-    }
-
-    // Jump forward button (>>)
-    Rectangle {
-      width: Style.space(22)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
-
-      PlainText {
-        anchors.centerIn: parent
-        text: ">>"
-        color: historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.jumpTimeline(1)
-      }
-    }
-
-    // Jump to LIVE button
-    Rectangle {
-      width: Style.space(36)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: historyPage.isLive ? Color.accent : "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
-      opacity: historyPage.isLive ? 1.0 : 0.6
-
-      PlainText {
-        anchors.centerIn: parent
-        text: "LIVE"
-        color: historyPage.isLive ? "#000000" : historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: historyPage.isLive
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: historyPage.jumpToLive()
-      }
-    }
-
-    // Export to TXT + JSON button
-    Rectangle {
-      width: Style.space(48)
-      height: Style.space(18)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
-      opacity: exportProc.running ? 0.4 : 0.75
-
-      PlainText {
-        anchors.centerIn: parent
-        text: "EXPORT"
-        color: historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        enabled: !exportProc.running
-        onClicked: historyPage.exportReport()
-      }
-    }
-
-    // Prominent Timer badge
-    Rectangle {
-      height: Style.space(18)
-      width: timerBadgeText.implicitWidth + Style.space(12)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: historyPage.isLive ? "transparent" : Color.accent
-      border.color: Color.accent
-      border.width: 1
-
-      PlainText {
-        id: timerBadgeText
-        anchors.centerIn: parent
-        text: historyPage.isPlaying
-          ? ("▶ REPLAY " + historyPage.timerClockString())
-          : ("⏱ " + historyPage.timerClockString())
-        color: historyPage.isLive ? Color.accent : "#000000"
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
-      }
-    }
-
-    // Export notification badge
-    Rectangle {
-      visible: historyPage.exportStatus.length > 0
-      height: Style.space(18)
-      width: exportStatusText.implicitWidth + Style.space(12)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: Color.accent
-
-      PlainText {
-        id: exportStatusText
-        anchors.centerIn: parent
-        text: historyPage.exportStatus
-        color: "#000000"
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: true
+        horizontalAlignment: Text.AlignHCenter
+        anchors.horizontalCenter: parent.horizontalCenter
+        wrapMode: Text.WordWrap
       }
     }
   }
@@ -523,7 +1102,7 @@ Column {
 
           color: isSelected
             ? Color.accent
-            : (modelData.rawIndex === historyPage.history.length - 1
+            : (modelData.rawIndex === historyPage.activeHistory.length - 1
                 ? Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.75)
                 : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.35))
 
@@ -542,7 +1121,7 @@ Column {
     // Vertical needle cursor line running through the bars
     Rectangle {
       id: needleCursor
-      visible: historyPage.history.length > 0
+      visible: historyPage.activeHistory.length > 0
       width: 2
       height: parent.height - 4
       anchors.verticalCenter: parent.verticalCenter
@@ -573,8 +1152,8 @@ Column {
 
     PlainText {
       anchors.centerIn: parent
-      visible: historyPage.history.length === 0
-      text: "collecting history snapshots..."
+      visible: historyPage.activeHistory.length === 0
+      text: historyPage.loadedSessionId.length > 0 ? "empty recording" : "collecting history snapshots..."
       color: historyPage.foreground
       opacity: 0.5
       font.family: historyPage.fontFamily
@@ -755,7 +1334,7 @@ Column {
         color: historyPage.isLive ? "transparent" : Color.accent
         border.color: Color.accent
         border.width: 1
-        visible: historyPage.history.length > 0
+        visible: historyPage.activeHistory.length > 0
 
         PlainText {
           id: cursorTimeBadgeText
@@ -792,9 +1371,15 @@ Column {
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
-      text: historyPage.isPlaying
-        ? "REPLAY PROCESSES"
-        : (historyPage.isLive ? (historyPage.isRecording ? "LIVE PROCESSES" : "LIVE (PAUSED REC)") : "HISTORICAL PROCESSES")
+      text: {
+        if (historyPage.loadedSessionId.length > 0) {
+          var dur = historyPage.loadedSessionDuration ? historyPage.loadedSessionDuration : "REC"
+          return historyPage.isPlaying ? ("REPLAY (" + dur + ")") : ("RECORDING (" + dur + ")")
+        }
+        return historyPage.isPlaying
+          ? "REPLAY PROCESSES"
+          : (historyPage.isLive ? (historyPage.isRecording ? "LIVE PROCESSES" : "LIVE (PAUSED REC)") : "HISTORICAL PROCESSES")
+      }
       color: historyPage.foreground
       opacity: 0.7
       font.family: historyPage.fontFamily
@@ -894,7 +1479,11 @@ Column {
 
   PlainText {
     visible: historyPage.sortedProcesses().length === 0
-    text: historyPage.metric === "GPU" ? "no active GPU processes for this sample" : "no process activity recorded for this sample"
+    text: {
+      if (historyPage.metric === "GPU") return "no active GPU processes for this sample"
+      if (historyPage.metric === "NET") return "no active network socket processes for this sample"
+      return "no process activity recorded for this sample"
+    }
     color: historyPage.foreground
     opacity: 0.55
     font.family: historyPage.fontFamily
@@ -904,17 +1493,18 @@ Column {
   // Helper functions
   function currentZoomSeconds() {
     if (zoomLabel === "2m") return 120
+    if (zoomLabel === "5m") return 300
+    if (zoomLabel === "10m") return 600
     if (zoomLabel === "15m") return 900
-    if (zoomLabel === "1h") return 3600
-    if (zoomLabel === "ALL") return Math.max(1, history.length)
-    return customSpanSeconds
+    if (zoomLabel === "CUSTOM") return customSpanSeconds
+    return 120
   }
 
   function rulerCursorRatio() {
-    if (!history || history.length === 0) return 1.0
+    if (!activeHistory || activeHistory.length === 0) return 1.0
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var sliceCount = history.length - startIdx
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var sliceCount = activeHistory.length - startIdx
     if (sliceCount <= 1) return 1.0
     var eff = effectiveIndex
     if (eff < startIdx) return 0.0
@@ -922,47 +1512,51 @@ Column {
   }
 
   function rulerStartTime() {
-    if (!history || history.length === 0) {
+    if (!activeHistory || activeHistory.length === 0) {
       if (liveSample && liveSample.timestamp) return liveSample.timestamp + " (+0s)"
       return "--:--:--"
     }
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var sample = history[startIdx]
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var sample = activeHistory[startIdx]
     var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
     return t + " (+0s)"
   }
 
   function rulerEndTime() {
-    var sample = (isLive && liveSample) ? liveSample : (history && history.length > 0 ? history[history.length - 1] : null)
+    var sample = (isLive && liveSample) ? liveSample : (activeHistory && activeHistory.length > 0 ? activeHistory[activeHistory.length - 1] : null)
     if (!sample) return "--:--:--"
     var span = currentZoomSeconds()
-    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
     var t = sample.timestamp ? sample.timestamp : "--:--:--"
-    return t + " (+" + formatDuration(totalSpan) + " LIVE)"
+    var suffix = isLive ? " (+" + formatDuration(totalSpan) + " LIVE)" : " (+" + formatDuration(totalSpan) + ")"
+    return t + suffix
   }
 
   function timerClockString() {
-    if (!history || history.length === 0) return "00:00 / 00:00"
+    if (isSessionRecording) {
+      return formatTimerClock(sessionRecordBuffer.length) + " / " + formatTimerClock(targetRecordSeconds)
+    }
+    if (!activeHistory || activeHistory.length === 0) return "00:00 / 00:00"
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
-      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistory.length - 1 - startIdx)) * totalSpan)))
     return formatTimerClock(elapsed) + " / " + formatTimerClock(totalSpan)
   }
 
   function timerOffsetLabel() {
-    if (!history || history.length === 0 || !selectedSample) return "+0s"
+    if (!activeHistory || activeHistory.length === 0 || !selectedSample) return "+0s"
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
-      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistory.length - 1 - startIdx)) * totalSpan)))
     return "+" + formatDuration(elapsed)
   }
 
@@ -979,60 +1573,47 @@ Column {
   }
 
   function scrubToX(mouseX, totalWidth) {
-    if (!history || history.length === 0) return
+    if (!activeHistory || activeHistory.length === 0) return
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var sliceCount = history.length - startIdx
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var sliceCount = activeHistory.length - startIdx
     if (sliceCount <= 0) return
     var ratio = Math.max(0.0, Math.min(1.0, mouseX / Math.max(1, totalWidth)))
     var target = Math.round(startIdx + ratio * (sliceCount - 1))
-    if (target >= history.length - 1) {
+    if (target >= activeHistory.length - 1 && loadedSessionId.length === 0) {
       scrubIndex = -1
     } else {
-      scrubIndex = Math.max(0, target)
+      scrubIndex = Math.max(0, Math.min(activeHistory.length - 1, target))
     }
     isPlaying = false
   }
 
-  function applyCustomDuration(input) {
-    var secs = parseDuration(input)
-    if (secs > 0) {
-      customSpanSeconds = secs
-      customSpanText = input.trim()
-      zoomLabel = customSpanText
-      historyPage.requestCapacity(secs)
+  function applyCustomMinutes(rawText) {
+    var str = String(rawText || "").trim()
+    var num = parseInt(str, 10)
+    if (!isNaN(num) && num >= 1 && num <= 1440 && /^\d+$/.test(str)) {
+      customMinutes = num
+      customSpanSeconds = num * 60
+      zoomLabel = "CUSTOM"
+      customInputOpen = false
+      historyPage.requestCapacity(customSpanSeconds)
+    } else {
+      sessionNotification = "Enter valid integer minutes"
+      sessionNotificationTimer.restart()
     }
-  }
-
-  function parseDuration(input) {
-    if (!input) return 120
-    var str = String(input).trim().toLowerCase()
-    var match = str.match(/^([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)$/)
-    if (!match) return 120
-    var val = parseFloat(match[1])
-    if (isNaN(val) || val <= 0) return 120
-    var u = match[2]
-    if (u.length > 0) {
-      if (u[0] === "h") return Math.round(val * 3600)
-      if (u[0] === "m") return Math.round(val * 60)
-      if (u[0] === "d") return Math.round(val * 86400)
-      if (u[0] === "s") return Math.round(val)
-    }
-    if (val <= 120) return Math.round(val * 60)
-    return Math.round(val)
   }
 
   function visibleBars() {
-    if (!history || history.length === 0) return []
+    if (!activeHistory || activeHistory.length === 0) return []
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var sliceCount = history.length - startIdx
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var sliceCount = activeHistory.length - startIdx
     var maxBars = 100
 
     if (sliceCount <= maxBars) {
       var bars = []
-      for (var i = startIdx; i < history.length; i++) {
-        var rawSample = history[i]
+      for (var i = startIdx; i < activeHistory.length; i++) {
+        var rawSample = activeHistory[i]
         bars.push({
           rawIndex: i,
           value: metricValue(rawSample),
@@ -1047,13 +1628,13 @@ Column {
     var downsampled = []
     for (var b = 0; b < maxBars; b++) {
       var bStart = Math.floor(startIdx + b * bucketSize)
-      var bEnd = Math.min(history.length, Math.floor(startIdx + (b + 1) * bucketSize))
+      var bEnd = Math.min(activeHistory.length, Math.floor(startIdx + (b + 1) * bucketSize))
       if (bStart >= bEnd) continue
 
       var peakVal = 0
       var peakIdx = bStart
       for (var k = bStart; k < bEnd; k++) {
-        var v = metricValue(history[k])
+        var v = metricValue(activeHistory[k])
         if (v >= peakVal) {
           peakVal = v
           peakIdx = k
@@ -1075,27 +1656,42 @@ Column {
     if (metric === "CPU") return Number(sample.cpu) || 0
     if (metric === "MEM") return Number(sample.mem) || 0
     if (metric === "IO") return Number(sample.io_mb) || 0
+    if (metric === "NET") return (Number(sample.net_rx_bps) || 0) + (Number(sample.net_tx_bps) || 0)
     if (metric === "GPU") return Number(sample.gpu) || 0
     return 0
   }
 
   function maxMetric(type) {
     if (type === "CPU" || type === "MEM" || type === "GPU") return 100.0
+    if (type === "NET") {
+      var maxNet = 1048576.0
+      for (var n = 0; n < activeHistory.length; n++) {
+        var nVal = (Number(activeHistory[n].net_rx_bps) || 0) + (Number(activeHistory[n].net_tx_bps) || 0)
+        if (nVal > maxNet) maxNet = nVal
+      }
+      return maxNet
+    }
     var maxVal = 10.0
-    for (var i = 0; i < history.length; i++) {
-      var val = Number(history[i].io_mb) || 0
+    for (var i = 0; i < activeHistory.length; i++) {
+      var val = Number(activeHistory[i].io_mb) || 0
       if (val > maxVal) maxVal = val
     }
     return maxVal
   }
 
   function stepTimeline(delta) {
-    if (!history || history.length === 0) return
-    var target = effectiveIndex + delta
-    if (target >= 0 && target < history.length) {
+    if (!activeHistory || activeHistory.length === 0) return
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var current = effectiveIndex
+    var target = current + delta
+    target = Math.max(startIdx, Math.min(activeHistory.length - 1, target))
+    if (target >= activeHistory.length - 1 && loadedSessionId.length === 0) {
+      scrubIndex = -1
+    } else {
       scrubIndex = target
-      isPlaying = false
     }
+    isPlaying = false
   }
 
   function jumpStepSeconds() {
@@ -1107,11 +1703,14 @@ Column {
   }
 
   function jumpTimeline(direction) {
-    if (!history || history.length === 0) return
+    if (!activeHistory || activeHistory.length === 0) return
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, activeHistory.length - span)
     var step = jumpStepSeconds() * (direction < 0 ? -1 : 1)
-    var target = effectiveIndex + step
-    if (target < 0) target = 0
-    if (target >= history.length - 1) {
+    var current = effectiveIndex
+    var target = current + step
+    target = Math.max(startIdx, Math.min(activeHistory.length - 1, target))
+    if (target >= activeHistory.length - 1 && loadedSessionId.length === 0) {
       scrubIndex = -1
     } else {
       scrubIndex = target
@@ -1123,16 +1722,125 @@ Column {
     if (isPlaying) {
       isPlaying = false
     } else {
-      if (effectiveIndex >= history.length - 1) {
-        scrubIndex = Math.max(0, history.length - currentZoomSeconds())
+      if (activeHistory.length === 0) return
+      if (scrubIndex < 0 || scrubIndex >= activeHistory.length - 1) {
+        scrubIndex = 0
       }
       isPlaying = true
     }
   }
 
   function jumpToLive() {
+    isSessionRecording = false
+    sessionRecordBuffer = []
+    loadedSessionId = ""
+    loadedSessionTitle = ""
+    loadedSessionDuration = ""
+    loadedHistory = []
     scrubIndex = -1
     isPlaying = false
+  }
+
+  function toggleSessionRecording() {
+    if (isSessionRecording) {
+      stopAndSaveSession()
+    } else {
+      startSessionRecording()
+    }
+  }
+
+  function startSessionRecording() {
+    sessionRecordBuffer = []
+    targetRecordSeconds = currentZoomSeconds()
+    isSessionRecording = true
+    loadedSessionId = ""
+    loadedSessionTitle = ""
+    loadedSessionDuration = ""
+    loadedHistory = []
+    scrubIndex = -1
+    isPlaying = false
+    sessionNotification = "Recording " + formatDuration(targetRecordSeconds) + "..."
+    sessionNotificationTimer.restart()
+  }
+
+  function stopAndSaveSession() {
+    if (!isSessionRecording) return
+    isSessionRecording = false
+    if (sessionRecordBuffer.length >= 2) {
+      saveSessionData(sessionRecordBuffer, targetRecordSeconds)
+    } else {
+      sessionRecordBuffer = []
+      sessionNotification = "Recording cancelled"
+      sessionNotificationTimer.restart()
+    }
+  }
+
+  function stopSessionRecording() {
+    stopAndSaveSession()
+  }
+
+  function saveSessionData(buf, targetSecs) {
+    if (!buf || buf.length === 0) return
+    var payload = {
+      samples: buf,
+      duration_seconds: buf.length,
+      metric_focus: historyPage.metric
+    }
+    var jsonStr = JSON.stringify(payload)
+    if (saveRecordingProc.running) {
+      saveRecordingProc.running = false
+    }
+    saveRecordingProc.command = [
+      historyPage.perfoBinPath,
+      "record",
+      "save",
+      jsonStr
+    ]
+    saveRecordingProc.running = true
+  }
+
+  function saveCurrentSession() {
+    var buf = (loadedSessionId.length > 0 ? loadedHistory : history)
+    if (!buf || buf.length === 0) {
+      sessionNotification = "Buffer is empty"
+      sessionNotificationTimer.restart()
+      return
+    }
+    saveSessionData(buf, buf.length)
+  }
+
+  function loadSession(recPath, recId, autoPlay) {
+    recordingFileReader.path = recPath
+    var str = recordingFileReader.text()
+    if (str && str.length > 0) {
+      try {
+        var data = JSON.parse(str)
+        if (data && data.samples && data.samples.length > 0) {
+          isSessionRecording = false
+          sessionRecordBuffer = []
+          loadedHistory = data.samples
+          loadedSessionId = data.id || recId
+          loadedSessionTitle = (data.date || "") + " " + (data.time || "")
+          loadedSessionDuration = data.duration_label || ""
+          scrubIndex = 0
+          isPlaying = autoPlay
+          sessionNotification = "Loaded " + (data.duration_label || "") + " session"
+          sessionNotificationTimer.restart()
+          return true
+        }
+      } catch(e) {
+        console.warn("Error parsing session file:", e)
+      }
+    }
+    return false
+  }
+
+  function deleteSession(recId) {
+    if (loadedSessionId === recId) {
+      jumpToLive()
+    }
+    deleteRecordingProc.command = [historyPage.perfoBinPath, "record", "delete", recId]
+    deleteRecordingProc.running = true
   }
 
   function metricHeader() {
@@ -1140,33 +1848,38 @@ Column {
     if (metric === "MEM") return "MEM%"
     if (metric === "GPU") return "GPU%"
     if (metric === "IO") return "IO RATE"
+    if (metric === "NET") return "TCP EST"
     return metric
   }
 
   function secondaryHeader() {
     if (metric === "GPU") return "VRAM"
+    if (metric === "NET") return "UDP"
     return "RAM"
   }
 
   function timingLabel() {
     if (!selectedSample) return "No history recorded yet"
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, history.length - span)
-    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var startIdx = Math.max(0, activeHistory.length - span)
+    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
-      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistory.length - 1 - startIdx)) * totalSpan)))
     var durStr = "+" + formatDuration(elapsed)
     var prefix = ""
-    if (isPlaying) {
+    if (isSessionRecording) {
+      prefix = "REC [" + formatTimerClock(sessionRecordBuffer.length) + " / " + formatTimerClock(targetRecordSeconds) + "]: "
+    } else if (isPlaying) {
       prefix = "REPLAY [" + durStr + "] (" + selectedSample.timestamp + "): "
     } else if (isLive) {
       prefix = isRecording ? ("LIVE [" + durStr + "]: ") : ("LIVE (PAUSED REC) [" + selectedSample.timestamp + "]: ")
     } else {
       prefix = durStr + " (" + selectedSample.timestamp + "): "
     }
-    return prefix + "CPU " + selectedSample.cpu + "% | MEM " + selectedSample.mem + "% | IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " | GPU " + selectedSample.gpu + "%"
+    var netBps = (Number(selectedSample.net_rx_bps) || 0) + (Number(selectedSample.net_tx_bps) || 0)
+    return prefix + "CPU " + selectedSample.cpu + "% │ MEM " + selectedSample.mem + "% │ IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " │ NET " + formatRate(netBps) + " │ GPU " + selectedSample.gpu + "%"
   }
 
   function sampleMetricsSummary() {
@@ -1174,13 +1887,25 @@ Column {
     var cpuVal = Math.round(Number(selectedSample.cpu) || 0)
     var memVal = Math.round(Number(selectedSample.mem) || 0)
     var ioVal = (Number(selectedSample.read_bps) || 0) + (Number(selectedSample.write_bps) || 0)
+    var netVal = (Number(selectedSample.net_rx_bps) || 0) + (Number(selectedSample.net_tx_bps) || 0)
     var gpuVal = Math.round(Number(selectedSample.gpu) || 0)
-    return "CPU " + cpuVal + "%  |  MEM " + memVal + "%  |  IO " + formatRate(ioVal) + "  |  GPU " + gpuVal + "%"
+    return "CPU " + cpuVal + "% │ MEM " + memVal + "% │ IO " + formatRate(ioVal) + " │ NET " + formatRate(netVal) + " │ GPU " + gpuVal + "%"
   }
 
   function sortedProcesses() {
     if (!selectedSample || !selectedSample.processes) return []
     var list = selectedSample.processes.slice()
+    if (metric === "NET") {
+      var netList = list.filter(function(p) {
+        return (Number(p.total_sockets) || 0) > 0 || (Number(p.tcp_est) || 0) > 0 || (Number(p.udp) || 0) > 0
+      })
+      netList.sort(function(a, b) {
+        var diff = (Number(b.tcp_est) || 0) - (Number(a.tcp_est) || 0)
+        if (diff !== 0) return diff
+        return (Number(b.total_sockets) || 0) - (Number(a.total_sockets) || 0)
+      })
+      return netList.slice(0, 5)
+    }
     if (metric === "GPU") {
       var gpuList = list.filter(function(p) {
         return (Number(p.gpu_percent) || 0) > 0 || (Number(p.vram_bytes) || 0) > 0
@@ -1219,12 +1944,20 @@ Column {
       var totalIo = (Number(proc.read_bps) || 0) + (Number(proc.write_bps) || 0)
       return totalIo > 0 ? formatRate(totalIo) : "--"
     }
+    if (metric === "NET") {
+      var est = Number(proc.tcp_est) || 0
+      return est > 0 ? (est + " conn") : "--"
+    }
     return Math.round(Number(proc.cpu_percent) || 0) + "%"
   }
 
   function secondaryCellText(proc) {
     if (metric === "GPU") {
       return (Number(proc.vram_bytes) || 0) > 0 ? formatBytes(proc.vram_bytes) : "--"
+    }
+    if (metric === "NET") {
+      var u = Number(proc.udp) || 0
+      return u > 0 ? (u + " sock") : "--"
     }
     return formatBytes(proc.mem_bytes)
   }
@@ -1270,8 +2003,8 @@ Column {
     var peakGpu = 0, peakGpuTime = "--"
     var totalCpu = 0, totalMem = 0
 
-    for (var k = 0; k < historyPage.history.length; k++) {
-      var s = historyPage.history[k]
+    for (var k = 0; k < historyPage.activeHistory.length; k++) {
+      var s = historyPage.activeHistory[k]
       totalCpu += Number(s.cpu) || 0
       totalMem += Number(s.mem) || 0
 
@@ -1296,8 +2029,8 @@ Column {
       }
     }
 
-    var avgCpu = historyPage.history.length > 0 ? (totalCpu / historyPage.history.length).toFixed(1) : "0"
-    var avgMem = historyPage.history.length > 0 ? (totalMem / historyPage.history.length).toFixed(1) : "0"
+    var avgCpu = historyPage.activeHistory.length > 0 ? (totalCpu / historyPage.activeHistory.length).toFixed(1) : "0"
+    var avgMem = historyPage.activeHistory.length > 0 ? (totalMem / historyPage.activeHistory.length).toFixed(1) : "0"
 
     return {
       peakCpu: peakCpu,
@@ -1315,7 +2048,7 @@ Column {
   }
 
   function exportReport() {
-    if (!history || history.length === 0) {
+    if (!activeHistory || activeHistory.length === 0) {
       exportStatus = "No history to export"
       exportStatusTimer.restart()
       return
@@ -1335,12 +2068,12 @@ Column {
 
     exportProc.targetFilename = baseName + ".{txt,json}"
     exportProc.command = [
-      "python3",
+      "sh",
       "-c",
-      "import sys, pathlib; pathlib.Path(sys.argv[1]).expanduser().write_text(sys.argv[3], encoding='utf-8'); pathlib.Path(sys.argv[2]).expanduser().write_text(sys.argv[4], encoding='utf-8')",
-      txtFullPath,
-      jsonFullPath,
+      "printf '%s' \"$1\" > \"$HOME/$2.txt\" && printf '%s' \"$3\" > \"$HOME/$2.json\"",
+      "_",
       report,
+      baseName,
       reportJson
     ]
     exportProc.running = true
@@ -1367,7 +2100,7 @@ Column {
       metric_focus: historyPage.metric,
       zoom_span: historyPage.zoomLabel,
       zoom_seconds: historyPage.currentZoomSeconds(),
-      total_recorded_samples: historyPage.history.length,
+      total_recorded_samples: historyPage.activeHistory.length,
       current_scrub_index: historyPage.effectiveIndex,
       is_live: historyPage.isLive,
       selected_sample: sample ? {
@@ -1377,6 +2110,9 @@ Column {
         read_bps: sample.read_bps,
         write_bps: sample.write_bps,
         io_mb: sample.io_mb,
+        net_rx_bps: sample.net_rx_bps,
+        net_tx_bps: sample.net_tx_bps,
+        net_rate: sample.net_rate,
         gpu_percent: sample.gpu,
         processes: sample.processes || []
       } : null,
@@ -1395,6 +2131,8 @@ Column {
         io_mb: s.io_mb,
         read_bps: s.read_bps,
         write_bps: s.write_bps,
+        net_rx_bps: s.net_rx_bps,
+        net_tx_bps: s.net_tx_bps,
         gpu_percent: s.gpu,
         top_process: (s.processes && s.processes.length > 0) ? (s.processes[0].name || s.processes[0].cmd || "") : ""
       })
@@ -1414,7 +2152,7 @@ Column {
     lines.push("Generated at         : " + dateObj.toISOString().replace("T", " ").substr(0, 19))
     lines.push("Active Metric Focus  : " + historyPage.metric)
     lines.push("Timeline View Span   : " + historyPage.zoomLabel + " (" + historyPage.currentZoomSeconds() + "s)")
-    lines.push("Total Recorded Time  : " + historyPage.formatDuration(historyPage.history.length) + " (" + historyPage.history.length + " samples in RAM)")
+    lines.push("Total Recorded Time  : " + historyPage.formatDuration(historyPage.activeHistory.length) + " (" + historyPage.activeHistory.length + " samples)")
     lines.push("Current View State   : " + (historyPage.isLive ? "LIVE" : "SCRUBBED (Index: " + historyPage.effectiveIndex + ")"))
     lines.push("")
 
@@ -1426,6 +2164,7 @@ Column {
       lines.push("Overall CPU Usage    : " + sample.cpu + "%")
       lines.push("Overall Memory Usage : " + sample.mem + "%")
       lines.push("Total Disk I/O Rate  : " + (Number(sample.io_mb) || 0).toFixed(1) + " MB/s (Read: " + historyPage.formatBytes(sample.read_bps) + "/s, Write: " + historyPage.formatBytes(sample.write_bps) + "/s)")
+      lines.push("Total Network Rate   : " + historyPage.formatRate((Number(sample.net_rx_bps) || 0) + (Number(sample.net_tx_bps) || 0)) + " (RX: " + historyPage.formatRate(sample.net_rx_bps) + ", TX: " + historyPage.formatRate(sample.net_tx_bps) + ")")
       lines.push("GPU Usage            : " + sample.gpu + "%")
       lines.push("")
       lines.push("Active Processes at this timing:")
@@ -1467,9 +2206,9 @@ Column {
     lines.push(border)
     lines.push(padRight("TIMESTAMP", 12) + " | " + padLeft("CPU %", 7) + " | " + padLeft("MEM %", 7) + " | " + padLeft("IO MB/s", 10) + " | " + padLeft("GPU %", 7) + " | TOP PROCESS")
     lines.push(subBorder)
-    var step = Math.max(1, Math.floor(historyPage.history.length / 100))
-    for (var j = 0; j < historyPage.history.length; j += step) {
-      var sm = historyPage.history[j]
+    var step = Math.max(1, Math.floor(historyPage.activeHistory.length / 100))
+    for (var j = 0; j < historyPage.activeHistory.length; j += step) {
+      var sm = historyPage.activeHistory[j]
       var topP = (sm.processes && sm.processes.length > 0) ? (sm.processes[0].name || sm.processes[0].cmd || "") : ""
       lines.push(
         padRight(sm.timestamp, 12) + " | " +
