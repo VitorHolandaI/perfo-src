@@ -13,7 +13,7 @@ const LAST_CPU_STAT_FIELD: usize = 36;
 /// cpuinfo_max_freq is exposed in kHz; our numbers are MHz.
 const KHZ_PER_MHZ: u64 = 1000;
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ProcessInfo {
     pub pid: u32,
     /// Kernel process name, independent of command-line arguments.

@@ -1,6 +1,7 @@
 pub mod cpu;
 mod detail;
 mod help;
+pub mod history;
 mod net_summary;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -24,9 +25,18 @@ const HELP_LAST_PAGE: usize = 4;
 const PAGE_STEP: i32 = 10;
 
 pub fn run() -> std::io::Result<()> {
+    run_with_pane(Pane::Cpu)
+}
+
+pub fn run_with_pane(pane: Pane) -> std::io::Result<()> {
     let mut terminal = init();
     let mut monitor = CpuMonitor::new();
-    let result = run_loop(&mut terminal, &mut monitor);
+    let mut state = State::default();
+    if pane != Pane::Cpu {
+        state.pane = pane;
+        state.fullscreen = true;
+    }
+    let result = run_loop(&mut terminal, &mut monitor, state);
     restore();
     result
 }
@@ -67,6 +77,7 @@ struct State {
     cores_focused: bool,
     tracing: bool,
     trace_start_pid: Option<u32>,
+    pub history: history::HistoryState,
 }
 
 impl Default for State {
@@ -96,6 +107,7 @@ impl Default for State {
             cores_focused: true,
             tracing: false,
             trace_start_pid: None,
+            history: history::HistoryState::default(),
         }
     }
 }
@@ -103,8 +115,8 @@ impl Default for State {
 fn run_loop(
     terminal: &mut ratatui::DefaultTerminal,
     monitor: &mut CpuMonitor,
+    mut state: State,
 ) -> std::io::Result<()> {
-    let mut state = State::default();
     let mut display_pids: Vec<u32> = Vec::new();
     let mut snap: Option<CpuSnapshot> = None;
     let mut last_tick = Instant::now() - TICK;
@@ -125,7 +137,10 @@ fn run_loop(
                 monitor.refresh_light();
             }
             full_tick = !full_tick;
-            snap = Some(monitor.snapshot());
+            let s = monitor.snapshot();
+            state.history.record_snapshot(&s);
+            state.history.advance_playback();
+            snap = Some(s);
             last_tick = Instant::now();
         }
 
@@ -193,6 +208,7 @@ fn run_loop(
                     None
                 },
                 trace_pid: state.trace_start_pid,
+                history: Some(&state.history),
                 status: &status,
                 searching: state.searching,
                 kill_prompt: state.kill_prompt,
@@ -447,6 +463,8 @@ fn handle_normal_key(
         KeyCode::Tab | KeyCode::BackTab => {
             if state.pane == Pane::Cpu {
                 state.cores_focused = !state.cores_focused;
+            } else if state.pane == Pane::History {
+                state.history.metric = state.history.metric.next();
             }
             false
         }
@@ -509,6 +527,52 @@ fn handle_normal_key(
             focus_pane(state, Pane::Gpu);
             false
         }
+        KeyCode::Char('7') => {
+            focus_pane(state, Pane::History);
+            false
+        }
+        KeyCode::Char('<') | KeyCode::Char(',') => {
+            if state.pane == Pane::History {
+                state.history.step(-1);
+            }
+            false
+        }
+        KeyCode::Char('>') | KeyCode::Char('.') => {
+            if state.pane == Pane::History {
+                state.history.step(1);
+            }
+            false
+        }
+        KeyCode::Char('[') | KeyCode::Char('{') => {
+            if state.pane == Pane::History {
+                state.history.jump(-1);
+            }
+            false
+        }
+        KeyCode::Char(']') | KeyCode::Char('}') => {
+            if state.pane == Pane::History {
+                state.history.jump(1);
+            }
+            false
+        }
+        KeyCode::Char('0') => {
+            if state.pane == Pane::History {
+                state.history.jump_to_live();
+            }
+            false
+        }
+        KeyCode::Char('e') | KeyCode::Char('E') => {
+            if state.pane == Pane::History {
+                state.history.export();
+            }
+            false
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if state.pane == Pane::History {
+                state.history.recording = !state.history.recording;
+            }
+            false
+        }
         KeyCode::Char('C') => toggle_theme(state, system_theme),
         KeyCode::Char('L') => toggle_lang(state),
         KeyCode::Char('?') => {
@@ -521,7 +585,11 @@ fn handle_normal_key(
         }
         KeyCode::Char('s') => start_trace(state),
         KeyCode::Char('z') | KeyCode::Char('Z') => {
-            state.paused = !state.paused;
+            if state.pane == Pane::History {
+                state.history.span = state.history.span.next();
+            } else {
+                state.paused = !state.paused;
+            }
             false
         }
         KeyCode::Char('/') => {
@@ -540,7 +608,15 @@ fn handle_normal_key(
             }
             false
         }
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        KeyCode::Char(' ') => {
+            if state.pane == Pane::History {
+                state.history.toggle_playback();
+            } else if state.cores_focused {
+                toggle_core_filter(state);
+            }
+            false
+        }
+        KeyCode::Enter => {
             if state.cores_focused {
                 toggle_core_filter(state);
             }
@@ -559,6 +635,7 @@ fn handle_menu_key(state: &mut State, code: KeyCode) {
         KeyCode::Char('4') => select_menu_pane(state, Pane::Mem),
         KeyCode::Char('5') => select_menu_pane(state, Pane::Disks),
         KeyCode::Char('6') => select_menu_pane(state, Pane::Gpu),
+        KeyCode::Char('7') => select_menu_pane(state, Pane::History),
         _ => {}
     }
 }
@@ -704,6 +781,16 @@ fn status_line(state: &State) -> String {
     if let Some(msg) = &state.status_msg {
         return msg.clone();
     }
+    if state.pane == Pane::History {
+        let rec = if state.history.recording { "● REC" } else { "⏸ PAUSED" };
+        let play = if state.history.playing { " [PLAYING]" } else { "" };
+        let live = if state.history.is_live() { "LIVE" } else { "SCRUB" };
+        return format!(
+            "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | q quit",
+            state.history.metric.label(),
+            state.history.span.label()
+        );
+    }
     let pane = match state.pane {
         Pane::Cpu => {
             if state.cores_focused {
@@ -717,6 +804,7 @@ fn status_line(state: &State) -> String {
         Pane::Mem => "[4:MEM] ",
         Pane::Disks => "[5:DISKS] ",
         Pane::Gpu => "[6:GPU] ",
+        Pane::History => "[7:HIST] ",
     };
     let full = if state.fullscreen { "[FULL] " } else { "" };
     let filter = state
@@ -887,6 +975,11 @@ mod tests {
         handle_key(&mut s, &[], KeyCode::Char('6'), KeyModifiers::empty(), None);
         assert_eq!(s.pane, Pane::Gpu);
         assert!(s.fullscreen);
+        handle_key(&mut s, &[], KeyCode::Char('7'), KeyModifiers::empty(), None);
+        assert_eq!(s.pane, Pane::History);
+        assert!(s.fullscreen);
+        handle_key(&mut s, &[], KeyCode::Char('7'), KeyModifiers::empty(), None);
+        assert!(!s.fullscreen);
     }
 
     #[test]

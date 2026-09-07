@@ -16,6 +16,7 @@ enum Command {
     Help,
     Version,
     Tui,
+    TuiHistory,
     CpuJson,
     StreamJson,
     Bench {
@@ -31,6 +32,7 @@ enum Command {
 fn parse(args: &[String]) -> Command {
     match args.first().map(String::as_str) {
         None | Some("tui") => Command::Tui,
+        Some("hist") | Some("history") | Some("--history") => Command::TuiHistory,
         Some("-h") | Some("--help") | Some("help") => Command::Help,
         Some("-V") | Some("--version") | Some("version") => Command::Version,
         Some("cpu") => Command::CpuJson,
@@ -73,6 +75,7 @@ fn print_help() {
 
 USAGE:
   perfo                 interactive TUI (CPU focus)
+  perfo hist | history  interactive history mode (timeline replay & export)
   perfo cpu --json      one-shot JSON snapshot (for widgets/scripts)
   perfo stream --json   continuous JSON snapshots (for widgets)
   perfo trace <pid> [name]
@@ -100,6 +103,13 @@ pub fn run() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Tui => match tui::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("perfo: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::TuiHistory => match tui::run_with_pane(tui::cpu::Pane::History) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("perfo: {e}");
