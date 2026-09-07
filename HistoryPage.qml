@@ -13,8 +13,14 @@ Column {
   property bool isRecording: true
   property bool isPlaying: false
   property string zoomLabel: "2m"
+  property string customSpanText: "40m"
+  property int customSpanSeconds: 2400
 
   signal toggleRecordingRequested()
+  signal requestCapacity(int samples)
+
+  readonly property bool inputActiveFocus: spanInput.activeFocus
+  readonly property bool isCustomZoom: zoomLabel === customSpanText
 
   readonly property int effectiveIndex: {
     if (history.length === 0) return -1
@@ -47,11 +53,11 @@ Column {
     }
   }
 
-  // Row 1: Title, metric selector, and zoom range selector
+  // Row 1: Title, metric selector, zoom presets, and custom span input (e.g. 40m, 40h)
   Row {
     width: historyPage.width
     height: Style.space(22)
-    spacing: Style.space(6)
+    spacing: Style.space(5)
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
@@ -71,7 +77,7 @@ Column {
       Repeater {
         model: ["CPU", "MEM", "IO", "GPU"]
         delegate: Rectangle {
-          width: Style.space(38)
+          width: Style.space(36)
           height: Style.space(18)
           radius: Style.cornerRadius
           color: historyPage.metric === modelData ? Color.accent : "transparent"
@@ -96,7 +102,7 @@ Column {
       }
     }
 
-    Item { width: Style.space(6); height: 1 }
+    Item { width: Style.space(4); height: 1 }
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
@@ -107,15 +113,15 @@ Column {
       font.pixelSize: Style.font.caption
     }
 
-    // Zoom/Span range pills: 2m, 15m, 1h, 4h, ALL
+    // Zoom/Span range presets: 2m, 15m, 1h, ALL
     Row {
       spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
 
       Repeater {
-        model: ["2m", "15m", "1h", "4h", "ALL"]
+        model: ["2m", "15m", "1h", "ALL"]
         delegate: Rectangle {
-          width: Style.space(32)
+          width: Style.space(30)
           height: Style.space(18)
           radius: Style.cornerRadius
           color: historyPage.zoomLabel === modelData ? Color.accent : "transparent"
@@ -140,7 +146,60 @@ Column {
       }
     }
 
-    Item { width: Style.space(6); height: 1 }
+    // Custom span input: user can enter 40m, 40h, 10h, 30s, etc.
+    Rectangle {
+      id: customSpanBox
+      width: Style.space(46)
+      height: Style.space(18)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: historyPage.isCustomZoom ? Color.accent : "transparent"
+      border.color: spanInput.activeFocus ? Color.accent : historyPage.foreground
+      border.width: 1
+      opacity: (historyPage.isCustomZoom || spanInput.activeFocus) ? 1.0 : 0.65
+
+      TextInput {
+        id: spanInput
+        anchors.fill: parent
+        anchors.leftMargin: 2
+        anchors.rightMargin: 2
+        text: historyPage.customSpanText
+        color: historyPage.isCustomZoom ? Color.surface : historyPage.foreground
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: historyPage.isCustomZoom
+        horizontalAlignment: TextInput.AlignHCenter
+        verticalAlignment: TextInput.AlignVCenter
+        selectByMouse: true
+        clip: true
+
+        Keys.onEscapePressed: function(event) {
+          spanInput.focus = false
+          event.accepted = true
+        }
+
+        onAccepted: {
+          historyPage.applyCustomDuration(text)
+          spanInput.focus = false
+        }
+
+        onEditingFinished: {
+          historyPage.applyCustomDuration(text)
+        }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        visible: !spanInput.activeFocus
+        onClicked: {
+          historyPage.applyCustomDuration(spanInput.text)
+          spanInput.forceActiveFocus()
+          spanInput.selectAll()
+        }
+      }
+    }
+
+    Item { width: Style.space(4); height: 1 }
 
     // Total recorded length indicator
     PlainText {
@@ -157,11 +216,11 @@ Column {
   Row {
     width: historyPage.width
     height: Style.space(20)
-    spacing: Style.space(6)
+    spacing: Style.space(5)
 
     // REC / FREEZE button
     Rectangle {
-      width: Style.space(56)
+      width: Style.space(54)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -197,7 +256,7 @@ Column {
 
     // PLAY / PAUSE button
     Rectangle {
-      width: Style.space(50)
+      width: Style.space(48)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -230,7 +289,7 @@ Column {
 
     // Step -1s button
     Rectangle {
-      width: Style.space(24)
+      width: Style.space(22)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -261,7 +320,7 @@ Column {
 
     // Step +1s button
     Rectangle {
-      width: Style.space(24)
+      width: Style.space(22)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -292,7 +351,7 @@ Column {
 
     // Jump to LIVE button
     Rectangle {
-      width: Style.space(40)
+      width: Style.space(38)
       height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
@@ -328,7 +387,7 @@ Column {
       font.pixelSize: Style.font.caption
       font.bold: !historyPage.isLive
       elide: Text.ElideRight
-      width: historyPage.width - Style.space(220)
+      width: historyPage.width - Style.space(210)
     }
   }
 
@@ -495,8 +554,36 @@ Column {
     if (zoomLabel === "2m") return 120
     if (zoomLabel === "15m") return 900
     if (zoomLabel === "1h") return 3600
-    if (zoomLabel === "4h") return 14400
-    return history.length // ALL
+    if (zoomLabel === "ALL") return history.length
+    return customSpanSeconds
+  }
+
+  function applyCustomDuration(input) {
+    var secs = parseDuration(input)
+    if (secs > 0) {
+      customSpanSeconds = secs
+      customSpanText = input.trim()
+      zoomLabel = customSpanText
+      historyPage.requestCapacity(secs)
+    }
+  }
+
+  function parseDuration(input) {
+    if (!input) return 120
+    var str = String(input).trim().toLowerCase()
+    var match = str.match(/^([0-9]+(?:\.[0-9]+)?)\s*([a-z]*)$/)
+    if (!match) return 120
+    var val = parseFloat(match[1])
+    if (isNaN(val) || val <= 0) return 120
+    var u = match[2]
+    if (u.length > 0) {
+      if (u[0] === "h") return Math.round(val * 3600)
+      if (u[0] === "m") return Math.round(val * 60)
+      if (u[0] === "d") return Math.round(val * 86400)
+      if (u[0] === "s") return Math.round(val)
+    }
+    if (val <= 120) return Math.round(val * 60)
+    return Math.round(val)
   }
 
   function visibleBars() {
@@ -519,7 +606,7 @@ Column {
       return bars
     }
 
-    // Downsample into buckets for long time spans (up to 10 hours)
+    // Downsample into buckets for long time spans (such as 40m, 1h, 40h)
     var bucketSize = sliceCount / maxBars
     var downsampled = []
     for (var b = 0; b < maxBars; b++) {
@@ -616,9 +703,12 @@ Column {
   function formatDuration(seconds) {
     var s = Math.max(0, Math.floor(Number(seconds) || 0))
     if (s < 60) return s + "s"
-    if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s"
+    if (s < 3600) {
+      var rem = s % 60
+      return Math.floor(s / 60) + "m" + (rem > 0 ? " " + rem + "s" : "")
+    }
     var h = Math.floor(s / 3600)
     var m = Math.floor((s % 3600) / 60)
-    return h + "h " + m + "m"
+    return h + "h" + (m > 0 ? " " + m + "m" : "")
   }
 }

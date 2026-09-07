@@ -179,6 +179,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: historyPageComp.inputActiveFocus
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.switchPage(dx)
       }
@@ -533,12 +534,14 @@ Panel {
           anchors.fill: parent
           visible: root.page === 8
           HistoryPage {
+            id: historyPageComp
             width: parent.width
             history: root.historyBuffer
             foreground: root.foreground
             fontFamily: root.fontFamily
             isRecording: root.historyRecording
             onToggleRecordingRequested: root.historyRecording = !root.historyRecording
+            onRequestCapacity: function(samples) { root.ensureHistoryCapacity(samples) }
           }
         }
       }
@@ -635,5 +638,12 @@ Panel {
       buf.shift()
     }
     root.historyBuffer = buf
+  }
+
+  function ensureHistoryCapacity(needed) {
+    var minCapacity = Math.max(3600, Math.min(604800, Number(needed) || 36000))
+    if (minCapacity > root.maxHistorySamples) {
+      root.maxHistorySamples = minCapacity
+    }
   }
 }
