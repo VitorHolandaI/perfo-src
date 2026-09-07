@@ -91,6 +91,8 @@ BarWidget {
     function show() { root.open() }
     function hide() { root.close() }
     function toggle() { root.toggle() }
+    function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
+    function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
   }
 
   Loader {
