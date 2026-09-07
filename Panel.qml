@@ -15,7 +15,7 @@ Panel {
   property int page: 0
   readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST"]
   property var historyBuffer: []
-  property int maxHistorySamples: 120
+  property int maxHistorySamples: 36000
   property bool historyRecording: true
 
   onSnapshotChanged: root.recordHistorySample()

@@ -12,6 +12,7 @@ Column {
   property int scrubIndex: -1
   property bool isRecording: true
   property bool isPlaying: false
+  property string zoomLabel: "2m"
 
   signal toggleRecordingRequested()
 
@@ -28,7 +29,7 @@ Column {
 
   readonly property bool isLive: effectiveIndex === history.length - 1
 
-  spacing: Style.space(6)
+  spacing: Style.space(5)
 
   Timer {
     id: playbackTimer
@@ -46,33 +47,32 @@ Column {
     }
   }
 
-  // Top header: mode badges and action buttons
+  // Row 1: Title, metric selector, and zoom range selector
   Row {
     width: historyPage.width
-    height: Style.space(24)
+    height: Style.space(22)
     spacing: Style.space(6)
 
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
-      text: "TIMELINE & REPLAY"
+      text: "TIMELINE"
       color: historyPage.foreground
       opacity: 0.65
       font.family: historyPage.fontFamily
       font.pixelSize: Style.font.caption
+      font.bold: true
     }
-
-    Item { width: Style.space(12); height: 1 }
 
     // Metric selector pills: CPU, MEM, IO, GPU
     Row {
-      spacing: Style.space(4)
+      spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
 
       Repeater {
         model: ["CPU", "MEM", "IO", "GPU"]
         delegate: Rectangle {
-          width: Style.space(40)
-          height: Style.space(20)
+          width: Style.space(38)
+          height: Style.space(18)
           radius: Style.cornerRadius
           color: historyPage.metric === modelData ? Color.accent : "transparent"
           border.color: historyPage.foreground
@@ -96,12 +96,73 @@ Column {
       }
     }
 
-    Item { width: Style.space(8); height: 1 }
+    Item { width: Style.space(6); height: 1 }
+
+    PlainText {
+      anchors.verticalCenter: parent.verticalCenter
+      text: "SPAN"
+      color: historyPage.foreground
+      opacity: 0.5
+      font.family: historyPage.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    // Zoom/Span range pills: 2m, 15m, 1h, 4h, ALL
+    Row {
+      spacing: Style.space(3)
+      anchors.verticalCenter: parent.verticalCenter
+
+      Repeater {
+        model: ["2m", "15m", "1h", "4h", "ALL"]
+        delegate: Rectangle {
+          width: Style.space(32)
+          height: Style.space(18)
+          radius: Style.cornerRadius
+          color: historyPage.zoomLabel === modelData ? Color.accent : "transparent"
+          border.color: historyPage.foreground
+          border.width: 1
+          opacity: historyPage.zoomLabel === modelData ? 1.0 : 0.55
+
+          PlainText {
+            anchors.centerIn: parent
+            text: modelData
+            color: historyPage.zoomLabel === modelData ? Color.surface : historyPage.foreground
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: historyPage.zoomLabel === modelData
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            onClicked: historyPage.zoomLabel = modelData
+          }
+        }
+      }
+    }
+
+    Item { width: Style.space(6); height: 1 }
+
+    // Total recorded length indicator
+    PlainText {
+      anchors.verticalCenter: parent.verticalCenter
+      text: historyPage.formatDuration(historyPage.history.length)
+      color: historyPage.foreground
+      opacity: 0.6
+      font.family: historyPage.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
+
+  // Row 2: Playback & Action Controls (REC, PLAY, LIVE, step buttons)
+  Row {
+    width: historyPage.width
+    height: Style.space(20)
+    spacing: Style.space(6)
 
     // REC / FREEZE button
     Rectangle {
       width: Style.space(56)
-      height: Style.space(20)
+      height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: "transparent"
@@ -136,8 +197,8 @@ Column {
 
     // PLAY / PAUSE button
     Rectangle {
-      width: Style.space(52)
-      height: Style.space(20)
+      width: Style.space(50)
+      height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: historyPage.isPlaying ? Color.accent : "transparent"
@@ -159,7 +220,7 @@ Column {
             historyPage.isPlaying = false
           } else {
             if (historyPage.effectiveIndex >= historyPage.history.length - 1) {
-              historyPage.scrubIndex = 0
+              historyPage.scrubIndex = Math.max(0, historyPage.history.length - historyPage.currentZoomSeconds())
             }
             historyPage.isPlaying = true
           }
@@ -167,114 +228,10 @@ Column {
       }
     }
 
-    // Jump to LIVE button
-    Rectangle {
-      width: Style.space(42)
-      height: Style.space(20)
-      radius: Style.cornerRadius
-      anchors.verticalCenter: parent.verticalCenter
-      color: historyPage.isLive ? Color.accent : "transparent"
-      border.color: historyPage.foreground
-      border.width: 1
-      opacity: historyPage.isLive ? 1.0 : 0.6
-
-      PlainText {
-        anchors.centerIn: parent
-        text: "LIVE"
-        color: historyPage.isLive ? Color.surface : historyPage.foreground
-        font.family: historyPage.fontFamily
-        font.pixelSize: Style.font.caption
-        font.bold: historyPage.isLive
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        onClicked: {
-          historyPage.scrubIndex = -1
-          historyPage.isPlaying = false
-        }
-      }
-    }
-  }
-
-  // Interactive timeline sparkline container
-  Rectangle {
-    id: timelineBox
-    width: historyPage.width
-    height: Style.space(46)
-    color: "transparent"
-    border.color: historyPage.foreground
-    border.width: 1
-    radius: Style.cornerRadius
-
-    Row {
-      id: barsRow
-      anchors.fill: parent
-      anchors.margins: 4
-      spacing: 1
-
-      Repeater {
-        id: timelineRepeater
-        model: historyPage.history
-
-        delegate: Rectangle {
-          id: barDelegate
-          readonly property bool isSelected: index === historyPage.effectiveIndex
-          readonly property real sampleValue: historyPage.metricValue(modelData)
-          readonly property real maxMetricValue: historyPage.maxMetric(historyPage.metric)
-
-          width: Math.max(2, (barsRow.width / Math.max(1, timelineRepeater.count)) - 1)
-          height: Math.max(3, barsRow.height * Math.min(1.0, sampleValue / Math.max(1.0, maxMetricValue)))
-          anchors.bottom: parent.bottom
-
-          color: isSelected
-            ? Color.accent
-            : (index === timelineRepeater.count - 1
-                ? Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.75)
-                : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.35))
-
-          Rectangle {
-            visible: barDelegate.isSelected
-            width: parent.width
-            height: 3
-            color: Color.accent
-            anchors.bottom: parent.top
-            anchors.bottomMargin: 1
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            onClicked: {
-              historyPage.scrubIndex = index
-              historyPage.isPlaying = false
-            }
-          }
-        }
-      }
-    }
-
-    PlainText {
-      anchors.centerIn: parent
-      visible: historyPage.history.length === 0
-      text: "collecting history snapshots..."
-      color: historyPage.foreground
-      opacity: 0.5
-      font.family: historyPage.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-  }
-
-  // Step scrub controls and timing details
-  Row {
-    width: historyPage.width
-    height: Style.space(22)
-    spacing: Style.space(6)
-
     // Step -1s button
     Rectangle {
-      width: Style.space(28)
-      height: Style.space(20)
+      width: Style.space(24)
+      height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: "transparent"
@@ -304,8 +261,8 @@ Column {
 
     // Step +1s button
     Rectangle {
-      width: Style.space(28)
-      height: Style.space(20)
+      width: Style.space(24)
+      height: Style.space(18)
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: "transparent"
@@ -333,14 +290,113 @@ Column {
       }
     }
 
+    // Jump to LIVE button
+    Rectangle {
+      width: Style.space(40)
+      height: Style.space(18)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: historyPage.isLive ? Color.accent : "transparent"
+      border.color: historyPage.foreground
+      border.width: 1
+      opacity: historyPage.isLive ? 1.0 : 0.6
+
+      PlainText {
+        anchors.centerIn: parent
+        text: "LIVE"
+        color: historyPage.isLive ? Color.surface : historyPage.foreground
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: historyPage.isLive
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        onClicked: {
+          historyPage.scrubIndex = -1
+          historyPage.isPlaying = false
+        }
+      }
+    }
+
     // Timing summary text
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
       text: historyPage.timingLabel()
       color: historyPage.isLive ? historyPage.foreground : Color.accent
       font.family: historyPage.fontFamily
-      font.pixelSize: Style.font.bodySmall
+      font.pixelSize: Style.font.caption
       font.bold: !historyPage.isLive
+      elide: Text.ElideRight
+      width: historyPage.width - Style.space(220)
+    }
+  }
+
+  // Interactive timeline sparkline container
+  Rectangle {
+    id: timelineBox
+    width: historyPage.width
+    height: Style.space(44)
+    color: "transparent"
+    border.color: historyPage.foreground
+    border.width: 1
+    radius: Style.cornerRadius
+
+    Row {
+      id: barsRow
+      anchors.fill: parent
+      anchors.margins: 3
+      spacing: 1
+
+      Repeater {
+        id: timelineRepeater
+        model: historyPage.visibleBars()
+
+        delegate: Rectangle {
+          id: barDelegate
+          readonly property bool isSelected: modelData.containsIndex(historyPage.effectiveIndex)
+          readonly property real sampleValue: Number(modelData.value) || 0
+          readonly property real maxMetricValue: historyPage.maxMetric(historyPage.metric)
+
+          width: Math.max(1, (barsRow.width / Math.max(1, timelineRepeater.count)) - 1)
+          height: Math.max(2, barsRow.height * Math.min(1.0, sampleValue / Math.max(1.0, maxMetricValue)))
+          anchors.bottom: parent.bottom
+
+          color: isSelected
+            ? Color.accent
+            : (modelData.rawIndex === historyPage.history.length - 1
+                ? Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.75)
+                : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.35))
+
+          Rectangle {
+            visible: barDelegate.isSelected
+            width: parent.width
+            height: 3
+            color: Color.accent
+            anchors.bottom: parent.top
+            anchors.bottomMargin: 1
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            onClicked: {
+              historyPage.scrubIndex = modelData.rawIndex
+              historyPage.isPlaying = false
+            }
+          }
+        }
+      }
+    }
+
+    PlainText {
+      anchors.centerIn: parent
+      visible: historyPage.history.length === 0
+      text: "collecting history snapshots..."
+      color: historyPage.foreground
+      opacity: 0.5
+      font.family: historyPage.fontFamily
+      font.pixelSize: Style.font.caption
     }
   }
 
@@ -435,6 +491,62 @@ Column {
   }
 
   // Helper functions
+  function currentZoomSeconds() {
+    if (zoomLabel === "2m") return 120
+    if (zoomLabel === "15m") return 900
+    if (zoomLabel === "1h") return 3600
+    if (zoomLabel === "4h") return 14400
+    return history.length // ALL
+  }
+
+  function visibleBars() {
+    if (!history || history.length === 0) return []
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var sliceCount = history.length - startIdx
+    var maxBars = 100
+
+    if (sliceCount <= maxBars) {
+      var bars = []
+      for (var i = startIdx; i < history.length; i++) {
+        var rawSample = history[i]
+        bars.push({
+          rawIndex: i,
+          value: metricValue(rawSample),
+          containsIndex: function(target) { return target === this.rawIndex }
+        })
+      }
+      return bars
+    }
+
+    // Downsample into buckets for long time spans (up to 10 hours)
+    var bucketSize = sliceCount / maxBars
+    var downsampled = []
+    for (var b = 0; b < maxBars; b++) {
+      var bStart = Math.floor(startIdx + b * bucketSize)
+      var bEnd = Math.min(history.length, Math.floor(startIdx + (b + 1) * bucketSize))
+      if (bStart >= bEnd) continue
+
+      var peakVal = 0
+      var peakIdx = bStart
+      for (var k = bStart; k < bEnd; k++) {
+        var v = metricValue(history[k])
+        if (v >= peakVal) {
+          peakVal = v
+          peakIdx = k
+        }
+      }
+      downsampled.push({
+        rawIndex: peakIdx,
+        startIndex: bStart,
+        endIndex: bEnd,
+        value: peakVal,
+        containsIndex: function(target) { return target >= this.startIndex && target < this.endIndex }
+      })
+    }
+    return downsampled
+  }
+
   function metricValue(sample) {
     if (!sample) return 0
     if (metric === "CPU") return Number(sample.cpu) || 0
@@ -446,7 +558,6 @@ Column {
 
   function maxMetric(type) {
     if (type === "CPU" || type === "MEM" || type === "GPU") return 100.0
-    // For IO, calculate maximum throughput observed in the current buffer
     var maxVal = 10.0
     for (var i = 0; i < history.length; i++) {
       var val = Number(history[i].io_mb) || 0
@@ -458,7 +569,7 @@ Column {
   function timingLabel() {
     if (!selectedSample) return "No history recorded yet"
     var offset = history.length - 1 - effectiveIndex
-    var prefix = isLive ? "LIVE (NOW): " : ("-" + offset + "s (" + selectedSample.timestamp + "): ")
+    var prefix = isLive ? "LIVE (NOW): " : ("-" + formatDuration(offset) + " (" + selectedSample.timestamp + "): ")
     return prefix + "CPU " + selectedSample.cpu + "% | MEM " + selectedSample.mem + "% | IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " | GPU " + selectedSample.gpu + "%"
   }
 
@@ -500,5 +611,14 @@ Column {
 
   function formatRate(bytes) {
     return formatBytes(bytes) + "/s"
+  }
+
+  function formatDuration(seconds) {
+    var s = Math.max(0, Math.floor(Number(seconds) || 0))
+    if (s < 60) return s + "s"
+    if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s"
+    var h = Math.floor(s / 3600)
+    var m = Math.floor((s % 3600) / 60)
+    return h + "h " + m + "m"
   }
 }
