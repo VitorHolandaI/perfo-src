@@ -80,7 +80,7 @@ fn colorized(theme: &Theme, s: &str) -> Line<'static> {
 pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static>>) {
     let (title, rows): (String, &[HelpRow<'static>]) = match (lang, page) {
         (Lang::Pt, 0) => (
-            "help 1/5 — teclas".into(),
+            "help 1/5: teclas".into(),
             &[
                 hdr("NAVEGACAO"),
                 key("m", "abre o menu de paineis"),
@@ -107,7 +107,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 0) => (
-            "help 1/5 — keys".into(),
+            "help 1/5: keys".into(),
             &[
                 hdr("NAVIGATION"),
                 key("m", "open the panel menu"),
@@ -134,9 +134,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 1) => (
-            "help 2/5 — bloco CPU".into(),
+            "help 2/5: bloco CPU".into(),
             &[
-                hdr("CPU — VISAO GERAL"),
+                hdr("CPU: VISAO GERAL"),
                 key("overall", "uso total de todos os nucleos (barra + %)"),
                 key("load 1/5/15", "processos prontos ou esperando I/O"),
                 key("iowait", "tempo ocioso esperando disco; nao e uso de CPU"),
@@ -157,9 +157,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 1) => (
-            "help 2/5 — CPU block".into(),
+            "help 2/5: CPU block".into(),
             &[
-                hdr("CPU — OVERVIEW"),
+                hdr("CPU: OVERVIEW"),
                 key("overall", "usage across all cores (bar + %)"),
                 key("load 1/5/15", "tasks ready to run or waiting for I/O"),
                 key("iowait", "idle time waiting for disk; not CPU usage"),
@@ -180,9 +180,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 2) => (
-            "help 3/5 — memoria e discos".into(),
+            "help 3/5: memoria e discos".into(),
             &[
-                hdr("4:MEM — PAINEL DE MEMORIA"),
+                hdr("4:MEM: PAINEL DE MEMORIA"),
                 key("used", "RAM usada por aplicativos; nao inclui cache/buffers"),
                 key("cache", "cache de paginas; pode ser liberado pelo kernel"),
                 key("buffers", "buffers usados por operacoes de I/O"),
@@ -203,9 +203,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 2) => (
-            "help 3/5 — memory and disks".into(),
+            "help 3/5: memory and disks".into(),
             &[
-                hdr("4:MEM — MEMORY PANEL"),
+                hdr("4:MEM: MEMORY PANEL"),
                 key("used", "RAM used by applications; excludes cache/buffers"),
                 key("cache", "page cache; the kernel can reclaim it"),
                 key("buffers", "buffers used by I/O operations"),
@@ -226,9 +226,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 3) => (
-            "help 4/5 — discos e rede".into(),
+            "help 4/5: discos e rede".into(),
             &[
-                hdr("5:DISKS — ESPACO"),
+                hdr("5:DISKS: ESPACO"),
                 txt("lista cada montagem com dispositivo, mountpoint e filesystem"),
                 txt("USED/TOTAL = espaco ocupado e capacidade total"),
                 cols("g:<70% normal | y:70-85% atencao | r:>85% cheio"),
@@ -239,7 +239,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 txt("temperatura: g:<55°C | y:55-70°C | r:>=70°C"),
                 txt("temperatura pode nao aparecer se o hardware nao expuser sensor"),
                 txt(""),
-                hdr("3:NET — REDE"),
+                hdr("3:NET: REDE"),
                 txt("por interface: RX/s, TX/s, pacotes/s, erros, drops e link"),
                 txt("TCP retrans = retransmissoes; conexoes = TCP estabelecidas"),
                 txt("PORTAS ABERTAS aparece somente em tela cheia"),
@@ -251,9 +251,9 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 3) => (
-            "help 4/5 — disks and network".into(),
+            "help 4/5: disks and network".into(),
             &[
-                hdr("5:DISKS — SPACE"),
+                hdr("5:DISKS: SPACE"),
                 txt("lists each mount with device, mountpoint, and filesystem"),
                 txt("USED/TOTAL = occupied space and total capacity"),
                 cols("g:<70% normal | y:70-85% watch | r:>85% full"),
@@ -264,7 +264,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 txt("temperature: g:<55°C | y:55-70°C | r:>=70°C"),
                 txt("temperature may be absent if hardware exposes no sensor"),
                 txt(""),
-                hdr("3:NET — NETWORK"),
+                hdr("3:NET: NETWORK"),
                 txt("per interface: RX/s, TX/s, packets/s, errors, drops, and link"),
                 txt("TCP retrans = retransmissions; connections = established TCP"),
                 txt("LISTENING PORTS appears only in fullscreen"),
@@ -276,7 +276,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 4) => (
-            "help 5/5 — IO: o que cada stat significa".into(),
+            "help 5/5: IO: o que cada stat significa".into(),
             &[
                 hdr("IOPS"),
                 key("r/s w/s", "operacoes de leitura/escrita por segundo"),
@@ -284,7 +284,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 txt(""),
                 hdr("LATENCIA"),
                 key("r_awt/w_awt", "tempo medio da op em ms, fila incluida"),
-                cols("g:<2ms saudavel | y:2-10ms atencao | r:>=10ms alta — NVMe bom fica <1ms"),
+                cols("g:<2ms saudavel | y:2-10ms atencao | r:>=10ms alta - NVMe bom fica <1ms"),
                 txt(""),
                 hdr("FILA E BUSY%"),
                 key("fila", "requisicoes em voo (aqu-sz)"),
@@ -303,7 +303,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 4) => (
-            "help 5/5 — IO: what each stat means".into(),
+            "help 5/5: IO: what each stat means".into(),
             &[
                 hdr("IOPS"),
                 key("r/s w/s", "read/write operations per second"),
@@ -311,7 +311,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 txt(""),
                 hdr("LATENCY"),
                 key("r_awt/w_awt", "average op time in ms, queue included"),
-                cols("g:<2ms healthy | y:2-10ms watch | r:>=10ms high — healthy NVMe stays <1ms"),
+                cols("g:<2ms healthy | y:2-10ms watch | r:>=10ms high - healthy NVMe stays <1ms"),
                 txt(""),
                 hdr("QUEUE AND BUSY%"),
                 key("queue", "in-flight requests (aqu-sz)"),

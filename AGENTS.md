@@ -14,7 +14,7 @@
 
 ## Comments
 
-- Keep your own comments. Don't strip them on refactor — they carry
+- Keep your own comments. Don't strip them on refactor: they carry
   intent and provenance.
 - Write WHY, not WHAT. Skip `// increment counter` above `i++`.
 - Docstrings on public functions: intent + one usage example.
@@ -32,12 +32,12 @@
   `rust-doctor inspect` (score 0-100). Instalados via cargo install.
 - CI (Gitea Actions / GitHub Actions, `.github/workflows/`):
   `ci.yml` (fmt+clippy+test, gate duro), `quality.yml` (rustqual SARIF +
-  gate de regressao vs `.github/rustqual-baseline.json` — rerodar
+  gate de regressao vs `.github/rustqual-baseline.json` (rerodar
   `rustqual . --save-baseline .github/rustqual-baseline.json` quando
-  encontrar uma regressao legitima), `security.yml` (cargo-audit +
+  encontrar uma regressao legitima)), `security.yml` (cargo-audit +
   cargo-deny com `deny.toml`).
 - Seguranca: `cargo audit` (0 vulnerabilidades) e `cargo deny check`.
-  NUNCA re-adicionar a dependencia `users` (RUSTSEC-2023-0059) — usar
+  NUNCA re-adicionar a dependencia `users` (RUSTSEC-2023-0059): usar
   `user_name_of()` com libc getpwuid_r em `src/data/cpu.rs`.
 - Every new function gets a test. Bug fixes get a regression test.
 - Mock external I/O (API, DB, filesystem) with named fake classes,

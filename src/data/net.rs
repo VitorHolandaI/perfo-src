@@ -85,7 +85,7 @@ fn established_from(raw: &str) -> u64 {
 }
 
 /// Link speed (Mbps) and carrier state from /sys/class/net/<iface>/.
-/// Virtual interfaces (lo, veth) expose neither — both become None/false
+/// Virtual interfaces (lo, veth) expose neither: both become None/false
 /// with speed None signalling "no link concept".
 fn link_state(iface: &str) -> (Option<u64>, bool) {
     let base = format!("/sys/class/net/{iface}");

@@ -39,7 +39,7 @@ pub struct ProcessInfo {
     pub win_write_bytes: u64,
 }
 
-/// Parses /proc/<pid>/io: (read_bytes, write_bytes) — bytes that actually
+/// Parses /proc/<pid>/io: (read_bytes, write_bytes): bytes that actually
 /// reached the storage layer (submit_bio), unlike rchar/wchar which count
 /// syscall bytes including page-cache hits.
 fn proc_io_from(raw: &str) -> (u64, u64) {
@@ -309,7 +309,7 @@ fn hybrid_core_type() -> Option<CoreType> {
     }
 }
 
-/// Runs `f` pinned to the given CPU (sched_setaffinity, libc — the binary
+/// Runs `f` pinned to the given CPU (sched_setaffinity, libc: the binary
 /// already links it for ptrace). Returns None when pinning fails.
 fn on_cpu<F: FnOnce() -> Option<CoreType> + Send>(cpu: usize, f: F) -> Option<CoreType> {
     std::thread::scope(|s| {
@@ -334,10 +334,10 @@ fn on_cpu<F: FnOnce() -> Option<CoreType> + Send>(cpu: usize, f: F) -> Option<Co
 }
 
 /// P/E/LPE per core, generation-independent:
-/// 1. Distinct max-freq buckets — the top bucket is P, the bottom is LPE
+/// 1. Distinct max-freq buckets: the top bucket is P, the bottom is LPE
 ///    (3 buckets), the middle E. Works on Alder Lake and Arrow Lake alike
 ///    (their cpuid 0x1A encodings differ).
-/// 2. Uniform max freq: not hybrid — shared-L2 topology decides P vs E.
+/// 2. Uniform max freq: not hybrid (shared-L2 topology decides P vs E).
 /// 3. No cpufreq at all: best-effort cpuid 0x1A probe per core.
 fn core_types_of(max_freqs: &[u64]) -> Vec<CoreType> {
     let buckets = freq_buckets(max_freqs);
@@ -415,7 +415,7 @@ pub struct CpuMonitor {
 /// Resolve a uid to a username via NSS (getpwuid_r), "?" on failure.
 ///
 /// `users` crate (0.11) has RUSTSEC-2023-0059 (unsound) and is
-/// unmaintained — this drops that dependency entirely.
+/// unmaintained: this drops that dependency entirely.
 fn user_name_of(uid: u32) -> String {
     let mut buf = [0u8; 256];
     let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };

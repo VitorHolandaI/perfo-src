@@ -33,7 +33,7 @@ pub struct DiskIoStats {
     /// Average number of requests in flight (weighted time / interval).
     pub queue_avg: f32,
     /// % of the interval with at least one I/O in flight. On NVMe this is
-    /// NOT saturation — a drive with 16 queues reports 100% with one
+    /// NOT saturation: a drive with 16 queues reports 100% with one
     /// request; trust await + queue instead.
     pub busy_pct: f32,
     /// % of requests that were merged with neighbours (sequential-ish).

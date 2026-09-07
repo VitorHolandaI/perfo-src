@@ -32,10 +32,11 @@ pub fn run() -> std::io::Result<()> {
 }
 
 /// UI language for help text.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Lang {
-    Pt,
+    #[default]
     En,
+    Pt,
 }
 
 struct State {
@@ -88,7 +89,7 @@ impl Default for State {
             fullscreen: false,
             paused: false,
             use_system_theme: true,
-            lang: Lang::En,
+            lang: Lang::default(),
             help: false,
             help_page: 0,
             show_menu: false,
@@ -695,8 +696,8 @@ fn status_line(state: &State) -> String {
     if state.tracing {
         if let Some(pid) = state.trace_start_pid {
             return match state.lang {
-                Lang::Pt => format!("TRACE {pid} — s/q para parar (syscalls ao vivo)"),
-                Lang::En => format!("TRACING {pid} — s/q to stop (live syscalls)"),
+                Lang::Pt => format!("TRACE {pid}: s/q para parar (syscalls ao vivo)"),
+                Lang::En => format!("TRACING {pid}: s/q to stop (live syscalls)"),
             };
         }
     }

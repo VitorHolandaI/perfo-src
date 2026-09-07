@@ -275,7 +275,7 @@ pub fn draw(frame: &mut Frame, ui: &Ui) {
 fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
     let title = match ui.core_filter {
-        Some(c) => format!("1:CPU + PROCESSES — core {c}"),
+        Some(c) => format!("1:CPU + PROCESSES: core {c}"),
         None => "1:CPU + PROCESSES".to_string(),
     };
     let outer = block(&title, true, &ui.theme);
@@ -356,7 +356,7 @@ pub(super) fn block(title: &str, focused: bool, theme: &Theme) -> Block<'static>
 
 fn draw_cpu(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
     let title = match ui.core_filter {
-        Some(c) => format!("1:CPU — core {c}"),
+        Some(c) => format!("1:CPU: core {c}"),
         None => "1:CPU".to_string(),
     };
     let inner = if framed {
@@ -1110,8 +1110,8 @@ fn draw_processes(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
         return;
     }
     let title = match (ui.tree, ui.core_filter) {
-        (true, Some(c)) => format!("PROCS — core {c} (tree)"),
-        (false, Some(c)) => format!("PROCS — core {c}"),
+        (true, Some(c)) => format!("PROCS: core {c} (tree)"),
+        (false, Some(c)) => format!("PROCS: core {c}"),
         (true, None) => "PROCS (tree)".to_string(),
         (false, None) => "PROCS".to_string(),
     };

@@ -1,4 +1,4 @@
-# perfo — roadmap de features
+# perfo: roadmap de features
 
 Contexto: htop resolve a TUI (usar ele). O perfo é o que o htop NÃO tem:
 widget do Omarchy + engine de dados + focos com processos.
