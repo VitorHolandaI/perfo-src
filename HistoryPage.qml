@@ -470,16 +470,24 @@ Column {
       }
     }
 
-    // Timing summary / export status text
-    PlainText {
+    // Export notification badge
+    Rectangle {
+      visible: historyPage.exportStatus.length > 0
+      height: Style.space(18)
+      width: exportStatusText.implicitWidth + Style.space(12)
+      radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
-      text: historyPage.exportStatus.length > 0 ? historyPage.exportStatus : historyPage.timingLabel()
-      color: historyPage.exportStatus.length > 0 ? Color.accent : (historyPage.isLive ? historyPage.foreground : Color.accent)
-      font.family: historyPage.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: historyPage.exportStatus.length > 0 || !historyPage.isLive
-      elide: Text.ElideRight
-      width: historyPage.width - Style.space(350)
+      color: Color.accent
+
+      PlainText {
+        id: exportStatusText
+        anchors.centerIn: parent
+        text: historyPage.exportStatus
+        color: "#000000"
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
     }
   }
 
@@ -776,15 +784,42 @@ Column {
     }
   }
 
-  // Section title for process inspector
+  // Section title and metrics summary for process inspector
   Row {
     width: historyPage.width
+    height: Style.space(16)
+    spacing: Style.space(6)
+
     PlainText {
-      text: "ACTIVE PROCESSES AT SELECTED TIMING"
+      anchors.verticalCenter: parent.verticalCenter
+      text: historyPage.isPlaying
+        ? "REPLAY PROCESSES"
+        : (historyPage.isLive ? (historyPage.isRecording ? "LIVE PROCESSES" : "LIVE (PAUSED REC)") : "HISTORICAL PROCESSES")
       color: historyPage.foreground
-      opacity: 0.65
+      opacity: 0.7
       font.family: historyPage.fontFamily
       font.pixelSize: Style.font.caption
+      font.bold: true
+    }
+
+    PlainText {
+      anchors.verticalCenter: parent.verticalCenter
+      text: "│"
+      color: historyPage.foreground
+      opacity: 0.35
+      font.family: historyPage.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    PlainText {
+      anchors.verticalCenter: parent.verticalCenter
+      text: historyPage.sampleMetricsSummary()
+      color: Color.accent
+      font.family: historyPage.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+      elide: Text.ElideRight
+      width: historyPage.width - Style.space(180)
     }
   }
 
@@ -1132,6 +1167,15 @@ Column {
       prefix = durStr + " (" + selectedSample.timestamp + "): "
     }
     return prefix + "CPU " + selectedSample.cpu + "% | MEM " + selectedSample.mem + "% | IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " | GPU " + selectedSample.gpu + "%"
+  }
+
+  function sampleMetricsSummary() {
+    if (!selectedSample) return "No data recorded"
+    var cpuVal = Math.round(Number(selectedSample.cpu) || 0)
+    var memVal = Math.round(Number(selectedSample.mem) || 0)
+    var ioVal = (Number(selectedSample.read_bps) || 0) + (Number(selectedSample.write_bps) || 0)
+    var gpuVal = Math.round(Number(selectedSample.gpu) || 0)
+    return "CPU " + cpuVal + "%  |  MEM " + memVal + "%  |  IO " + formatRate(ioVal) + "  |  GPU " + gpuVal + "%"
   }
 
   function sortedProcesses() {
