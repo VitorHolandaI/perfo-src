@@ -4,6 +4,7 @@
   "name": "Perfo",
   "version": "0.1.2",
   "author": "Vitor",
+  "license": "MIT",
   "description": "CPU, memory, I/O, network, filesystem, fan, and GPU performance",
   "kinds": [
     "bar-widget"

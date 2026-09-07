@@ -13,7 +13,13 @@ Panel {
   property var hostWidget: null
   property var snapshot: null
   property int page: 0
-  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU"]
+  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST"]
+  property var historyBuffer: []
+  property int maxHistorySamples: 120
+  property bool historyRecording: true
+
+  onSnapshotChanged: root.recordHistorySample()
+
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -235,7 +241,7 @@ Panel {
 
       Item {
         width: parent.width
-        height: Style.space(260)
+        height: root.page === 8 ? Style.space(290) : Style.space(260)
         clip: true
 
         Column {
@@ -522,6 +528,19 @@ Panel {
             fontFamily: root.fontFamily
           }
         }
+
+        Column {
+          anchors.fill: parent
+          visible: root.page === 8
+          HistoryPage {
+            width: parent.width
+            history: root.historyBuffer
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            isRecording: root.historyRecording
+            onToggleRecordingRequested: root.historyRecording = !root.historyRecording
+          }
+        }
       }
 
       Rectangle {
@@ -561,5 +580,60 @@ Panel {
 
   function totalWrite() {
     return root.totalDeviceRate("write_bps")
+  }
+
+  function recordHistorySample() {
+    if (!root.historyRecording || !root.snapshot) return
+    var now = new Date()
+    var timeStr = ("0" + now.getHours()).slice(-2) + ":" +
+                  ("0" + now.getMinutes()).slice(-2) + ":" +
+                  ("0" + now.getSeconds()).slice(-2)
+
+    var memPct = (root.snapshot.total_mem_bytes > 0)
+      ? root.percent(root.snapshot.used_mem_bytes * 100 / root.snapshot.total_mem_bytes)
+      : 0
+
+    var gpuPct = 0
+    if (root.snapshot.gpu && root.snapshot.gpu.devices && root.snapshot.gpu.devices.length > 0 && root.snapshot.gpu.devices[0].usage_percent !== null) {
+      gpuPct = Number(root.snapshot.gpu.devices[0].usage_percent) || 0
+    }
+
+    var readRate = root.totalRead()
+    var writeRate = root.totalWrite()
+    var ioMb = (readRate + writeRate) / 1048576
+
+    var procs = []
+    if (root.snapshot.processes) {
+      var raw = root.snapshot.processes
+      for (var i = 0; i < Math.min(raw.length, 12); i++) {
+        var p = raw[i]
+        procs.push({
+          pid: p.pid,
+          name: p.name || "",
+          cmd: p.cmd || "",
+          cpu_percent: Number(p.cpu_percent) || 0,
+          mem_bytes: Number(p.mem_bytes) || 0,
+          user: p.user || ""
+        })
+      }
+    }
+
+    var sample = {
+      timestamp: timeStr,
+      cpu: Math.round(Number(root.snapshot.overall_percent) || 0),
+      mem: Math.round(memPct),
+      io_mb: ioMb,
+      gpu: Math.round(gpuPct),
+      read_bps: readRate,
+      write_bps: writeRate,
+      processes: procs
+    }
+
+    var buf = root.historyBuffer.slice()
+    buf.push(sample)
+    if (buf.length > root.maxHistorySamples) {
+      buf.shift()
+    }
+    root.historyBuffer = buf
   }
 }
