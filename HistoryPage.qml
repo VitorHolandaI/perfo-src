@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import qs.Commons
 import qs.Ui
 
@@ -15,6 +16,7 @@ Column {
   property string zoomLabel: "2m"
   property string customSpanText: "40m"
   property int customSpanSeconds: 2400
+  property string exportStatus: ""
 
   signal toggleRecordingRequested()
   signal requestCapacity(int samples)
@@ -50,6 +52,26 @@ Column {
       } else {
         historyPage.scrubIndex = next
       }
+    }
+  }
+
+  Timer {
+    id: exportStatusTimer
+    interval: 4000
+    repeat: false
+    onTriggered: historyPage.exportStatus = ""
+  }
+
+  Process {
+    id: exportProc
+    property string targetFilename: ""
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0) {
+        historyPage.exportStatus = "Saved: ~/" + targetFilename
+      } else {
+        historyPage.exportStatus = "Export failed"
+      }
+      exportStatusTimer.restart()
     }
   }
 
@@ -378,16 +400,43 @@ Column {
       }
     }
 
-    // Timing summary text
+    // Export to TXT button
+    Rectangle {
+      width: Style.space(48)
+      height: Style.space(18)
+      radius: Style.cornerRadius
+      anchors.verticalCenter: parent.verticalCenter
+      color: "transparent"
+      border.color: historyPage.foreground
+      border.width: 1
+      opacity: exportProc.running ? 0.4 : 0.75
+
+      PlainText {
+        anchors.centerIn: parent
+        text: "EXPORT"
+        color: historyPage.foreground
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        enabled: !exportProc.running
+        onClicked: historyPage.exportReport()
+      }
+    }
+
+    // Timing summary / export status text
     PlainText {
       anchors.verticalCenter: parent.verticalCenter
-      text: historyPage.timingLabel()
-      color: historyPage.isLive ? historyPage.foreground : Color.accent
+      text: historyPage.exportStatus.length > 0 ? historyPage.exportStatus : historyPage.timingLabel()
+      color: historyPage.exportStatus.length > 0 ? Color.accent : (historyPage.isLive ? historyPage.foreground : Color.accent)
       font.family: historyPage.fontFamily
       font.pixelSize: Style.font.caption
-      font.bold: !historyPage.isLive
+      font.bold: historyPage.exportStatus.length > 0 || !historyPage.isLive
       elide: Text.ElideRight
-      width: historyPage.width - Style.space(210)
+      width: historyPage.width - Style.space(262)
     }
   }
 
@@ -710,5 +759,160 @@ Column {
     var h = Math.floor(s / 3600)
     var m = Math.floor((s % 3600) / 60)
     return h + "h" + (m > 0 ? " " + m + "m" : "")
+  }
+
+  function exportReport() {
+    if (!history || history.length === 0) {
+      exportStatus = "No history to export"
+      exportStatusTimer.restart()
+      return
+    }
+    var now = new Date()
+    var datePart = now.getFullYear() +
+      ("0" + (now.getMonth() + 1)).slice(-2) +
+      ("0" + now.getDate()).slice(-2)
+    var timePart = ("0" + now.getHours()).slice(-2) +
+      ("0" + now.getMinutes()).slice(-2) +
+      ("0" + now.getSeconds()).slice(-2)
+    var filename = "perfo-history-" + datePart + "-" + timePart + ".txt"
+    var fullPath = "~/" + filename
+    var report = generateExportText(now)
+
+    exportProc.targetFilename = filename
+    exportProc.command = [
+      "python3",
+      "-c",
+      "import sys, pathlib; p = pathlib.Path(sys.argv[1]).expanduser(); p.write_text(sys.argv[2], encoding='utf-8')",
+      fullPath,
+      report
+    ]
+    exportProc.running = true
+  }
+
+  function padRight(str, len) {
+    var s = String(str === undefined || str === null ? "" : str)
+    while (s.length < len) s += " "
+    return s
+  }
+
+  function padLeft(str, len) {
+    var s = String(str === undefined || str === null ? "" : str)
+    while (s.length < len) s = " " + s
+    return s
+  }
+
+  function generateExportText(dateObj) {
+    var lines = []
+    var border = "================================================================================"
+    var subBorder = "--------------------------------------------------------------------------------"
+
+    lines.push(border)
+    lines.push("                   PERFO - SYSTEM HISTORY & ANALYSIS REPORT")
+    lines.push(border)
+    lines.push("Generated at         : " + dateObj.toISOString().replace("T", " ").substr(0, 19))
+    lines.push("Active Metric Focus  : " + historyPage.metric)
+    lines.push("Timeline View Span   : " + historyPage.zoomLabel + " (" + historyPage.currentZoomSeconds() + "s)")
+    lines.push("Total Recorded Time  : " + historyPage.formatDuration(historyPage.history.length) + " (" + historyPage.history.length + " samples in RAM)")
+    lines.push("Current View State   : " + (historyPage.isLive ? "LIVE" : "SCRUBBED (Index: " + historyPage.effectiveIndex + ")"))
+    lines.push("")
+
+    var sample = historyPage.selectedSample
+    lines.push(border)
+    lines.push("                   1. SNAPSHOT AT SELECTED TIMING (" + (sample ? sample.timestamp : "--") + ")")
+    lines.push(border)
+    if (sample) {
+      lines.push("Overall CPU Usage    : " + sample.cpu + "%")
+      lines.push("Overall Memory Usage : " + sample.mem + "%")
+      lines.push("Total Disk I/O Rate  : " + (Number(sample.io_mb) || 0).toFixed(1) + " MB/s (Read: " + historyPage.formatBytes(sample.read_bps) + "/s, Write: " + historyPage.formatBytes(sample.write_bps) + "/s)")
+      lines.push("GPU Usage            : " + sample.gpu + "%")
+      lines.push("")
+      lines.push("Active Processes at this timing:")
+      lines.push(padRight("PID", 8) + " | " + padLeft("% CPU", 7) + " | " + padLeft("RAM", 10) + " | " + padRight("PROCESS", 18) + " | COMMAND")
+      lines.push(subBorder)
+      var procs = historyPage.sortedProcesses()
+      for (var i = 0; i < procs.length; i++) {
+        var p = procs[i]
+        var pName = historyPage.cleanName(p.name || p.cmd, p.pid)
+        lines.push(
+          padRight(p.pid, 8) + " | " +
+          padLeft((Number(p.cpu_percent) || 0).toFixed(1) + "%", 7) + " | " +
+          padLeft(historyPage.formatBytes(p.mem_bytes), 10) + " | " +
+          padRight(pName, 18) + " | " +
+          (p.cmd || pName)
+        )
+      }
+    } else {
+      lines.push("No sample data available.")
+    }
+    lines.push("")
+
+    lines.push(border)
+    lines.push("                   2. TIMELINE METRICS & PEAKS SUMMARY")
+    lines.push(border)
+    var peakCpu = 0, peakCpuTime = "--", peakCpuProc = "--"
+    var peakMem = 0, peakMemTime = "--"
+    var peakIo = 0, peakIoTime = "--"
+    var peakGpu = 0, peakGpuTime = "--"
+    var totalCpu = 0, totalMem = 0
+
+    for (var k = 0; k < historyPage.history.length; k++) {
+      var s = historyPage.history[k]
+      totalCpu += Number(s.cpu) || 0
+      totalMem += Number(s.mem) || 0
+
+      if ((Number(s.cpu) || 0) >= peakCpu) {
+        peakCpu = Number(s.cpu) || 0
+        peakCpuTime = s.timestamp
+        if (s.processes && s.processes.length > 0) {
+          peakCpuProc = s.processes[0].name || s.processes[0].cmd || "--"
+        }
+      }
+      if ((Number(s.mem) || 0) >= peakMem) {
+        peakMem = Number(s.mem) || 0
+        peakMemTime = s.timestamp
+      }
+      if ((Number(s.io_mb) || 0) >= peakIo) {
+        peakIo = Number(s.io_mb) || 0
+        peakIoTime = s.timestamp
+      }
+      if ((Number(s.gpu) || 0) >= peakGpu) {
+        peakGpu = Number(s.gpu) || 0
+        peakGpuTime = s.timestamp
+      }
+    }
+
+    var avgCpu = historyPage.history.length > 0 ? (totalCpu / historyPage.history.length).toFixed(1) : "0"
+    var avgMem = historyPage.history.length > 0 ? (totalMem / historyPage.history.length).toFixed(1) : "0"
+
+    lines.push("Peak CPU Usage       : " + peakCpu + "% at " + peakCpuTime + " (Top: " + peakCpuProc + ")")
+    lines.push("Peak Memory Usage    : " + peakMem + "% at " + peakMemTime)
+    lines.push("Peak Disk I/O Rate   : " + peakIo.toFixed(1) + " MB/s at " + peakIoTime)
+    lines.push("Peak GPU Usage       : " + peakGpu + "% at " + peakGpuTime)
+    lines.push("Average CPU Usage    : " + avgCpu + "%")
+    lines.push("Average Memory Usage : " + avgMem + "%")
+    lines.push("")
+
+    lines.push(border)
+    lines.push("                   3. RECORDED TIME SERIES SAMPLES")
+    lines.push(border)
+    lines.push(padRight("TIMESTAMP", 12) + " | " + padLeft("CPU %", 7) + " | " + padLeft("MEM %", 7) + " | " + padLeft("IO MB/s", 10) + " | " + padLeft("GPU %", 7) + " | TOP PROCESS")
+    lines.push(subBorder)
+    var step = Math.max(1, Math.floor(historyPage.history.length / 100))
+    for (var j = 0; j < historyPage.history.length; j += step) {
+      var sm = historyPage.history[j]
+      var topP = (sm.processes && sm.processes.length > 0) ? (sm.processes[0].name || sm.processes[0].cmd || "") : ""
+      lines.push(
+        padRight(sm.timestamp, 12) + " | " +
+        padLeft(sm.cpu + "%", 7) + " | " +
+        padLeft(sm.mem + "%", 7) + " | " +
+        padLeft((Number(sm.io_mb) || 0).toFixed(1), 10) + " | " +
+        padLeft(sm.gpu + "%", 7) + " | " +
+        topP
+      )
+    }
+    lines.push(border)
+    lines.push("End of Perfo History Report")
+    lines.push("")
+    return lines.join("\n")
   }
 }
