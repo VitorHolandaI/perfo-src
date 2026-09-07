@@ -758,9 +758,9 @@ Column {
         PlainText {
           id: cursorTimeBadgeText
           anchors.centerIn: parent
-          text: historyPage.isLive
-            ? ("LIVE " + (historyPage.selectedSample ? historyPage.selectedSample.timestamp : "--"))
-            : (historyPage.selectedSample ? (historyPage.selectedSample.timestamp + " (" + historyPage.timerOffsetLabel() + ")") : "--")
+          text: historyPage.selectedSample
+            ? ((historyPage.isLive ? "LIVE " : "") + historyPage.selectedSample.timestamp + " (" + historyPage.timerOffsetLabel() + ")")
+            : "--"
           color: historyPage.isLive ? Color.accent : "#000000"
           font.family: historyPage.fontFamily
           font.pixelSize: Style.font.caption
@@ -898,31 +898,40 @@ Column {
     var startIdx = Math.max(0, history.length - span)
     var sample = history[startIdx]
     var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
-    var dur = formatDuration(history.length - 1 - startIdx)
-    return t + " (-" + dur + ")"
+    return t + " (+0s)"
   }
 
   function rulerEndTime() {
     if (!history || history.length === 0) return "--:--:--"
+    var span = currentZoomSeconds()
+    var totalSpan = Math.min(span, Math.max(1, history.length))
     var sample = history[history.length - 1]
     var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
-    return t + " (LIVE)"
+    return t + " (+" + formatDuration(totalSpan) + " LIVE)"
   }
 
   function timerClockString() {
     if (!history || history.length === 0) return "00:00 / 00:00"
     var span = currentZoomSeconds()
     var startIdx = Math.max(0, history.length - span)
-    var sliceCount = Math.max(1, history.length - startIdx)
-    var elapsed = Math.max(0, effectiveIndex - startIdx)
-    return formatTimerClock(elapsed) + " / " + formatTimerClock(sliceCount)
+    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var eff = effectiveIndex
+    var elapsed = isLive
+      ? totalSpan
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+    return formatTimerClock(elapsed) + " / " + formatTimerClock(totalSpan)
   }
 
   function timerOffsetLabel() {
-    if (!history || history.length === 0 || !selectedSample) return "LIVE"
-    if (isLive) return "LIVE"
-    var offset = history.length - 1 - effectiveIndex
-    return "-" + formatDuration(offset)
+    if (!history || history.length === 0 || !selectedSample) return "+0s"
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var eff = effectiveIndex
+    var elapsed = isLive
+      ? totalSpan
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+    return "+" + formatDuration(elapsed)
   }
 
   function formatTimerClock(seconds) {
@@ -1109,8 +1118,15 @@ Column {
 
   function timingLabel() {
     if (!selectedSample) return "No history recorded yet"
-    var offset = history.length - 1 - effectiveIndex
-    var prefix = isLive ? "LIVE (NOW): " : ("-" + formatDuration(offset) + " (" + selectedSample.timestamp + "): ")
+    var span = currentZoomSeconds()
+    var startIdx = Math.max(0, history.length - span)
+    var totalSpan = Math.min(span, Math.max(1, history.length))
+    var eff = effectiveIndex
+    var elapsed = isLive
+      ? totalSpan
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
+    var durStr = "+" + formatDuration(elapsed)
+    var prefix = isLive ? ("LIVE [" + durStr + "]: ") : (durStr + " (" + selectedSample.timestamp + "): ")
     return prefix + "CPU " + selectedSample.cpu + "% | MEM " + selectedSample.mem + "% | IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " | GPU " + selectedSample.gpu + "%"
   }
 

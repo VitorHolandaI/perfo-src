@@ -534,13 +534,26 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let eff = state.effective_index();
     let is_live = state.is_live();
-    let time_mode = if is_live {
-        Span::styled(" LIVE (NOW)", Style::default().fg(ui.theme.green).add_modifier(Modifier::BOLD))
+    let total = state.samples.len();
+    let span_secs = state.span.seconds(total);
+    let start_idx = total.saturating_sub(span_secs);
+    let total_span = span_secs.min(total).max(1);
+    let elapsed = if is_live {
+        total_span
     } else {
-        let offset = state.samples.len().saturating_sub(1).saturating_sub(eff);
-        let time_str = state.samples.get(eff).map(|s| s.timestamp.as_str()).unwrap_or("--");
+        let span_samples = total.saturating_sub(1).saturating_sub(start_idx).max(1);
+        let ratio = (eff.saturating_sub(start_idx) as f64) / (span_samples as f64);
+        ((ratio * total_span as f64).round() as usize).min(total_span)
+    };
+    let time_str = state.samples.get(eff).map(|s| s.timestamp.as_str()).unwrap_or("--");
+    let time_mode = if is_live {
         Span::styled(
-            format!(" -{}s ({})", offset, time_str),
+            format!(" LIVE [+{}s] ({})", total_span, time_str),
+            Style::default().fg(ui.theme.green).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            format!(" +{}s ({})", elapsed, time_str),
             Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
         )
     };
@@ -568,15 +581,11 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
             Span::styled(format!("  {label}  "), Style::default().fg(ui.theme.muted))
         }
     };
-    let total = state.samples.len();
-    let span_secs = state.span.seconds(total);
-    let start_idx = total.saturating_sub(span_secs);
-    let elapsed = eff.saturating_sub(start_idx);
-    let total_in_span = total.saturating_sub(start_idx).max(1);
+
     let el_m = elapsed / 60;
     let el_s = elapsed % 60;
-    let tot_m = total_in_span / 60;
-    let tot_s = total_in_span % 60;
+    let tot_m = total_span / 60;
+    let tot_s = total_span % 60;
 
     let timer_tag = Span::styled(
         format!(" ⏱ {:02}:{:02}/{:02}:{:02} ", el_m, el_s, tot_m, tot_s),
@@ -753,36 +762,41 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     }
     let ruler_line = Line::from(ruler_spans);
 
-    let offset_secs = total.saturating_sub(1).saturating_sub(eff);
-    let offset_str = if state.is_live() {
-        "LIVE".to_string()
+    let total_span = span_secs.min(total).max(1);
+    let elapsed = if state.is_live() {
+        total_span
     } else {
-        format!("-{}s", offset_secs)
+        let span_samples = total.saturating_sub(1).saturating_sub(start_idx).max(1);
+        let ratio = (eff.saturating_sub(start_idx) as f64) / (span_samples as f64);
+        ((ratio * total_span as f64).round() as usize).min(total_span)
     };
-
-    let elapsed = eff.saturating_sub(start_idx);
-    let total_in_span = total.saturating_sub(start_idx).max(1);
     let el_m = elapsed / 60;
     let el_s = elapsed % 60;
-    let tot_m = total_in_span / 60;
-    let tot_s = total_in_span % 60;
+    let tot_m = total_span / 60;
+    let tot_s = total_span % 60;
+
+    let cur_str = if state.is_live() {
+        format!("+{}s LIVE", elapsed)
+    } else {
+        format!("+{}s", elapsed)
+    };
 
     let time_axis_line = Line::from(vec![
         Span::styled(format!("{:<12}", start_time), Style::default().fg(ui.theme.muted)),
         Span::styled(
-            format!("{:^width$}", format!("▲ {} ({})", cur_time, offset_str), width = w.saturating_sub(24)),
+            format!("{:^width$}", format!("▲ {} ({})", cur_time, cur_str), width = w.saturating_sub(24)),
             Style::default().fg(ui.theme.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("{:>12}", end_time), Style::default().fg(ui.theme.muted)),
     ]);
 
     let timer_axis_line = Line::from(vec![
-        Span::styled(format!("{:<12}", format!("-{}s", span_secs)), Style::default().fg(ui.theme.muted)),
+        Span::styled(format!("{:<12}", "+0s"), Style::default().fg(ui.theme.muted)),
         Span::styled(
             format!("{:^width$}", format!("[⏱ {:02}:{:02} / {:02}:{:02}]", el_m, el_s, tot_m, tot_s), width = w.saturating_sub(24)),
             Style::default().fg(ui.theme.fg),
         ),
-        Span::styled(format!("{:>12}", "NOW"), Style::default().fg(ui.theme.muted)),
+        Span::styled(format!("{:>12}", format!("+{}s LIVE", total_span)), Style::default().fg(ui.theme.muted)),
     ]);
 
     let par = Paragraph::new(vec![cursor_line, bars_line, ruler_line, time_axis_line, timer_axis_line]);
