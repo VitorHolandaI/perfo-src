@@ -91,7 +91,7 @@ jobs:
 
           tracked = [
               'BarWidget.qml', 'Panel.qml', 'ProcessGrid.qml', 'GpuPage.qml',
-              'PlainText.qml',
+              'HistoryPage.qml', 'PlainText.qml',
               'manifest.json', 'preview.png', 'README.md', 'LICENSE',
           ]
           files = []
