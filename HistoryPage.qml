@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
@@ -110,7 +111,7 @@ Column {
           PlainText {
             anchors.centerIn: parent
             text: modelData
-            color: historyPage.metric === modelData ? Color.surface : historyPage.foreground
+            color: historyPage.metric === modelData ? Color.background : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: historyPage.metric === modelData
@@ -154,7 +155,7 @@ Column {
           PlainText {
             anchors.centerIn: parent
             text: modelData
-            color: historyPage.zoomLabel === modelData ? Color.surface : historyPage.foreground
+            color: historyPage.zoomLabel === modelData ? Color.background : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: historyPage.zoomLabel === modelData
@@ -186,7 +187,7 @@ Column {
         anchors.leftMargin: 2
         anchors.rightMargin: 2
         text: historyPage.customSpanText
-        color: historyPage.isCustomZoom ? Color.surface : historyPage.foreground
+        color: historyPage.isCustomZoom ? Color.background : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: historyPage.isCustomZoom
@@ -247,7 +248,7 @@ Column {
       radius: Style.cornerRadius
       anchors.verticalCenter: parent.verticalCenter
       color: "transparent"
-      border.color: historyPage.isRecording ? Color.error : historyPage.foreground
+      border.color: historyPage.isRecording ? Color.urgent : historyPage.foreground
       border.width: 1
 
       Row {
@@ -258,7 +259,7 @@ Column {
           height: 6
           radius: 3
           anchors.verticalCenter: parent.verticalCenter
-          color: historyPage.isRecording ? Color.error : historyPage.foreground
+          color: historyPage.isRecording ? Color.urgent : historyPage.foreground
           opacity: historyPage.isRecording ? 1.0 : 0.4
         }
         PlainText {
@@ -289,7 +290,7 @@ Column {
       PlainText {
         anchors.centerIn: parent
         text: historyPage.isPlaying ? "PAUSE" : "PLAY"
-        color: historyPage.isPlaying ? Color.surface : historyPage.foreground
+        color: historyPage.isPlaying ? Color.background : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -385,7 +386,7 @@ Column {
       PlainText {
         anchors.centerIn: parent
         text: "LIVE"
-        color: historyPage.isLive ? Color.surface : historyPage.foreground
+        color: historyPage.isLive ? Color.background : historyPage.foreground
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
         font.bold: historyPage.isLive

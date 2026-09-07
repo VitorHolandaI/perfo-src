@@ -11,7 +11,7 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  property var snapshot: null
+  property var snapshot: hostWidget ? hostWidget.snapshot : null
   property int page: 0
   readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST"]
   property var historyBuffer: []
@@ -179,7 +179,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: historyPageComp.inputActiveFocus
+      blocked: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.inputActiveFocus : false
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.switchPage(dx)
       }

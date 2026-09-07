@@ -36,6 +36,7 @@ BarWidget {
     return parts.join("  ")
   }
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
   implicitWidth: root.vertical ? root.barSize : button.implicitWidth
   implicitHeight: root.barSize
@@ -45,9 +46,8 @@ BarWidget {
     if (!target) return
     if ("bar" in target) target.bar = root.bar
     if ("settings" in target) target.settings = root.settings
-    if ("anchorItem" in target) target.anchorItem = root
+    if ("anchorItem" in target) target.anchorItem = button
     if ("hostWidget" in target) target.hostWidget = root
-    if ("snapshot" in target) target.snapshot = root.snapshot
   }
 
   function open() {
@@ -58,12 +58,15 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.close()
   }
 
+  function closeForPopoutSwitch() {
+    if (panelLoader.item && panelLoader.item.closeForPopoutSwitch) panelLoader.item.closeForPopoutSwitch()
+  }
+
   function toggle() {
     if (root.opened) root.close()
     else root.open()
   }
 
-  onSnapshotChanged: injectPanel()
   onBarChanged: injectPanel()
 
   Process {
@@ -83,11 +86,11 @@ BarWidget {
 
   IpcHandler {
     target: "vitor.perfo"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
+    function open() { root.open() }
+    function close() { root.close() }
+    function show() { root.open() }
+    function hide() { root.close() }
+    function toggle() { root.toggle() }
   }
 
   Loader {
