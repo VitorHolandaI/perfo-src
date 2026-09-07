@@ -93,6 +93,8 @@ BarWidget {
     function toggle() { root.toggle() }
     function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
     function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
+    function toggleRecording() { if (panelLoader.item) panelLoader.item.historyRecording = !panelLoader.item.historyRecording }
+    function isRecording(): bool { return panelLoader.item ? panelLoader.item.historyRecording : true }
   }
 
   Loader {

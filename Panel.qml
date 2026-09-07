@@ -17,6 +17,7 @@ Panel {
   property var historyBuffer: []
   property int maxHistorySamples: 36000
   property bool historyRecording: true
+  property var currentLiveSample: null
 
   onSnapshotChanged: root.recordHistorySample()
 
@@ -546,6 +547,7 @@ Panel {
             id: historyPageComp
             width: parent.width
             history: root.historyBuffer
+            liveSample: root.currentLiveSample
             foreground: root.foreground
             fontFamily: root.fontFamily
             isRecording: root.historyRecording
@@ -594,8 +596,8 @@ Panel {
     return root.totalDeviceRate("write_bps")
   }
 
-  function recordHistorySample() {
-    if (!root.historyRecording || !root.snapshot) return
+  function sampleFromSnapshot() {
+    if (!root.snapshot) return null
     var now = new Date()
     var timeStr = ("0" + now.getHours()).slice(-2) + ":" +
                   ("0" + now.getMinutes()).slice(-2) + ":" +
@@ -682,7 +684,7 @@ Panel {
       }
     }
 
-    var sample = {
+    return {
       timestamp: timeStr,
       cpu: Math.round(Number(root.snapshot.overall_percent) || 0),
       mem: Math.round(memPct),
@@ -692,6 +694,14 @@ Panel {
       write_bps: writeRate,
       processes: procs
     }
+  }
+
+  function recordHistorySample() {
+    var sample = root.sampleFromSnapshot()
+    if (sample) {
+      root.currentLiveSample = sample
+    }
+    if (!root.historyRecording || !sample) return
 
     var buf = root.historyBuffer.slice()
     buf.push(sample)

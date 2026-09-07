@@ -8,6 +8,7 @@ Column {
   id: historyPage
 
   property var history: []
+  property var liveSample: null
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   property string metric: "CPU"
@@ -31,12 +32,13 @@ Column {
     return scrubIndex
   }
 
+  readonly property bool isLive: scrubIndex < 0 || (history.length > 0 && effectiveIndex >= history.length - 1)
+
   readonly property var selectedSample: {
-    if (history.length === 0 || effectiveIndex < 0) return null
+    if (isLive && liveSample) return liveSample
+    if (history.length === 0 || effectiveIndex < 0) return liveSample
     return history[effectiveIndex]
   }
-
-  readonly property bool isLive: effectiveIndex === history.length - 1
 
   spacing: Style.space(5)
 
@@ -222,17 +224,6 @@ Column {
       }
     }
 
-    Item { width: Style.space(4); height: 1 }
-
-    // Total recorded length indicator
-    PlainText {
-      anchors.verticalCenter: parent.verticalCenter
-      text: historyPage.formatDuration(historyPage.history.length)
-      color: historyPage.foreground
-      opacity: 0.6
-      font.family: historyPage.fontFamily
-      font.pixelSize: Style.font.caption
-    }
   }
 
   // Row 2: Playback & Action Controls (REC, PLAY, LIVE, jump & step buttons)
@@ -469,7 +460,9 @@ Column {
       PlainText {
         id: timerBadgeText
         anchors.centerIn: parent
-        text: "⏱ " + historyPage.timerClockString()
+        text: historyPage.isPlaying
+          ? ("▶ REPLAY " + historyPage.timerClockString())
+          : ("⏱ " + historyPage.timerClockString())
         color: historyPage.isLive ? Color.accent : "#000000"
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.caption
@@ -894,7 +887,10 @@ Column {
   }
 
   function rulerStartTime() {
-    if (!history || history.length === 0) return "--:--:--"
+    if (!history || history.length === 0) {
+      if (liveSample && liveSample.timestamp) return liveSample.timestamp + " (+0s)"
+      return "--:--:--"
+    }
     var span = currentZoomSeconds()
     var startIdx = Math.max(0, history.length - span)
     var sample = history[startIdx]
@@ -903,11 +899,11 @@ Column {
   }
 
   function rulerEndTime() {
-    if (!history || history.length === 0) return "--:--:--"
+    var sample = (isLive && liveSample) ? liveSample : (history && history.length > 0 ? history[history.length - 1] : null)
+    if (!sample) return "--:--:--"
     var span = currentZoomSeconds()
     var totalSpan = Math.min(span, Math.max(1, history.length))
-    var sample = history[history.length - 1]
-    var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
+    var t = sample.timestamp ? sample.timestamp : "--:--:--"
     return t + " (+" + formatDuration(totalSpan) + " LIVE)"
   }
 
@@ -1127,7 +1123,14 @@ Column {
       ? totalSpan
       : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, history.length - 1 - startIdx)) * totalSpan)))
     var durStr = "+" + formatDuration(elapsed)
-    var prefix = isLive ? ("LIVE [" + durStr + "]: ") : (durStr + " (" + selectedSample.timestamp + "): ")
+    var prefix = ""
+    if (isPlaying) {
+      prefix = "REPLAY [" + durStr + "] (" + selectedSample.timestamp + "): "
+    } else if (isLive) {
+      prefix = isRecording ? ("LIVE [" + durStr + "]: ") : ("LIVE (PAUSED REC) [" + selectedSample.timestamp + "]: ")
+    } else {
+      prefix = durStr + " (" + selectedSample.timestamp + "): "
+    }
     return prefix + "CPU " + selectedSample.cpu + "% | MEM " + selectedSample.mem + "% | IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " | GPU " + selectedSample.gpu + "%"
   }
 
