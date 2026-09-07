@@ -8,6 +8,11 @@ The Rust binary owns collection and calculations. The Omarchy files are only a
 thin presentation layer. On a machine without Omarchy, the terminal TUI and
 the JSON commands remain usable.
 
+> **Repository Architecture**:
+> - **Source Code and Development (this repo)**: [VitorHolandaI/perfo-src](https://github.com/VitorHolandaI/perfo-src) (Rust engine, CLI, tests, build workflows, documentation, standalone installer)
+> - **Omarchy Runtime Distribution**: [VitorHolandaI/perfo](https://github.com/VitorHolandaI/perfo) (clean runtime package consumed by `omarchy plugin add`)
+> - **Marketplace Listing**: [omarchyplugins.com/plugin.html?id=vitor.perfo](https://omarchyplugins.com/plugin.html?id=vitor.perfo)
+
 ![Perfo terminal dashboard](docs/images/terminal-dashboard.png)
 
 ## Features
@@ -38,6 +43,36 @@ publishes the direct dependency tree and duplicate-version report in the
 workflow summary and reviews changed dependencies on pull requests. The
 dedicated [security workflow](.github/workflows/security.yml) runs `cargo audit`
 and `cargo deny check` without duplicating that work.
+
+## Installation
+
+### Standalone Linux (Non-Omarchy)
+
+To install the pre-compiled `perfo` binary into `~/.local/bin` without needing Rust or Omarchy:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | bash
+```
+
+Custom installation directory (default is `~/.local/bin`):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | PERFO_INSTALL_DIR=/usr/local/bin bash
+```
+
+Or build and install locally from source using the installer script:
+
+```bash
+./install.sh --build
+```
+
+### Omarchy Plugin
+
+For Omarchy users, install the distribution package via the Omarchy plugin CLI:
+
+```bash
+omarchy plugin add https://github.com/VitorHolandaI/perfo.git --enable
+```
 
 ## Run In The Terminal
 
@@ -85,10 +120,10 @@ Tracing an existing process is normally limited by the kernel Yama policy and
 process ownership. Starting the command through `perfo trace --` is the most
 portable option and does not require changing global ptrace policy.
 
-## Omarchy Plugin
+## Omarchy Plugin Integration
 
-The repository root is the installable `vitor.perfo` Omarchy plugin. The binary
-is compiled by GitHub Actions and committed into the repository so every release
+The pre-packaged runtime plugin is distributed via [VitorHolandaI/perfo](https://github.com/VitorHolandaI/perfo).
+The binary is pre-compiled and committed into the distribution tree so every release
 is self-contained:
 
 ```bash
@@ -99,13 +134,12 @@ The plugin auto-detects its binary location inside the cloned plugin tree. No
 separate binary install or `PERFO_BIN` variable is needed when installed through
 `omarchy plugin add`.
 
-For local development, install the binary first, then test the plugin from the
-working tree:
+For local development or testing with the Omarchy shell:
 
 ```bash
 cargo build --release
 mkdir -p "$HOME/.config/omarchy/plugins/vitor.perfo"
-cp -- *.qml manifest.json bin/perfo "$HOME/.config/omarchy/plugins/vitor.perfo/"
+cp -- *.qml manifest.json target/release/perfo "$HOME/.config/omarchy/plugins/vitor.perfo/"
 omarchy plugin enable vitor.perfo right
 omarchy restart shell
 ```
