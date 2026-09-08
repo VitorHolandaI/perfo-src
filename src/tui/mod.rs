@@ -179,7 +179,8 @@ fn run_loop(
         if let Some(s) = &snap {
             let (rows, pids, selected) = prepare(s, &mut state);
             display_pids = pids;
-            let status = status_line(&state);
+            let term_width = terminal.size().map(|s| s.width as usize).unwrap_or(0);
+            let status = status_line_for_width(&state, term_width);
             let theme = if state.use_system_theme {
                 system_theme.unwrap_or(Theme::DEFAULT)
             } else {
@@ -259,6 +260,9 @@ fn prepare<'a>(
             .collect()
     };
     let display_pids: Vec<u32> = rows.iter().map(|r| r.process.pid).collect();
+    if state.selected_pid.is_none() && !display_pids.is_empty() {
+        state.selected_pid = display_pids.first().copied();
+    }
     let selected = state
         .selected_pid
         .and_then(|pid| rows.iter().position(|r| r.process.pid == pid));
@@ -641,7 +645,9 @@ fn handle_normal_key(
             false
         }
         KeyCode::Char('y') | KeyCode::Char('Y') => {
-            if let Some(pid) = state.selected_pid {
+            let target_pid = state.selected_pid.or_else(|| display_pids.first().copied());
+            if let Some(pid) = target_pid {
+                state.selected_pid = Some(pid);
                 let cmd = get_process_full_cmd(pid);
                 copy_to_clipboard(&cmd);
                 state.status_msg = Some(match state.lang {
@@ -811,13 +817,17 @@ fn handle_normal_key(
         KeyCode::Enter => {
             if state.cores_focused {
                 toggle_core_filter(state);
-            } else if let Some(pid) = state.selected_pid {
-                let cmd = get_process_full_cmd(pid);
-                copy_to_clipboard(&cmd);
-                state.status_msg = Some(match state.lang {
-                    Lang::Pt => format!("Comando do PID {pid} copiado"),
-                    Lang::En => format!("Copied command of PID {pid}"),
-                });
+            } else {
+                let target_pid = state.selected_pid.or_else(|| display_pids.first().copied());
+                if let Some(pid) = target_pid {
+                    state.selected_pid = Some(pid);
+                    let cmd = get_process_full_cmd(pid);
+                    copy_to_clipboard(&cmd);
+                    state.status_msg = Some(match state.lang {
+                        Lang::Pt => format!("Comando do PID {pid} copiado"),
+                        Lang::En => format!("Copied command of PID {pid}"),
+                    });
+                }
             }
             false
         }
@@ -957,7 +967,12 @@ fn send_signal(state: &mut State, sig: i32) {
     }
 }
 
+#[cfg(test)]
 fn status_line(state: &State) -> String {
+    status_line_for_width(state, 0)
+}
+
+fn status_line_for_width(state: &State, width: usize) -> String {
     if state.searching {
         return format!("/{}{}", state.search, "_");
     }
@@ -996,10 +1011,16 @@ fn status_line(state: &State) -> String {
         } else {
             "SCRUB"
         };
-        return format!(
+        let full_hist = format!(
             "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | q quit",
             state.history.metric.label(),
             state.history.span.label()
+        );
+        if width == 0 || full_hist.len() <= width {
+            return full_hist;
+        }
+        return format!(
+            "[7:HIST] {rec}{play} | {live} | <> step | [] jump | Space play | 0 live | Tab metric | e export | q quit"
         );
     }
     let pane = match state.pane {
@@ -1018,17 +1039,83 @@ fn status_line(state: &State) -> String {
         Pane::History => "[7:HIST] ",
     };
     let full = if state.fullscreen { "[FULL] " } else { "" };
+    let paused = if state.paused { "\u{23F8} PAUSED " } else { "" };
     let filter = state
         .core_filter
-        .map(|c| format!(" core filter {c} | Esc clears |"))
+        .map(|c| format!("core filter {c} | Esc clears | "))
         .unwrap_or_default();
-    format!(
-        "{pane}{full}{}m menu | Tab focus | {filter} q quit | k kill | arrows navigate | Enter filter core | p CPU | M MEM | i reverse | c cmd | t tree{} | H threads{} | K kernel{} | s trace | z pause | / search | L language | ? help",
-        if state.paused { "\u{23F8} PAUSED " } else { "" },
-        if state.tree { " \u{2713}" } else { "" },
-        if state.show_threads { " \u{2713}" } else { "" },
-        if state.show_kernel { " \u{2713}" } else { "" },
-    )
+    let prefix = format!("{pane}{full}{paused}{filter}");
+
+    let mut tokens: Vec<String> = Vec::new();
+    match state.pane {
+        Pane::Cpu => {
+            if state.cores_focused {
+                tokens.push("m menu".into());
+                tokens.push("Tab procs".into());
+                tokens.push("Enter filter core".into());
+                tokens.push("arrows nav".into());
+                if width == 0 || width >= 120 {
+                    tokens.push("p CPU".into());
+                    tokens.push("M MEM".into());
+                    tokens.push("z pause".into());
+                }
+                tokens.push("? help".into());
+                tokens.push("q quit".into());
+            } else {
+                tokens.push("m menu".into());
+                tokens.push("Tab cores".into());
+                tokens.push("y/Enter copy".into());
+                tokens.push("←→ scroll".into());
+                tokens.push("↑↓ nav".into());
+                tokens.push("k kill".into());
+                if width == 0 || width >= 135 {
+                    tokens.push("p CPU".into());
+                    tokens.push("M MEM".into());
+                }
+                tokens.push("/ search".into());
+                if width == 0 || width >= 160 {
+                    tokens.push(format!("t tree{}", if state.tree { " \u{2713}" } else { "" }));
+                    tokens.push("s trace".into());
+                }
+                if width == 0 || width >= 190 {
+                    tokens.push(format!("H threads{}", if state.show_threads { " \u{2713}" } else { "" }));
+                    tokens.push(format!("K kernel{}", if state.show_kernel { " \u{2713}" } else { "" }));
+                    tokens.push("i reverse".into());
+                }
+                tokens.push("? help".into());
+                tokens.push("q quit".into());
+            }
+        }
+        _ => {
+            tokens.push("m menu".into());
+            tokens.push("1-7 panes".into());
+            tokens.push("z pause".into());
+            tokens.push("? help".into());
+            tokens.push("q quit".into());
+        }
+    }
+
+    if width == 0 {
+        return format!("{prefix}{}", tokens.join(" | "));
+    }
+
+    let mut out = prefix;
+    let mut first = true;
+    for (i, token) in tokens.iter().enumerate() {
+        let sep = if first { "" } else { " | " };
+        let reserve = if i < tokens.len().saturating_sub(2) {
+            " | ? help | q quit".len()
+        } else {
+            0
+        };
+        if out.len() + sep.len() + token.len() + reserve > width {
+            continue;
+        }
+        out.push_str(sep);
+        out.push_str(token);
+        first = false;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1299,6 +1386,20 @@ mod tests {
         assert!(status_line(&s).contains("PAUSED"));
         s.core_filter = Some(3);
         assert!(status_line(&s).contains("core filter 3"));
+    }
+
+    #[test]
+    fn status_line_fits_given_width() {
+        let s = State::default();
+        let st100 = status_line_for_width(&s, 100);
+        assert!(st100.len() <= 100);
+        assert!(st100.contains("y/Enter copy"));
+
+        let st140 = status_line_for_width(&s, 140);
+        assert!(st140.len() <= 140);
+        assert!(st140.contains("y/Enter copy"));
+        assert!(st140.contains("scroll"));
+        assert!(st140.contains("help"));
     }
 
     #[test]
