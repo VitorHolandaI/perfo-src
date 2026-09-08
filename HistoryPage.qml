@@ -27,6 +27,9 @@ Column {
   property var savedRecordings: []
   property bool showSessionsMenu: false
   property string sessionNotification: ""
+  property real currentMaxMetric: 100.0
+  property int playbackSpeed: 1
+  property var cachedBars: []
 
   property bool isSessionRecording: false
   property var sessionRecordBuffer: []
@@ -50,6 +53,19 @@ Column {
     return scrubIndex
   }
 
+  readonly property int selectedBarIndex: {
+    if (!activeHistory || activeHistory.length === 0 || effectiveIndex < 0) return -1
+    var span = currentZoomSeconds()
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
+    var sliceCount = activeHistory.length - startIdx
+    if (sliceCount <= 0) return -1
+    var eff = effectiveIndex
+    if (eff < startIdx || eff >= activeHistory.length) return -1
+    var barCount = cachedBars.length > 0 ? cachedBars.length : 100
+    if (sliceCount <= barCount) return eff - startIdx
+    return Math.min(barCount - 1, Math.floor(((eff - startIdx) / sliceCount) * barCount))
+  }
+
   readonly property bool isLive: !isSessionRecording && loadedSessionId.length === 0 && (scrubIndex < 0 || (activeHistory.length > 0 && effectiveIndex >= activeHistory.length - 1))
 
   readonly property var selectedSample: {
@@ -69,6 +85,17 @@ Column {
     }
   }
 
+  Component.onCompleted: rebuildVisibleBars()
+  onMetricChanged: rebuildVisibleBars()
+  onZoomLabelChanged: rebuildVisibleBars()
+  onCustomSpanSecondsChanged: rebuildVisibleBars()
+  onLoadedSessionIdChanged: rebuildVisibleBars()
+  onActiveHistoryChanged: {
+    if (loadedSessionId.length === 0) {
+      rebuildVisibleBars()
+    }
+  }
+
   spacing: Style.space(5)
 
   Timer {
@@ -77,7 +104,8 @@ Column {
     repeat: true
     running: historyPage.isPlaying && historyPage.activeHistory.length > 0
     onTriggered: {
-      var next = historyPage.effectiveIndex + 1
+      var step = historyPage.playbackSpeed || 1
+      var next = historyPage.effectiveIndex + step
       if (next >= historyPage.activeHistory.length) {
         if (historyPage.loadedSessionId.length > 0) {
           historyPage.scrubIndex = historyPage.activeHistory.length - 1
@@ -512,6 +540,32 @@ Column {
               historyPage.togglePlayback()
             }
           }
+        }
+      }
+
+      // Playback speed selector button
+      Rectangle {
+        width: speedButtonText.implicitWidth + Style.space(8)
+        height: Style.space(18)
+        radius: Style.cornerRadius
+        anchors.verticalCenter: parent.verticalCenter
+        color: historyPage.playbackSpeed > 1 ? Color.accent : "transparent"
+        border.color: historyPage.playbackSpeed > 1 ? Color.accent : historyPage.foreground
+        border.width: 1
+
+        PlainText {
+          id: speedButtonText
+          anchors.centerIn: parent
+          text: historyPage.playbackSpeed + "x"
+          color: historyPage.playbackSpeed > 1 ? "#000000" : historyPage.foreground
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: historyPage.playbackSpeed > 1
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: historyPage.cyclePlaybackSpeed()
         }
       }
 
@@ -1083,16 +1137,15 @@ Column {
 
       Repeater {
         id: timelineRepeater
-        model: historyPage.visibleBars()
+        model: historyPage.cachedBars
 
         delegate: Rectangle {
           id: barDelegate
-          readonly property bool isSelected: modelData.containsIndex(historyPage.effectiveIndex)
+          readonly property bool isSelected: index === historyPage.selectedBarIndex
           readonly property real sampleValue: Number(modelData.value) || 0
-          readonly property real maxMetricValue: historyPage.maxMetric(historyPage.metric)
 
           width: Math.max(1, (barsRow.width / Math.max(1, timelineRepeater.count)) - 1)
-          height: Math.max(2, barsRow.height * Math.min(1.0, sampleValue / Math.max(1.0, maxMetricValue)))
+          height: Math.max(2, barsRow.height * Math.min(1.0, sampleValue / Math.max(1.0, historyPage.currentMaxMetric)))
           anchors.bottom: parent.bottom
 
           color: isSelected
@@ -1498,7 +1551,7 @@ Column {
   function rulerCursorRatio() {
     if (!activeHistory || activeHistory.length === 0) return 1.0
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var sliceCount = activeHistory.length - startIdx
     if (sliceCount <= 1) return 1.0
     var eff = effectiveIndex
@@ -1512,7 +1565,7 @@ Column {
       return "--:--:--"
     }
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var sample = activeHistory[startIdx]
     var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
     return t + " (+0s)"
@@ -1522,7 +1575,7 @@ Column {
     var sample = (isLive && liveSample) ? liveSample : (activeHistory && activeHistory.length > 0 ? activeHistory[activeHistory.length - 1] : null)
     if (!sample) return "--:--:--"
     var span = currentZoomSeconds()
-    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
     var t = sample.timestamp ? sample.timestamp : "--:--:--"
     var suffix = isLive ? " (+" + formatDuration(totalSpan) + " LIVE)" : " (+" + formatDuration(totalSpan) + ")"
     return t + suffix
@@ -1534,8 +1587,8 @@ Column {
     }
     if (!activeHistory || activeHistory.length === 0) return "00:00 / 00:00"
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
-    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
@@ -1546,8 +1599,8 @@ Column {
   function timerOffsetLabel() {
     if (!activeHistory || activeHistory.length === 0 || !selectedSample) return "+0s"
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
-    var totalSpan = Math.min(span, Math.max(1, activeHistory.length))
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
@@ -1570,7 +1623,7 @@ Column {
   function scrubToX(mouseX, totalWidth) {
     if (!activeHistory || activeHistory.length === 0) return
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var sliceCount = activeHistory.length - startIdx
     if (sliceCount <= 0) return
     var ratio = Math.max(0.0, Math.min(1.0, mouseX / Math.max(1, totalWidth)))
@@ -1592,33 +1645,42 @@ Column {
       zoomLabel = "CUSTOM"
       customInputOpen = false
       historyPage.requestCapacity(customSpanSeconds)
+      rebuildVisibleBars()
     } else {
       sessionNotification = "Enter valid integer minutes"
       sessionNotificationTimer.restart()
     }
   }
 
-  function visibleBars() {
-    if (!activeHistory || activeHistory.length === 0) return []
+  function rebuildVisibleBars() {
+    if (!activeHistory || activeHistory.length === 0) {
+      currentMaxMetric = 100.0
+      cachedBars = []
+      return
+    }
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var sliceCount = activeHistory.length - startIdx
     var maxBars = 100
+    var maxPeak = 1.0
 
     if (sliceCount <= maxBars) {
       var bars = []
       for (var i = startIdx; i < activeHistory.length; i++) {
         var rawSample = activeHistory[i]
+        var val = metricValue(rawSample)
+        if (val > maxPeak) maxPeak = val
         bars.push({
           rawIndex: i,
-          value: metricValue(rawSample),
-          containsIndex: function(target) { return target === this.rawIndex }
+          value: val
         })
       }
-      return bars
+      updateMaxMetric(maxPeak)
+      cachedBars = bars
+      return
     }
 
-    // Downsample into buckets for long time spans (such as 40m, 1h, 40h)
+    // Downsample into buckets for long time spans (such as 40m, 1h, 2h, 40h)
     var bucketSize = sliceCount / maxBars
     var downsampled = []
     for (var b = 0; b < maxBars; b++) {
@@ -1635,15 +1697,32 @@ Column {
           peakIdx = k
         }
       }
+      if (peakVal > maxPeak) maxPeak = peakVal
       downsampled.push({
         rawIndex: peakIdx,
         startIndex: bStart,
         endIndex: bEnd,
-        value: peakVal,
-        containsIndex: function(target) { return target >= this.startIndex && target < this.endIndex }
+        value: peakVal
       })
     }
-    return downsampled
+    updateMaxMetric(maxPeak)
+    cachedBars = downsampled
+  }
+
+  function updateMaxMetric(peak) {
+    if (metric === "CPU" || metric === "MEM" || metric === "GPU") {
+      currentMaxMetric = 100.0
+    } else if (metric === "NET") {
+      currentMaxMetric = Math.max(1048576.0, peak)
+    } else if (metric === "IO") {
+      currentMaxMetric = Math.max(10.0, peak)
+    } else {
+      currentMaxMetric = Math.max(1.0, peak)
+    }
+  }
+
+  function visibleBars() {
+    return cachedBars
   }
 
   function metricValue(sample) {
@@ -1657,29 +1736,16 @@ Column {
   }
 
   function maxMetric(type) {
-    if (type === "CPU" || type === "MEM" || type === "GPU") return 100.0
-    if (type === "NET") {
-      var maxNet = 1048576.0
-      for (var n = 0; n < activeHistory.length; n++) {
-        var nVal = (Number(activeHistory[n].net_rx_bps) || 0) + (Number(activeHistory[n].net_tx_bps) || 0)
-        if (nVal > maxNet) maxNet = nVal
-      }
-      return maxNet
-    }
-    var maxVal = 10.0
-    for (var i = 0; i < activeHistory.length; i++) {
-      var val = Number(activeHistory[i].io_mb) || 0
-      if (val > maxVal) maxVal = val
-    }
-    return maxVal
+    return currentMaxMetric
   }
 
   function stepTimeline(delta) {
     if (!activeHistory || activeHistory.length === 0) return
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var current = effectiveIndex
-    var target = current + delta
+    var step = (Math.abs(delta) === 1 && playbackSpeed > 1) ? (delta * playbackSpeed) : delta
+    var target = current + step
     target = Math.max(startIdx, Math.min(activeHistory.length - 1, target))
     if (target >= activeHistory.length - 1 && loadedSessionId.length === 0) {
       scrubIndex = -1
@@ -1694,13 +1760,14 @@ Column {
     if (span <= 120) return 10
     if (span <= 900) return 30
     if (span <= 3600) return 60
+    if (span <= 7200) return 120
     return 300
   }
 
   function jumpTimeline(direction) {
     if (!activeHistory || activeHistory.length === 0) return
     var span = currentZoomSeconds()
-    var startIdx = Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
     var step = jumpStepSeconds() * (direction < 0 ? -1 : 1)
     var current = effectiveIndex
     var target = current + step
@@ -1711,6 +1778,16 @@ Column {
       scrubIndex = target
     }
     isPlaying = false
+  }
+
+  function cyclePlaybackSpeed() {
+    var speeds = [1, 2, 5, 10, 30, 60]
+    var idx = speeds.indexOf(playbackSpeed)
+    if (idx < 0 || idx === speeds.length - 1) {
+      playbackSpeed = speeds[0]
+    } else {
+      playbackSpeed = speeds[idx + 1]
+    }
   }
 
   function togglePlayback() {
@@ -1734,6 +1811,8 @@ Column {
     loadedHistory = []
     scrubIndex = -1
     isPlaying = false
+    zoomLabel = "2m"
+    rebuildVisibleBars()
   }
 
   function toggleSessionRecording() {
@@ -1819,6 +1898,9 @@ Column {
           loadedSessionId = data.id || recId
           loadedSessionTitle = (data.date || "") + " " + (data.time || "")
           loadedSessionDuration = data.duration_label || ""
+          customSpanSeconds = data.samples.length
+          customMinutes = Math.max(1, Math.ceil(data.samples.length / 60))
+          zoomLabel = "CUSTOM"
           scrubIndex = scrubToEnd ? (data.samples.length - 1) : 0
           isPlaying = autoPlay
           if (scrubToEnd) {
@@ -1827,6 +1909,7 @@ Column {
             sessionNotification = "Loaded " + (data.duration_label || "") + " session"
           }
           sessionNotificationTimer.restart()
+          rebuildVisibleBars()
           return true
         }
       } catch(e) {

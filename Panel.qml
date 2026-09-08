@@ -815,10 +815,10 @@ Panel {
     }
     if (!root.historyRecording || !sample) return
 
-    var buf = root.historyBuffer.slice()
+    var buf = root.historyBuffer
     buf.push(sample)
-    if (buf.length > root.maxHistorySamples) {
-      buf.shift()
+    if (buf.length > root.maxHistorySamples + 50) {
+      buf = buf.slice(buf.length - root.maxHistorySamples)
     }
     root.historyBuffer = buf
   }
