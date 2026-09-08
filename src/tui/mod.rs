@@ -19,8 +19,8 @@ use cpu::{Pane, Row, SortKey, Ui};
 const TICK: Duration = Duration::from_millis(1000);
 /// Trace backlog kept in memory for the TUI trace pane.
 const TRACE_LINES_MAX: usize = 300;
-/// Last help page index (5 pages, 0-based).
-const HELP_LAST_PAGE: usize = 4;
+/// Last help page index (6 pages, 0-based).
+const HELP_LAST_PAGE: usize = 5;
 /// Rows jumped per PageUp/PageDown in the process table.
 const PAGE_STEP: i32 = 10;
 
@@ -423,13 +423,25 @@ fn handle_sessions_modal_key(state: &mut State, code: KeyCode) {
 
 fn handle_help_key(state: &mut State, code: KeyCode) {
     match code {
-        KeyCode::PageDown | KeyCode::Char('n') | KeyCode::Char('j') => {
+        KeyCode::Right
+        | KeyCode::Char('l')
+        | KeyCode::PageDown
+        | KeyCode::Char('n')
+        | KeyCode::Char('j') => {
             state.help_page = (state.help_page + 1).min(HELP_LAST_PAGE);
         }
-        KeyCode::PageUp | KeyCode::Char('p') | KeyCode::Char('k') => {
+        KeyCode::Left
+        | KeyCode::PageUp
+        | KeyCode::Char('p')
+        | KeyCode::Char('k') => {
             state.help_page = state.help_page.saturating_sub(1);
         }
-        KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+        KeyCode::Char('?')
+        | KeyCode::F(1)
+        | KeyCode::Char('h')
+        | KeyCode::Char('q')
+        | KeyCode::Char('Q')
+        | KeyCode::Esc => {
             state.help = false;
         }
         KeyCode::Char('L') => {
@@ -661,8 +673,12 @@ fn handle_normal_key(
             state.tree = !state.tree;
             false
         }
-        KeyCode::Char('h') | KeyCode::Char('H') => {
+        KeyCode::Char('H') => {
             state.show_threads = !state.show_threads;
+            false
+        }
+        KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('h') => {
+            state.help = true;
             false
         }
         KeyCode::Char('K') => {
@@ -747,10 +763,6 @@ fn handle_normal_key(
             } else {
                 toggle_lang(state)
             }
-        }
-        KeyCode::Char('?') => {
-            state.help = true;
-            false
         }
         KeyCode::Char('m') => {
             state.show_menu = !state.show_menu;
@@ -845,6 +857,14 @@ fn handle_menu_key(state: &mut State, code: KeyCode) {
         KeyCode::Char('5') => select_menu_pane(state, Pane::Disks),
         KeyCode::Char('6') => select_menu_pane(state, Pane::Gpu),
         KeyCode::Char('7') => select_menu_pane(state, Pane::History),
+        KeyCode::Char('?')
+        | KeyCode::Char('h')
+        | KeyCode::Char('H')
+        | KeyCode::F(1)
+        | KeyCode::Char('8') => {
+            state.show_menu = false;
+            state.help = true;
+        }
         _ => {}
     }
 }
@@ -1012,15 +1032,21 @@ fn status_line_for_width(state: &State, width: usize) -> String {
             "SCRUB"
         };
         let full_hist = format!(
-            "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | q quit",
+            "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | ? help | q quit",
             state.history.metric.label(),
             state.history.span.label()
         );
-        if width == 0 || full_hist.len() <= width {
+        if width == 0 || full_hist.chars().count() <= width {
             return full_hist;
         }
+        let med_hist = format!(
+            "[7:HIST] {rec}{play} | {live} | <> step | [] jump | Space play | 0 live | Tab metric | e export | ? help | q quit"
+        );
+        if med_hist.chars().count() <= width {
+            return med_hist;
+        }
         return format!(
-            "[7:HIST] {rec}{play} | {live} | <> step | [] jump | Space play | 0 live | Tab metric | e export | q quit"
+            "[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit"
         );
     }
     let pane = match state.pane {
@@ -1046,6 +1072,9 @@ fn status_line_for_width(state: &State, width: usize) -> String {
         .unwrap_or_default();
     let prefix = format!("{pane}{full}{paused}{filter}");
 
+    let mandatory_suffix = " | ? help | q quit";
+    let suffix_len = mandatory_suffix.chars().count();
+
     let mut tokens: Vec<String> = Vec::new();
     match state.pane {
         Pane::Cpu => {
@@ -1059,8 +1088,6 @@ fn status_line_for_width(state: &State, width: usize) -> String {
                     tokens.push("M MEM".into());
                     tokens.push("z pause".into());
                 }
-                tokens.push("? help".into());
-                tokens.push("q quit".into());
             } else {
                 tokens.push("m menu".into());
                 tokens.push("Tab cores".into());
@@ -1082,39 +1109,33 @@ fn status_line_for_width(state: &State, width: usize) -> String {
                     tokens.push(format!("K kernel{}", if state.show_kernel { " \u{2713}" } else { "" }));
                     tokens.push("i reverse".into());
                 }
-                tokens.push("? help".into());
-                tokens.push("q quit".into());
             }
         }
         _ => {
             tokens.push("m menu".into());
             tokens.push("1-7 panes".into());
             tokens.push("z pause".into());
-            tokens.push("? help".into());
-            tokens.push("q quit".into());
         }
     }
 
     if width == 0 {
-        return format!("{prefix}{}", tokens.join(" | "));
+        return format!("{prefix}{}{mandatory_suffix}", tokens.join(" | "));
     }
 
     let mut out = prefix;
     let mut first = true;
-    for (i, token) in tokens.iter().enumerate() {
+    let available = width.saturating_sub(suffix_len);
+    for token in &tokens {
         let sep = if first { "" } else { " | " };
-        let reserve = if i < tokens.len().saturating_sub(2) {
-            " | ? help | q quit".len()
-        } else {
-            0
-        };
-        if out.len() + sep.len() + token.len() + reserve > width {
+        let cost = sep.chars().count() + token.chars().count();
+        if out.chars().count() + cost > available {
             continue;
         }
         out.push_str(sep);
         out.push_str(token);
         first = false;
     }
+    out.push_str(mandatory_suffix);
     out
 }
 
@@ -1294,17 +1315,18 @@ mod tests {
     #[test]
     fn help_navigates_pages_and_closes() {
         let mut s = State::default();
-        handle_key(&mut s, &[], KeyCode::Char('?'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('h'), KeyModifiers::empty(), None);
         assert!(s.help);
-        handle_key(&mut s, &[], KeyCode::Char('n'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Right, KeyModifiers::empty(), None);
         assert_eq!(s.help_page, 1);
         handle_key(&mut s, &[], KeyCode::Char('n'), KeyModifiers::empty(), None);
         handle_key(&mut s, &[], KeyCode::Char('n'), KeyModifiers::empty(), None);
         handle_key(&mut s, &[], KeyCode::Char('n'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('n'), KeyModifiers::empty(), None);
         assert_eq!(s.help_page, HELP_LAST_PAGE);
-        handle_key(&mut s, &[], KeyCode::Char('p'), KeyModifiers::empty(), None);
-        assert_eq!(s.help_page, 3);
-        handle_key(&mut s, &[], KeyCode::Char('q'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Left, KeyModifiers::empty(), None);
+        assert_eq!(s.help_page, 4);
+        handle_key(&mut s, &[], KeyCode::Char('h'), KeyModifiers::empty(), None);
         assert!(!s.help);
     }
 
@@ -1392,14 +1414,23 @@ mod tests {
     fn status_line_fits_given_width() {
         let s = State::default();
         let st100 = status_line_for_width(&s, 100);
-        assert!(st100.len() <= 100);
+        assert!(st100.chars().count() <= 100);
         assert!(st100.contains("y/Enter copy"));
+        assert!(st100.contains("help"));
 
         let st140 = status_line_for_width(&s, 140);
-        assert!(st140.len() <= 140);
+        assert!(st140.chars().count() <= 140);
         assert!(st140.contains("y/Enter copy"));
         assert!(st140.contains("scroll"));
         assert!(st140.contains("help"));
+    }
+
+    #[test]
+    fn history_status_line_contains_help() {
+        let mut s = State::default();
+        s.pane = Pane::History;
+        assert!(status_line_for_width(&s, 80).contains("help"));
+        assert!(status_line_for_width(&s, 140).contains("help"));
     }
 
     #[test]
@@ -1449,6 +1480,10 @@ mod tests {
         handle_key(&mut s, &[], KeyCode::Char('6'), KeyModifiers::empty(), None);
         assert_eq!(s.pane, Pane::Gpu);
         assert!(s.fullscreen);
+        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('?'), KeyModifiers::empty(), None);
+        assert!(s.help);
+        assert!(!s.show_menu);
     }
 
     #[test]

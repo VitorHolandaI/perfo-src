@@ -13,7 +13,7 @@ Panel {
   property var hostWidget: null
   property var snapshot: hostWidget ? hostWidget.snapshot : null
   property int page: 0
-  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST"]
+  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST", "HELP"]
   property var historyBuffer: []
   property int maxHistorySamples: 36000
   property bool historyRecording: true
@@ -201,6 +201,10 @@ Panel {
       }
       onCloseRequested: root.close()
       onTextKey: function(text) {
+        if (text === "?" || text === "/") {
+          root.page = (root.page === 9 ? 0 : 9)
+          return
+        }
         if (root.page === 8 && typeof historyPageComp !== "undefined" && historyPageComp) {
           if (text === "," || text === "<") { historyPageComp.stepTimeline(-1); return }
           if (text === "." || text === ">") { historyPageComp.stepTimeline(1); return }
@@ -226,36 +230,48 @@ Panel {
         height: Style.space(34)
 
         Column {
-          width: parent.width - Style.space(88)
+          width: parent.width - Style.space(118)
           anchors.verticalCenter: parent.verticalCenter
           PlainText { text: "PERFO"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
-          PlainText { text: root.pageNames[root.page] + " FOCUS"; color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+          PlainText { text: root.pageNames[root.page] + (root.page === 9 ? "" : " FOCUS"); color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
         }
 
         PlainText {
-          width: Style.space(30)
+          width: Style.space(26)
           text: "<"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          MouseArea { anchors.fill: parent; onClicked: root.switchPage(-1) }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.switchPage(-1) }
         }
 
         PlainText {
-          width: Style.space(30)
+          width: Style.space(26)
           text: ">"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          MouseArea { anchors.fill: parent; onClicked: root.switchPage(1) }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.switchPage(1) }
         }
 
         PlainText {
-          width: Style.space(28)
+          width: Style.space(26)
+          text: "?"
+          color: root.page === 9 ? Color.accent : root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          font.bold: root.page === 9
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.page = (root.page === 9 ? 0 : 9) }
+        }
+
+        PlainText {
+          width: Style.space(34)
           text: (root.page + 1) + "/" + root.pageNames.length
           color: root.foreground
           opacity: 0.65
@@ -268,7 +284,7 @@ Panel {
 
       Item {
         width: parent.width
-        height: root.page === 8 ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(340)) : Style.space(260)
+        height: root.page === 8 ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(360)) : Style.space(260)
         clip: true
 
         Column {
@@ -575,6 +591,79 @@ Panel {
             isRecording: root.historyRecording
             onToggleRecordingRequested: root.historyRecording = !root.historyRecording
             onRequestCapacity: function(samples) { root.ensureHistoryCapacity(samples) }
+          }
+        }
+
+        Column {
+          id: helpPage
+          anchors.fill: parent
+          spacing: Style.space(8)
+          visible: root.page === 9
+
+          PlainText {
+            text: "PERFO HELP & SHORTCUTS"
+            color: root.foreground
+            opacity: 0.65
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(16)
+
+            Column {
+              width: (parent.width - Style.space(16)) / 2
+              spacing: Style.space(4)
+
+              PlainText {
+                text: "PANEL & WIDGET"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "< / > or h / l: Switch pages"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "? or F1: Open this help panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Left-click bar: Toggle panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Right-click bar: Open TUI"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Esc: Close popup panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+
+              Item { width: 1; height: Style.space(4) }
+
+              PlainText {
+                text: "TERMINAL TUI"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "1 - 7: Fullscreen pane / return"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "m: Menu / ? or h: Help modal"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "y or Enter: Copy command"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "<- ->: Scroll proc command"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            }
+
+            Column {
+              width: (parent.width - Style.space(16)) / 2
+              spacing: Style.space(4)
+
+              PlainText {
+                text: "HIST PAGE (REPLAY)"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "Space: Play / Pause replay"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: ", / . or < / >: Step 1s back/fwd"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "[ / ]: Jump 10s back/fwd"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "0: Jump to LIVE (now)"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "r: Toggle flight recording"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "s: Saved sessions menu"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Zoom: 1m to 10h spans"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Report: Export txt analysis"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            }
           }
         }
       }

@@ -1286,6 +1286,7 @@ fn draw_menu(frame: &mut Frame, area: Rect, ui: &Ui) {
         ("5", "Disks"),
         ("6", "GPU"),
         ("7", "History analysis (timeline)"),
+        ("? / F1", "Help / Ajuda"),
         ("Tab", "Focus: CORES / PROCESSES"),
         ("←↑↓→", "Navigate cores (CORES focus)"),
         ("↑ ↓", "Select process (PROCESSES focus)"),
@@ -1301,13 +1302,13 @@ fn draw_menu(frame: &mut Frame, area: Rect, ui: &Ui) {
         .map(|pair| {
             let (k, d) = *pair;
             Line::from(vec![
-                Span::styled(format!(" {k:<5}"), Style::default().fg(ui.theme.yellow)),
+                Span::styled(format!(" {k:<7}"), Style::default().fg(ui.theme.yellow)),
                 Span::styled(d, Style::default().fg(ui.theme.fg)),
             ])
         })
         .collect();
     let h = items.len() as u16 + 2;
-    let w: u16 = 30;
+    let w: u16 = 34;
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let menu_area = Rect {

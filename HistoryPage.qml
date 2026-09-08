@@ -1521,6 +1521,97 @@ Column {
     }
   }
 
+  // Actions guide bar explaining keyboard navigation & controls
+  Rectangle {
+    id: actionsGuideBar
+    width: historyPage.width
+    height: Style.space(18)
+    radius: Style.cornerRadius
+    color: Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.08)
+    border.color: Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.2)
+    border.width: 1
+
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(4)
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "ACTIONS:"
+        color: Color.accent
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+      }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: historyPage.isPlaying ? "[Space] Pause" : "[Space] Play"
+        color: historyPage.isPlaying ? Color.accent : historyPage.foreground
+        opacity: historyPage.isPlaying ? 1.0 : 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: historyPage.isPlaying
+      }
+
+      PlainText { text: "│"; color: historyPage.foreground; opacity: 0.3; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "[< >] 1s"
+        color: historyPage.foreground
+        opacity: 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      PlainText { text: "│"; color: historyPage.foreground; opacity: 0.3; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "[[ ]] 10s"
+        color: historyPage.foreground
+        opacity: 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      PlainText { text: "│"; color: historyPage.foreground; opacity: 0.3; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "[0] Live"
+        color: historyPage.isLive ? Color.accent : historyPage.foreground
+        opacity: historyPage.isLive ? 1.0 : 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      PlainText { text: "│"; color: historyPage.foreground; opacity: 0.3; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "[r] Rec"
+        color: historyPage.isSessionRecording ? Color.urgent : historyPage.foreground
+        opacity: historyPage.isSessionRecording ? 1.0 : 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: historyPage.isSessionRecording
+      }
+
+      PlainText { text: "│"; color: historyPage.foreground; opacity: 0.3; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; anchors.verticalCenter: parent.verticalCenter }
+
+      PlainText {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "[s] Sessions"
+        color: historyPage.showSessionsMenu ? Color.accent : historyPage.foreground
+        opacity: historyPage.showSessionsMenu ? 1.0 : 0.8
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+  }
+
   // Section title and metrics summary for process inspector
   Row {
     width: historyPage.width

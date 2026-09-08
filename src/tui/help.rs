@@ -80,11 +80,12 @@ fn colorized(theme: &Theme, s: &str) -> Line<'static> {
 pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static>>) {
     let (title, rows): (String, &[HelpRow<'static>]) = match (lang, page) {
         (Lang::Pt, 0) => (
-            "help 1/5: teclas".into(),
+            "help 1/6: teclas".into(),
             &[
                 hdr("NAVEGACAO"),
                 key("m", "abre o menu de paineis"),
-                key("1-6", "abre o painel em tela cheia; repetir volta ao dashboard"),
+                key("1-7", "abre o painel em tela cheia; repetir volta ao dashboard"),
+                key("h / ? / F1", "abre/fecha esta tela de ajuda"),
                 key("Tab", "na CPU alterna o foco entre CORES e PROCESSOS"),
                 key("←↑↓→", "com CORES focado, muda o nucleo selecionado"),
                 key("↑ ↓", "com PROCESSOS focado, seleciona um processo"),
@@ -104,16 +105,17 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 key("C / L / q", "troca tema / idioma PT-EN / sai"),
                 txt(""),
                 hdr("HELP"),
-                key("n / p", "proxima/anterior pagina; PgUp/PgDn tambem"),
-                key("? / q", "fecha o help"),
+                key("← → / n p", "proxima/anterior pagina (PgUp/PgDn tambem)"),
+                key("h / ? / q", "fecha o help"),
             ],
         ),
         (Lang::En, 0) => (
-            "help 1/5: keys".into(),
+            "help 1/6: keys".into(),
             &[
                 hdr("NAVIGATION"),
                 key("m", "open the panel menu"),
-                key("1-6", "open fullscreen; press the same number to return"),
+                key("1-7", "open fullscreen; press the same number to return"),
+                key("h / ? / F1", "open/close this help screen"),
                 key("Tab", "in CPU, switch focus between CORES and PROCESSES"),
                 key("←↑↓→", "with CORES focused, move the selected core"),
                 key("↑ ↓", "with PROCESSES focused, select a process"),
@@ -133,12 +135,12 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 key("C / L / q", "change theme / language PT-EN / quit"),
                 txt(""),
                 hdr("HELP"),
-                key("n / p", "next/previous page; PgUp/PgDn also work"),
-                key("? / q", "close help"),
+                key("← → / n p", "next/previous page (PgUp/PgDn also work)"),
+                key("h / ? / q", "close help"),
             ],
         ),
         (Lang::Pt, 1) => (
-            "help 2/5: bloco CPU".into(),
+            "help 2/6: bloco CPU".into(),
             &[
                 hdr("CPU: VISAO GERAL"),
                 key("overall", "uso total de todos os nucleos (barra + %)"),
@@ -161,7 +163,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 1) => (
-            "help 2/5: CPU block".into(),
+            "help 2/6: CPU block".into(),
             &[
                 hdr("CPU: OVERVIEW"),
                 key("overall", "usage across all cores (bar + %)"),
@@ -184,7 +186,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 2) => (
-            "help 3/5: memoria e discos".into(),
+            "help 3/6: memoria e discos".into(),
             &[
                 hdr("4:MEM: PAINEL DE MEMORIA"),
                 key("used", "RAM usada por aplicativos; nao inclui cache/buffers"),
@@ -207,7 +209,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 2) => (
-            "help 3/5: memory and disks".into(),
+            "help 3/6: memory and disks".into(),
             &[
                 hdr("4:MEM: MEMORY PANEL"),
                 key("used", "RAM used by applications; excludes cache/buffers"),
@@ -230,7 +232,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 3) => (
-            "help 4/5: discos e rede".into(),
+            "help 4/6: discos e rede".into(),
             &[
                 hdr("5:DISKS: ESPACO"),
                 txt("lista cada montagem com dispositivo, mountpoint e filesystem"),
@@ -255,7 +257,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 3) => (
-            "help 4/5: disks and network".into(),
+            "help 4/6: disks and network".into(),
             &[
                 hdr("5:DISKS: SPACE"),
                 txt("lists each mount with device, mountpoint, and filesystem"),
@@ -280,7 +282,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::Pt, 4) => (
-            "help 5/5: IO: o que cada stat significa".into(),
+            "help 5/6: IO: o que cada stat significa".into(),
             &[
                 hdr("IOPS"),
                 key("r/s w/s", "operacoes de leitura/escrita por segundo"),
@@ -307,7 +309,7 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
             ],
         ),
         (Lang::En, 4) => (
-            "help 5/5: IO: what each stat means".into(),
+            "help 5/6: IO: what each stat means".into(),
             &[
                 hdr("IOPS"),
                 key("r/s w/s", "read/write operations per second"),
@@ -331,6 +333,58 @@ pub fn page(page: usize, lang: Lang, theme: &Theme) -> (String, Vec<Line<'static
                 hdr("PER-PROCESS I/O"),
                 txt("read/write show real storage bytes, not cache-only activity"),
                 txt("the list shows your processes; root can see all processes"),
+            ],
+        ),
+        (Lang::Pt, 5) => (
+            "help 6/6: historico e gravacao".into(),
+            &[
+                hdr("7:HIST: ANALISE DE HISTORICO"),
+                key("7", "abre o modo interativo de historico / timeline"),
+                key("< > / , .", "avanca / recua 1 segundo no tempo"),
+                key("[ ]", "salta 10 segundos no historico gravado"),
+                key("Espaco", "reproduz ou pausa o replay da sessao"),
+                key("0", "retorna imediatamente ao vivo (LIVE / NOW)"),
+                key("Tab", "alterna metrica (CPU, MEM, IO, NET, GPU)"),
+                key("z", "ajusta o intervalo de tempo visivel (1m a 10h)"),
+                txt(""),
+                hdr("GRAVACAO E SESSOES"),
+                key("r", "inicia ou finaliza a gravacao de voo para disco"),
+                key("s", "abre o menu de sessoes gravadas salvas"),
+                key("Enter", "no menu de sessoes: carrega a sessao selecionada"),
+                key("d", "no menu de sessoes: deleta a gravacao selecionada"),
+                key("e", "exporta relatorio detalhado da analise atual"),
+                txt(""),
+                hdr("LINHA DE COMANDO E STREAMING"),
+                txt("perfo hist                  abre direto a analise de historico"),
+                txt("perfo record list           lista sessoes gravadas"),
+                txt("perfo record timeline <id>  gera/le cache leve de timeline"),
+                txt("perfo record inspect <id>   busca rapida por offsets binarios"),
+            ],
+        ),
+        (Lang::En, 5) => (
+            "help 6/6: history and recordings".into(),
+            &[
+                hdr("7:HIST: HISTORY ANALYSIS"),
+                key("7", "open interactive history / timeline mode"),
+                key("< > / , .", "step 1 second backward / forward in time"),
+                key("[ ]", "jump 10 seconds in recorded history"),
+                key("Space", "play or pause session replay"),
+                key("0", "return immediately to LIVE (now)"),
+                key("Tab", "switch metric (CPU, MEM, IO, NET, GPU)"),
+                key("z", "adjust time span scale (1m to 10h)"),
+                txt(""),
+                hdr("RECORDING AND SESSIONS"),
+                key("r", "start or stop session flight recording to disk"),
+                key("s", "open saved sessions modal"),
+                key("Enter", "in sessions modal: load selected recording"),
+                key("d", "in sessions modal: delete selected recording"),
+                key("e", "export detailed analysis report"),
+                txt(""),
+                hdr("CLI AND STREAMING"),
+                txt("perfo hist                  open history analysis directly"),
+                txt("perfo record list           list saved recordings"),
+                txt("perfo record timeline <id>  generate/read lightweight timeline"),
+                txt("perfo record inspect <id>   fast binary offset slice lookup"),
             ],
         ),
         (_, _) => unreachable!("help page out of range"),
