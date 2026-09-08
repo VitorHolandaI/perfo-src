@@ -85,7 +85,6 @@ Column {
     }
   }
 
-  Component.onCompleted: rebuildVisibleBars()
   onMetricChanged: rebuildVisibleBars()
   onZoomLabelChanged: rebuildVisibleBars()
   onCustomSpanSecondsChanged: rebuildVisibleBars()
@@ -211,6 +210,7 @@ Column {
   }
 
   Component.onCompleted: {
+    rebuildVisibleBars()
     historyPage.refreshRecordings()
   }
 
