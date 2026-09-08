@@ -7,10 +7,10 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row as TableRow, Table},
+    widgets::{Block, Borders, Clear, Paragraph, Row as TableRow, Table},
     Frame,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::cpu::{self, Pane, Ui};
 use crate::data::cpu::CpuSnapshot;
@@ -21,6 +21,7 @@ pub enum HistoryMetric {
     Cpu,
     Mem,
     Io,
+    Net,
     Gpu,
 }
 
@@ -30,6 +31,7 @@ impl HistoryMetric {
             Self::Cpu => "CPU",
             Self::Mem => "MEM",
             Self::Io => "IO",
+            Self::Net => "NET",
             Self::Gpu => "GPU",
         }
     }
@@ -38,7 +40,8 @@ impl HistoryMetric {
         match self {
             Self::Cpu => Self::Mem,
             Self::Mem => Self::Io,
-            Self::Io => Self::Gpu,
+            Self::Io => Self::Net,
+            Self::Net => Self::Gpu,
             Self::Gpu => Self::Cpu,
         }
     }
@@ -82,20 +85,40 @@ impl HistorySpan {
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct HistoryProcess {
     pub pid: u32,
+    #[serde(default)]
     pub name: String,
+    #[serde(default)]
     pub cmd: String,
+    #[serde(default)]
     pub cpu_percent: f32,
+    #[serde(default)]
     pub mem_bytes: u64,
+    #[serde(default)]
     pub read_bps: u64,
+    #[serde(default)]
     pub write_bps: u64,
+    #[serde(default)]
     pub gpu_percent: f32,
+    #[serde(default)]
     pub vram_bytes: u64,
+    #[serde(default)]
+    pub net_rx_bps: u64,
+    #[serde(default)]
+    pub net_tx_bps: u64,
+    #[serde(default)]
+    pub net_rx_bytes: u64,
+    #[serde(default)]
+    pub net_tx_bytes: u64,
+    #[serde(default)]
+    pub tcp_est: u32,
+    #[serde(default)]
+    pub udp: u32,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct HistorySample {
     pub timestamp: String,
     pub cpu: f32,
@@ -104,6 +127,11 @@ pub struct HistorySample {
     pub read_bps: u64,
     pub write_bps: u64,
     pub gpu: f32,
+    #[serde(default)]
+    pub net_rx_bps: u64,
+    #[serde(default)]
+    pub net_tx_bps: u64,
+    #[serde(default, alias = "processes")]
     pub top_procs: Vec<HistoryProcess>,
 }
 
@@ -116,6 +144,21 @@ pub struct HistoryState {
     pub recording: bool,
     pub playing: bool,
     pub export_status: Option<(String, Instant)>,
+
+    // Session recording
+    pub is_session_recording: bool,
+    pub session_record_buffer: Vec<HistorySample>,
+    pub target_record_seconds: usize,
+
+    // Saved replay playback
+    pub loaded_session_id: Option<String>,
+    pub loaded_session_title: Option<String>,
+    pub loaded_samples: Vec<HistorySample>,
+
+    // Saved sessions modal
+    pub sessions_modal: bool,
+    pub saved_recordings: Vec<crate::recordings::RecordingMetadata>,
+    pub selected_session_idx: usize,
 }
 
 impl Default for HistoryState {
@@ -129,6 +172,15 @@ impl Default for HistoryState {
             recording: true,
             playing: false,
             export_status: None,
+            is_session_recording: false,
+            session_record_buffer: Vec::new(),
+            target_record_seconds: 120,
+            loaded_session_id: None,
+            loaded_session_title: None,
+            loaded_samples: Vec::new(),
+            sessions_modal: false,
+            saved_recordings: Vec::new(),
+            selected_session_idx: 0,
         }
     }
 }
@@ -181,6 +233,7 @@ impl HistoryState {
                 gp_pct = gp.1;
                 vram = gp.2;
             }
+            let np = snap.net.proc_net.iter().find(|n| n.pid == p.pid);
             procs.push(HistoryProcess {
                 pid: p.pid,
                 name: p.name.clone(),
@@ -191,21 +244,58 @@ impl HistoryState {
                 write_bps: p.write_bps,
                 gpu_percent: gp_pct,
                 vram_bytes: vram,
+                net_rx_bps: np.map(|n| n.rx_bps).unwrap_or(0),
+                net_tx_bps: np.map(|n| n.tx_bps).unwrap_or(0),
+                net_rx_bytes: np.map(|n| n.rx_bytes).unwrap_or(0),
+                net_tx_bytes: np.map(|n| n.tx_bytes).unwrap_or(0),
+                tcp_est: np.map(|n| n.tcp_est).unwrap_or(0),
+                udp: np.map(|n| n.udp).unwrap_or(0),
             });
         }
 
         for (g_pid, g_pct, g_vram) in &gpu_procs {
             if !procs.iter().any(|p| p.pid == *g_pid) {
+                let np = snap.net.proc_net.iter().find(|n| n.pid == *g_pid);
+                let p_info = snap.processes.iter().find(|p| p.pid == *g_pid);
                 procs.push(HistoryProcess {
                     pid: *g_pid,
-                    name: String::new(),
-                    cmd: String::new(),
-                    cpu_percent: 0.0,
-                    mem_bytes: 0,
+                    name: p_info.map(|p| p.name.clone()).unwrap_or_default(),
+                    cmd: p_info.map(|p| p.cmd.clone()).unwrap_or_default(),
+                    cpu_percent: p_info.map(|p| p.cpu_percent).unwrap_or(0.0),
+                    mem_bytes: p_info.map(|p| p.mem_bytes).unwrap_or(0),
                     read_bps: 0,
                     write_bps: 0,
                     gpu_percent: *g_pct,
                     vram_bytes: *g_vram,
+                    net_rx_bps: np.map(|n| n.rx_bps).unwrap_or(0),
+                    net_tx_bps: np.map(|n| n.tx_bps).unwrap_or(0),
+                    net_rx_bytes: np.map(|n| n.rx_bytes).unwrap_or(0),
+                    net_tx_bytes: np.map(|n| n.tx_bytes).unwrap_or(0),
+                    tcp_est: np.map(|n| n.tcp_est).unwrap_or(0),
+                    udp: np.map(|n| n.udp).unwrap_or(0),
+                });
+            }
+        }
+
+        for np in &snap.net.proc_net {
+            if !procs.iter().any(|p| p.pid == np.pid) {
+                let p_info = snap.processes.iter().find(|p| p.pid == np.pid);
+                procs.push(HistoryProcess {
+                    pid: np.pid,
+                    name: p_info.map(|p| p.name.clone()).unwrap_or_default(),
+                    cmd: p_info.map(|p| p.cmd.clone()).unwrap_or_default(),
+                    cpu_percent: p_info.map(|p| p.cpu_percent).unwrap_or(0.0),
+                    mem_bytes: p_info.map(|p| p.mem_bytes).unwrap_or(0),
+                    read_bps: p_info.map(|p| p.read_bps).unwrap_or(0),
+                    write_bps: p_info.map(|p| p.write_bps).unwrap_or(0),
+                    gpu_percent: 0.0,
+                    vram_bytes: 0,
+                    net_rx_bps: np.rx_bps,
+                    net_tx_bps: np.tx_bps,
+                    net_rx_bytes: np.rx_bytes,
+                    net_tx_bytes: np.tx_bytes,
+                    tcp_est: np.tcp_est,
+                    udp: np.udp,
                 });
             }
         }
@@ -214,7 +304,7 @@ impl HistoryState {
             self.samples.pop_front();
         }
 
-        self.samples.push_back(HistorySample {
+        let sample = HistorySample {
             timestamp,
             cpu: snap.overall_percent,
             mem: mem_pct,
@@ -222,39 +312,65 @@ impl HistoryState {
             read_bps,
             write_bps,
             gpu: gpu_pct,
+            net_rx_bps: snap.net.totals.rx_bps,
+            net_tx_bps: snap.net.totals.tx_bps,
             top_procs: procs,
-        });
+        };
+
+        if self.is_session_recording {
+            self.session_record_buffer.push(sample.clone());
+            if self.session_record_buffer.len() >= self.target_record_seconds {
+                self.stop_and_save_session();
+            }
+        }
+
+        self.samples.push_back(sample);
     }
 
-    pub fn advance_playback(&mut self) {
-        if !self.playing || self.samples.is_empty() {
-            return;
-        }
-        let eff = self.effective_index();
-        if eff + 1 >= self.samples.len() {
-            self.scrub_index = None;
-            self.playing = false;
+    pub fn sample_count(&self) -> usize {
+        if self.loaded_session_id.is_some() {
+            self.loaded_samples.len()
         } else {
-            self.scrub_index = Some(eff + 1);
+            self.samples.len()
+        }
+    }
+
+    pub fn get_sample(&self, idx: usize) -> Option<&HistorySample> {
+        if self.loaded_session_id.is_some() {
+            self.loaded_samples.get(idx)
+        } else {
+            self.samples.get(idx)
+        }
+    }
+
+    pub fn last_sample(&self) -> Option<&HistorySample> {
+        if self.loaded_session_id.is_some() {
+            self.loaded_samples.last()
+        } else {
+            self.samples.back()
         }
     }
 
     pub fn effective_index(&self) -> usize {
-        if self.samples.is_empty() {
+        let count = self.sample_count();
+        if count == 0 {
             return 0;
         }
         match self.scrub_index {
-            Some(idx) => idx.min(self.samples.len() - 1),
-            None => self.samples.len() - 1,
+            Some(idx) => idx.min(count - 1),
+            None => count - 1,
         }
     }
 
     pub fn is_live(&self) -> bool {
-        self.scrub_index.is_none() || self.effective_index() == self.samples.len().saturating_sub(1)
+        self.loaded_session_id.is_none()
+            && (self.scrub_index.is_none()
+                || self.effective_index() == self.samples.len().saturating_sub(1))
     }
 
     pub fn step(&mut self, delta: i32) {
-        if self.samples.is_empty() {
+        let count = self.sample_count();
+        if count == 0 {
             return;
         }
         self.playing = false;
@@ -262,8 +378,12 @@ impl HistoryState {
         let target = eff as i64 + delta as i64;
         if target < 0 {
             self.scrub_index = Some(0);
-        } else if target >= (self.samples.len() - 1) as i64 {
-            self.scrub_index = None;
+        } else if target >= (count - 1) as i64 {
+            if self.loaded_session_id.is_some() {
+                self.scrub_index = Some(count - 1);
+            } else {
+                self.scrub_index = None;
+            }
         } else {
             self.scrub_index = Some(target as usize);
         }
@@ -284,20 +404,147 @@ impl HistoryState {
     }
 
     pub fn toggle_playback(&mut self) {
+        let count = self.sample_count();
+        if count == 0 {
+            return;
+        }
         if self.playing {
             self.playing = false;
         } else {
-            if self.is_live() && !self.samples.is_empty() {
-                let span = self.span.seconds(self.samples.len());
-                self.scrub_index = Some(self.samples.len().saturating_sub(span));
+            if self.is_live() && count > 0 {
+                let span = self.span.seconds(count);
+                self.scrub_index = Some(count.saturating_sub(span));
             }
             self.playing = true;
         }
     }
 
+    pub fn advance_playback(&mut self) {
+        let count = self.sample_count();
+        if !self.playing || count == 0 {
+            return;
+        }
+        let eff = self.effective_index();
+        if eff + 1 >= count {
+            if self.loaded_session_id.is_some() {
+                self.scrub_index = Some(count - 1);
+            } else {
+                self.scrub_index = None;
+            }
+            self.playing = false;
+        } else {
+            self.scrub_index = Some(eff + 1);
+        }
+    }
+
     pub fn jump_to_live(&mut self) {
+        self.loaded_session_id = None;
+        self.loaded_session_title = None;
+        self.loaded_samples.clear();
         self.scrub_index = None;
         self.playing = false;
+    }
+
+    pub fn stop_and_save_session(&mut self) {
+        if !self.is_session_recording || self.session_record_buffer.is_empty() {
+            self.is_session_recording = false;
+            self.session_record_buffer.clear();
+            return;
+        }
+        self.is_session_recording = false;
+        let dur = self.session_record_buffer.len() as u64;
+        let val = serde_json::to_value(&self.session_record_buffer)
+            .unwrap_or(serde_json::Value::Array(Vec::new()));
+        match crate::recordings::save_session_data(val, dur, self.metric.label()) {
+            Ok(meta) => {
+                self.export_status = Some((
+                    format!("Saved session: {} ({})", meta.id, meta.duration),
+                    Instant::now(),
+                ));
+            }
+            Err(e) => {
+                self.export_status = Some((format!("Failed to save: {}", e), Instant::now()));
+            }
+        }
+        self.session_record_buffer.clear();
+    }
+
+    pub fn toggle_session_recording(&mut self) {
+        if self.is_session_recording {
+            self.stop_and_save_session();
+        } else {
+            self.is_session_recording = true;
+            self.session_record_buffer.clear();
+            self.export_status = Some(("Recording session started...".to_string(), Instant::now()));
+        }
+    }
+
+    pub fn open_sessions_modal(&mut self) {
+        self.refresh_saved_recordings();
+        self.selected_session_idx = 0;
+        self.sessions_modal = true;
+    }
+
+    pub fn refresh_saved_recordings(&mut self) {
+        self.saved_recordings = crate::recordings::get_recordings_list();
+        if self.saved_recordings.is_empty() {
+            self.selected_session_idx = 0;
+        } else if self.selected_session_idx >= self.saved_recordings.len() {
+            self.selected_session_idx = self.saved_recordings.len() - 1;
+        }
+    }
+
+    pub fn close_sessions_modal(&mut self) {
+        self.sessions_modal = false;
+    }
+
+    pub fn modal_next(&mut self) {
+        if !self.saved_recordings.is_empty() {
+            self.selected_session_idx =
+                (self.selected_session_idx + 1).min(self.saved_recordings.len() - 1);
+        }
+    }
+
+    pub fn modal_prev(&mut self) {
+        if self.selected_session_idx > 0 {
+            self.selected_session_idx -= 1;
+        }
+    }
+
+    pub fn modal_load_selected(&mut self) {
+        if let Some(meta) = self.saved_recordings.get(self.selected_session_idx) {
+            let id = meta.id.clone();
+            if let Err(e) = self.load_session(&id) {
+                self.export_status = Some((format!("Load error: {}", e), Instant::now()));
+            }
+        }
+    }
+
+    pub fn modal_delete_selected(&mut self) {
+        if let Some(meta) = self.saved_recordings.get(self.selected_session_idx) {
+            let id = meta.id.clone();
+            let _ = crate::recordings::delete_recording_by_id(&id);
+            self.export_status = Some((format!("Deleted session {}", id), Instant::now()));
+            self.refresh_saved_recordings();
+        }
+    }
+
+    pub fn load_session(&mut self, id: &str) -> Result<(), String> {
+        let payload = crate::recordings::load_recording_payload(id).map_err(|e| e.to_string())?;
+        let samples: Vec<HistorySample> = serde_json::from_value(payload.samples)
+            .map_err(|e| format!("Failed to parse samples: {}", e))?;
+        if samples.is_empty() {
+            return Err("Session has no samples".to_string());
+        }
+        let title = format!("{} ({})", payload.id, payload.duration_label);
+        self.loaded_session_id = Some(payload.id.clone());
+        self.loaded_session_title = Some(title);
+        self.loaded_samples = samples;
+        self.scrub_index = Some(0);
+        self.playing = false;
+        self.sessions_modal = false;
+        self.export_status = Some((format!("Loaded replay {}", id), Instant::now()));
+        Ok(())
     }
 
     pub fn export(&mut self) {
@@ -347,12 +594,12 @@ impl HistoryState {
         lines.push(format!(
             "Timeline View Span   : {} ({}s)",
             self.span.label(),
-            self.span.seconds(self.samples.len())
+            self.span.seconds(self.sample_count())
         ));
         lines.push(format!(
-            "Total Recorded Time  : {}s ({} samples in RAM)",
-            self.samples.len(),
-            self.samples.len()
+            "Total Recorded Time  : {}s ({} samples)",
+            self.sample_count(),
+            self.sample_count()
         ));
         lines.push(format!(
             "Current View State   : {}",
@@ -361,7 +608,7 @@ impl HistoryState {
         lines.push(String::new());
 
         let eff = self.effective_index();
-        let sample = self.samples.get(eff);
+        let sample = self.get_sample(eff);
         lines.push(border.to_string());
         lines.push(format!(
             "                   1. SNAPSHOT AT SELECTED TIMING ({})",
@@ -373,32 +620,63 @@ impl HistoryState {
             lines.push(format!("Overall CPU Usage    : {:.1}%", s.cpu));
             lines.push(format!("Overall Memory Usage : {:.1}%", s.mem));
             lines.push(format!("Total Disk I/O Rate  : {:.1} MB/s", s.io_mb));
+            lines.push(format!(
+                "Total Network Rate   : {} (RX: {}, TX: {})",
+                cpu::human_bytes(s.net_rx_bps + s.net_tx_bps),
+                cpu::human_bytes(s.net_rx_bps),
+                cpu::human_bytes(s.net_tx_bps)
+            ));
             lines.push(format!("GPU Usage            : {:.1}%", s.gpu));
             lines.push(String::new());
             lines.push("Active Processes at this timing:".to_string());
-            lines.push(format!(
-                "{:<8} | {:>8} | {:>10} | {:<18} | COMMAND",
-                "PID",
-                self.metric.label(),
-                "RAM/VRAM",
-                "PROCESS"
-            ));
-            lines.push(sub_border.to_string());
-
-            let mut procs = s.top_procs.clone();
-            self.sort_processes(&mut procs);
-            for p in procs.iter().take(15) {
-                let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
-                let primary = self.metric_cell_text(p);
-                let secondary = if self.metric == HistoryMetric::Gpu {
-                    cpu::human_bytes(p.vram_bytes)
-                } else {
-                    cpu::human_bytes(p.mem_bytes)
-                };
+            if self.metric == HistoryMetric::Net {
                 lines.push(format!(
-                    "{:<8} | {:>8} | {:>10} | {:<18} | {}",
-                    p.pid, primary, secondary, p_name, p.cmd
+                    "{:<8} | {:<16} | {:>12} | {:>12} | {:<22} | COMMAND",
+                    "PID", "PROCESS", "IN (RX)", "OUT (TX)", "TOTAL / CONNS"
                 ));
+                lines.push(sub_border.to_string());
+
+                let mut procs = s.top_procs.clone();
+                self.sort_processes(&mut procs);
+                for p in procs.iter().take(15) {
+                    let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
+                    let rx_str = format_proc_net_io(p.net_rx_bps, p.net_rx_bytes);
+                    let tx_str = format_proc_net_io(p.net_tx_bps, p.net_tx_bytes);
+                    let conns_str = format_proc_conns(p);
+                    lines.push(format!(
+                        "{:<8} | {:<16} | {:>12} | {:>12} | {:<22} | {}",
+                        p.pid, p_name, rx_str, tx_str, conns_str, p.cmd
+                    ));
+                }
+            } else {
+                lines.push(format!(
+                    "{:<8} | {:>8} | {:>10} | {:<18} | COMMAND",
+                    "PID",
+                    self.metric.label(),
+                    if self.metric == HistoryMetric::Gpu {
+                        "VRAM"
+                    } else {
+                        "RAM"
+                    },
+                    "PROCESS"
+                ));
+                lines.push(sub_border.to_string());
+
+                let mut procs = s.top_procs.clone();
+                self.sort_processes(&mut procs);
+                for p in procs.iter().take(15) {
+                    let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
+                    let primary = self.metric_cell_text(p);
+                    let secondary = if self.metric == HistoryMetric::Gpu {
+                        cpu::human_bytes(p.vram_bytes)
+                    } else {
+                        cpu::human_bytes(p.mem_bytes)
+                    };
+                    lines.push(format!(
+                        "{:<8} | {:>8} | {:>10} | {:<18} | {}",
+                        p.pid, primary, secondary, p_name, p.cmd
+                    ));
+                }
             }
         }
         lines.push(String::new());
@@ -411,34 +689,52 @@ impl HistoryState {
         let mut peak_cpu = 0.0f32;
         let mut peak_mem = 0.0f32;
         let mut peak_io = 0.0f32;
+        let mut peak_net = 0u64;
         let mut peak_gpu = 0.0f32;
         let mut total_cpu = 0.0f64;
         let mut total_mem = 0.0f64;
 
-        for s in &self.samples {
-            total_cpu += s.cpu as f64;
-            total_mem += s.mem as f64;
-            if s.cpu > peak_cpu {
-                peak_cpu = s.cpu;
-            }
-            if s.mem > peak_mem {
-                peak_mem = s.mem;
-            }
-            if s.io_mb > peak_io {
-                peak_io = s.io_mb;
-            }
-            if s.gpu > peak_gpu {
-                peak_gpu = s.gpu;
+        let count = self.sample_count();
+        for idx in 0..count {
+            if let Some(s) = self.get_sample(idx) {
+                total_cpu += s.cpu as f64;
+                total_mem += s.mem as f64;
+                if s.cpu > peak_cpu {
+                    peak_cpu = s.cpu;
+                }
+                if s.mem > peak_mem {
+                    peak_mem = s.mem;
+                }
+                if s.io_mb > peak_io {
+                    peak_io = s.io_mb;
+                }
+                let net_tot = s.net_rx_bps + s.net_tx_bps;
+                if net_tot > peak_net {
+                    peak_net = net_tot;
+                }
+                if s.gpu > peak_gpu {
+                    peak_gpu = s.gpu;
+                }
             }
         }
 
-        let count = self.samples.len().max(1) as f64;
+        let cnt_f64 = count.max(1) as f64;
         lines.push(format!("Peak CPU Usage       : {:.1}%", peak_cpu));
         lines.push(format!("Peak Memory Usage    : {:.1}%", peak_mem));
         lines.push(format!("Peak Disk I/O Rate   : {:.1} MB/s", peak_io));
+        lines.push(format!(
+            "Peak Network Rate    : {}/s",
+            cpu::human_bytes(peak_net)
+        ));
         lines.push(format!("Peak GPU Usage       : {:.1}%", peak_gpu));
-        lines.push(format!("Average CPU Usage    : {:.1}%", total_cpu / count));
-        lines.push(format!("Average Memory Usage : {:.1}%", total_mem / count));
+        lines.push(format!(
+            "Average CPU Usage    : {:.1}%",
+            total_cpu / cnt_f64
+        ));
+        lines.push(format!(
+            "Average Memory Usage : {:.1}%",
+            total_mem / cnt_f64
+        ));
         lines.push(String::new());
 
         lines.push(border.to_string());
@@ -462,10 +758,15 @@ impl HistoryState {
         }
 
         let eff = self.effective_index();
-        let selected = self.samples.get(eff);
-
-        let step = (self.samples.len() / 1000).max(1);
-        let sampled: Vec<&HistorySample> = self.samples.iter().step_by(step).collect();
+        let selected = self.get_sample(eff);
+        let count = self.sample_count();
+        let step = (count / 1000).max(1);
+        let mut sampled: Vec<&HistorySample> = Vec::new();
+        for idx in (0..count).step_by(step) {
+            if let Some(s) = self.get_sample(idx) {
+                sampled.push(s);
+            }
+        }
 
         let export = ExportJson {
             version: "1.0",
@@ -473,7 +774,7 @@ impl HistoryState {
             generated_at: date_str,
             metric_focus: self.metric.label(),
             zoom_span: self.span.label(),
-            total_samples: self.samples.len(),
+            total_samples: count,
             is_live: self.is_live(),
             selected_sample: selected,
             samples: sampled,
@@ -506,6 +807,24 @@ impl HistoryState {
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
+            HistoryMetric::Net => {
+                list.retain(|p| {
+                    p.net_rx_bps > 0
+                        || p.net_tx_bps > 0
+                        || p.net_rx_bytes > 0
+                        || p.net_tx_bytes > 0
+                        || p.tcp_est > 0
+                        || p.udp > 0
+                });
+                list.sort_by_key(|p| {
+                    std::cmp::Reverse(
+                        (p.net_rx_bps + p.net_tx_bps) * 1000
+                            + (p.net_rx_bytes + p.net_tx_bytes)
+                            + (p.tcp_est as u64 * 100)
+                            + p.udp as u64,
+                    )
+                });
+            }
         }
     }
 
@@ -523,6 +842,17 @@ impl HistoryState {
                 let total = proc.read_bps + proc.write_bps;
                 if total > 0 {
                     format!("{}/s", cpu::human_bytes(total))
+                } else {
+                    "--".to_string()
+                }
+            }
+            HistoryMetric::Net => {
+                let total_bps = proc.net_rx_bps + proc.net_tx_bps;
+                let total_bytes = proc.net_rx_bytes + proc.net_tx_bytes;
+                if total_bps > 0 {
+                    format!("{}/s", cpu::human_bytes(total_bps))
+                } else if total_bytes > 0 {
+                    cpu::human_bytes(total_bytes)
                 } else {
                     "--".to_string()
                 }
@@ -553,10 +883,34 @@ pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState
     draw_timeline_chart(frame, sparkline_area, ui, state);
     draw_stats_box(frame, stats_area, ui, state);
     draw_processes_table(frame, table_area, ui, state);
+
+    if state.sessions_modal {
+        draw_sessions_modal(frame, area, ui, state);
+    }
 }
 
 fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
-    let rec_tag = if state.recording {
+    let rec_tag = if state.is_session_recording {
+        let cur = state.session_record_buffer.len();
+        let tot = state.target_record_seconds;
+        let c_m = cur / 60;
+        let c_s = cur % 60;
+        let t_m = tot / 60;
+        let t_s = tot % 60;
+        Span::styled(
+            format!("● REC {:02}:{:02}/{:02}:{:02}", c_m, c_s, t_m, t_s),
+            Style::default()
+                .fg(ui.theme.red)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if let Some(title) = &state.loaded_session_title {
+        Span::styled(
+            format!("▶ REPLAY: {}", title),
+            Style::default()
+                .fg(ui.theme.yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else if state.recording {
         Span::styled(
             "● REC",
             Style::default()
@@ -569,7 +923,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let play_tag = if state.playing {
         Span::styled(
-            " [PLAYING REC]",
+            " [PLAYING]",
             Style::default()
                 .fg(ui.theme.yellow)
                 .add_modifier(Modifier::BOLD),
@@ -580,7 +934,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let eff = state.effective_index();
     let is_live = state.is_live();
-    let total = state.samples.len();
+    let total = state.sample_count();
     let span_secs = state.span.seconds(total);
     let start_idx = total.saturating_sub(span_secs);
     let total_span = span_secs.min(total).max(1);
@@ -592,8 +946,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         ((ratio * total_span as f64).round() as usize).min(total_span)
     };
     let time_str = state
-        .samples
-        .get(eff)
+        .get_sample(eff)
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
     let time_mode = if is_live {
@@ -667,6 +1020,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         metric_pill(HistoryMetric::Cpu),
         metric_pill(HistoryMetric::Mem),
         metric_pill(HistoryMetric::Io),
+        metric_pill(HistoryMetric::Net),
         metric_pill(HistoryMetric::Gpu),
         Span::raw("  │  "),
         Span::styled("SPAN: ", Style::default().fg(ui.theme.muted)),
@@ -693,13 +1047,13 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
 
     let line2 = Line::from(vec![
         Span::styled("KEYS: ", Style::default().fg(ui.theme.muted)),
-        Span::styled("< >", Style::default().fg(ui.theme.yellow)),
-        Span::raw(" step 1s  "),
+        Span::styled("< > / ← →", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" step  "),
         Span::styled("[ ]", Style::default().fg(ui.theme.yellow)),
         Span::raw(" jump  "),
         Span::styled("Space", Style::default().fg(ui.theme.yellow)),
-        Span::raw(" play rec  "),
-        Span::styled("0", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" play  "),
+        Span::styled("0/L", Style::default().fg(ui.theme.yellow)),
         Span::raw(" live  "),
         Span::styled("Tab", Style::default().fg(ui.theme.yellow)),
         Span::raw(" metric  "),
@@ -707,6 +1061,8 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         Span::raw(" span  "),
         Span::styled("r", Style::default().fg(ui.theme.yellow)),
         Span::raw(" rec  "),
+        Span::styled("s", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" sessions  "),
         Span::styled("e", Style::default().fg(ui.theme.yellow)),
         Span::raw(" export"),
         export_text,
@@ -728,8 +1084,8 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
         return;
     }
 
-    let span_secs = state.span.seconds(state.samples.len());
-    let total = state.samples.len();
+    let total = state.sample_count();
+    let span_secs = state.span.seconds(total);
     let start_idx = total.saturating_sub(span_secs);
     let visible_count = total.saturating_sub(start_idx);
 
@@ -762,9 +1118,23 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
         HistoryMetric::Cpu | HistoryMetric::Mem | HistoryMetric::Gpu => 100.0f32,
         HistoryMetric::Io => {
             let mut m = 10.0f32;
-            for s in &state.samples {
-                if s.io_mb > m {
-                    m = s.io_mb;
+            for idx in 0..total {
+                if let Some(s) = state.get_sample(idx) {
+                    if s.io_mb > m {
+                        m = s.io_mb;
+                    }
+                }
+            }
+            m
+        }
+        HistoryMetric::Net => {
+            let mut m = 100_000.0f32; // minimum scale 100 KB/s
+            for idx in 0..total {
+                if let Some(s) = state.get_sample(idx) {
+                    let v = (s.net_rx_bps + s.net_tx_bps) as f32;
+                    if v > m {
+                        m = v;
+                    }
                 }
             }
             m
@@ -780,11 +1150,12 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
 
         let mut peak = 0.0f32;
         for idx in b_start..b_end.min(total) {
-            if let Some(s) = state.samples.get(idx) {
+            if let Some(s) = state.get_sample(idx) {
                 let v = match state.metric {
                     HistoryMetric::Cpu => s.cpu,
                     HistoryMetric::Mem => s.mem,
                     HistoryMetric::Io => s.io_mb,
+                    HistoryMetric::Net => (s.net_rx_bps + s.net_tx_bps) as f32,
                     HistoryMetric::Gpu => s.gpu,
                 };
                 if v > peak {
@@ -803,9 +1174,15 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
                 .fg(Color::Black)
                 .bg(ui.theme.accent)
                 .add_modifier(Modifier::BOLD)
-        } else if peak >= 80.0 {
+        } else if peak >= 80.0
+            && state.metric != HistoryMetric::Io
+            && state.metric != HistoryMetric::Net
+        {
             Style::default().fg(ui.theme.red)
-        } else if peak >= 50.0 {
+        } else if peak >= 50.0
+            && state.metric != HistoryMetric::Io
+            && state.metric != HistoryMetric::Net
+        {
             Style::default().fg(ui.theme.yellow)
         } else {
             Style::default().fg(ui.theme.accent)
@@ -823,18 +1200,15 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     let bars_line = Line::from(bar_spans);
 
     let start_time = state
-        .samples
-        .get(start_idx)
+        .get_sample(start_idx)
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
     let end_time = state
-        .samples
-        .back()
+        .last_sample()
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
     let cur_time = state
-        .samples
-        .get(eff)
+        .get_sample(eff)
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
 
@@ -928,40 +1302,48 @@ fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
 
 fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let eff = state.effective_index();
-    let sample = state.samples.get(eff);
+    let sample = state.get_sample(eff);
 
-    let (cur_cpu, cur_mem, cur_io, cur_gpu) = match sample {
-        Some(s) => (s.cpu, s.mem, s.io_mb, s.gpu),
-        None => (0.0, 0.0, 0.0, 0.0),
+    let (cur_cpu, cur_mem, cur_io, cur_net, cur_gpu) = match sample {
+        Some(s) => (s.cpu, s.mem, s.io_mb, s.net_rx_bps + s.net_tx_bps, s.gpu),
+        None => (0.0, 0.0, 0.0, 0, 0.0),
     };
 
     let mut peak_cpu = 0.0f32;
     let mut peak_mem = 0.0f32;
     let mut peak_io = 0.0f32;
+    let mut peak_net = 0u64;
     let mut peak_gpu = 0.0f32;
     let mut total_cpu = 0.0f64;
     let mut total_mem = 0.0f64;
 
-    for s in &state.samples {
-        total_cpu += s.cpu as f64;
-        total_mem += s.mem as f64;
-        if s.cpu > peak_cpu {
-            peak_cpu = s.cpu;
-        }
-        if s.mem > peak_mem {
-            peak_mem = s.mem;
-        }
-        if s.io_mb > peak_io {
-            peak_io = s.io_mb;
-        }
-        if s.gpu > peak_gpu {
-            peak_gpu = s.gpu;
+    let count = state.sample_count();
+    for idx in 0..count {
+        if let Some(s) = state.get_sample(idx) {
+            total_cpu += s.cpu as f64;
+            total_mem += s.mem as f64;
+            if s.cpu > peak_cpu {
+                peak_cpu = s.cpu;
+            }
+            if s.mem > peak_mem {
+                peak_mem = s.mem;
+            }
+            if s.io_mb > peak_io {
+                peak_io = s.io_mb;
+            }
+            let net_tot = s.net_rx_bps + s.net_tx_bps;
+            if net_tot > peak_net {
+                peak_net = net_tot;
+            }
+            if s.gpu > peak_gpu {
+                peak_gpu = s.gpu;
+            }
         }
     }
 
-    let count = state.samples.len().max(1) as f64;
-    let avg_cpu = total_cpu / count;
-    let avg_mem = total_mem / count;
+    let cnt_f64 = count.max(1) as f64;
+    let avg_cpu = total_cpu / cnt_f64;
+    let avg_mem = total_mem / cnt_f64;
 
     let line1 = Line::from(vec![
         Span::styled("SAMPLE: ", Style::default().fg(ui.theme.muted)),
@@ -979,6 +1361,12 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
         ),
         Span::styled(
             format!("IO {:>5.1} MB/s  ", cur_io),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("NET {:>8}/s  ", cpu::human_bytes(cur_net)),
             Style::default()
                 .fg(ui.theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -1006,6 +1394,10 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
             Style::default().fg(ui.theme.yellow),
         ),
         Span::styled(
+            format!("NET {}/s  ", cpu::human_bytes(peak_net)),
+            Style::default().fg(ui.theme.yellow),
+        ),
+        Span::styled(
             format!("GPU {:.1}%  │  ", peak_gpu),
             Style::default().fg(ui.theme.yellow),
         ),
@@ -1019,7 +1411,7 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
             Style::default().fg(ui.theme.fg),
         ),
         Span::styled(
-            format!("({} samples)", state.samples.len()),
+            format!("({} samples)", count),
             Style::default().fg(ui.theme.muted),
         ),
     ]);
@@ -1030,21 +1422,10 @@ fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) 
 
 fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let eff = state.effective_index();
-    let sample = state.samples.get(eff);
+    let sample = state.get_sample(eff);
 
     let mut procs = sample.map(|s| s.top_procs.clone()).unwrap_or_default();
     state.sort_processes(&mut procs);
-
-    let primary_hdr = match state.metric {
-        HistoryMetric::Cpu => "CPU%",
-        HistoryMetric::Mem => "MEM%",
-        HistoryMetric::Io => "IO RATE",
-        HistoryMetric::Gpu => "GPU%",
-    };
-    let secondary_hdr = match state.metric {
-        HistoryMetric::Gpu => "VRAM",
-        _ => "RAM",
-    };
 
     let title = format!(
         " ACTIVE PROCESSES AT SELECTED TIMING ({}) ",
@@ -1057,6 +1438,75 @@ fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryS
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
+    let max_rows = inner.height.saturating_sub(1) as usize;
+
+    if state.metric == HistoryMetric::Net {
+        let header = TableRow::new(vec![
+            Span::styled("PID", Style::default().fg(ui.theme.muted)),
+            Span::styled("PROCESS", Style::default().fg(ui.theme.muted)),
+            Span::styled("IN (RX)", Style::default().fg(ui.theme.muted)),
+            Span::styled("OUT (TX)", Style::default().fg(ui.theme.muted)),
+            Span::styled("TOTAL / CONNS", Style::default().fg(ui.theme.muted)),
+            Span::styled("COMMAND", Style::default().fg(ui.theme.muted)),
+        ]);
+
+        let rows: Vec<TableRow> = procs
+            .iter()
+            .take(max_rows)
+            .map(|p| {
+                let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
+                let rx_str = format_proc_net_io(p.net_rx_bps, p.net_rx_bytes);
+                let tx_str = format_proc_net_io(p.net_tx_bps, p.net_tx_bytes);
+                let conns_str = format_proc_conns(p);
+                TableRow::new(vec![
+                    Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
+                    Span::styled(
+                        p_name,
+                        Style::default()
+                            .fg(ui.theme.fg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(rx_str, Style::default().fg(ui.theme.accent)),
+                    Span::styled(tx_str, Style::default().fg(ui.theme.accent)),
+                    Span::styled(conns_str, Style::default().fg(ui.theme.fg)),
+                    Span::styled(p.cmd.clone(), Style::default().fg(ui.theme.muted)),
+                ])
+            })
+            .collect();
+
+        if rows.is_empty() {
+            let p = Paragraph::new("No network socket activity recorded for this sample")
+                .style(Style::default().fg(ui.theme.muted));
+            frame.render_widget(p, inner);
+            return;
+        }
+
+        let widths = [
+            Constraint::Length(8),
+            Constraint::Length(16),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(22),
+            Constraint::Min(0),
+        ];
+
+        let table = Table::new(rows, widths).header(header);
+        frame.render_widget(table, inner);
+        return;
+    }
+
+    let primary_hdr = match state.metric {
+        HistoryMetric::Cpu => "CPU%",
+        HistoryMetric::Mem => "MEM%",
+        HistoryMetric::Io => "IO RATE",
+        HistoryMetric::Gpu => "GPU%",
+        HistoryMetric::Net => "NET",
+    };
+    let secondary_hdr = match state.metric {
+        HistoryMetric::Gpu => "VRAM",
+        _ => "RAM",
+    };
+
     let header = TableRow::new(vec![
         Span::styled("PID", Style::default().fg(ui.theme.muted)),
         Span::styled("PROCESS", Style::default().fg(ui.theme.muted)),
@@ -1065,7 +1515,6 @@ fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryS
         Span::styled("COMMAND", Style::default().fg(ui.theme.muted)),
     ]);
 
-    let max_rows = inner.height.saturating_sub(1) as usize;
     let rows: Vec<TableRow> = procs
         .iter()
         .take(max_rows)
@@ -1113,6 +1562,145 @@ fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryS
 
     let table = Table::new(rows, widths).header(header);
     frame.render_widget(table, inner);
+}
+
+fn format_proc_net_io(bps: u64, bytes: u64) -> String {
+    if bps > 0 {
+        format!("{}/s", cpu::human_bytes(bps))
+    } else if bytes > 0 {
+        cpu::human_bytes(bytes)
+    } else {
+        "--".to_string()
+    }
+}
+
+fn format_proc_conns(proc: &HistoryProcess) -> String {
+    let tot_bytes = proc.net_rx_bytes + proc.net_tx_bytes;
+    let tot_str = if tot_bytes > 0 {
+        format!("Tot {}", cpu::human_bytes(tot_bytes))
+    } else {
+        String::new()
+    };
+    let mut conns = Vec::new();
+    if proc.tcp_est > 0 {
+        conns.push(format!("{} est", proc.tcp_est));
+    }
+    if proc.udp > 0 {
+        conns.push(format!("{} udp", proc.udp));
+    }
+    let conn_str = conns.join(", ");
+    if !tot_str.is_empty() && !conn_str.is_empty() {
+        format!("{} │ {}", tot_str, conn_str)
+    } else if !tot_str.is_empty() {
+        tot_str
+    } else if !conn_str.is_empty() {
+        conn_str
+    } else {
+        "--".to_string()
+    }
+}
+
+fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let bg = match ui.theme.bg {
+        Color::Reset => Color::Black,
+        c => c,
+    };
+
+    let w = 82u16.min(area.width.saturating_sub(4));
+    let h = 16u16.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 2;
+    let modal_area = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+
+    frame.render_widget(Clear, modal_area);
+
+    let title = format!(" SAVED SESSIONS ({}) ", state.saved_recordings.len());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ui.theme.accent))
+        .style(Style::default().bg(bg))
+        .title(title);
+    frame.render_widget(block.clone(), modal_area);
+    let inner = block.inner(modal_area);
+
+    if inner.height < 4 || inner.width < 20 {
+        return;
+    }
+
+    let [table_area, help_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
+
+    let header = TableRow::new(vec![
+        Span::styled("ID / FILENAME", Style::default().fg(ui.theme.muted)),
+        Span::styled("DATE", Style::default().fg(ui.theme.muted)),
+        Span::styled("TIME", Style::default().fg(ui.theme.muted)),
+        Span::styled("DUR", Style::default().fg(ui.theme.muted)),
+        Span::styled("FOCUS", Style::default().fg(ui.theme.muted)),
+        Span::styled("SAMPLES", Style::default().fg(ui.theme.muted)),
+    ]);
+
+    let rows: Vec<TableRow> = state
+        .saved_recordings
+        .iter()
+        .enumerate()
+        .map(|(idx, rec)| {
+            let is_selected = idx == state.selected_session_idx;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(ui.theme.fg)
+            };
+            let arrow = if is_selected { "▶ " } else { "  " };
+            let id_str = format!("{}{}", arrow, rec.id);
+            TableRow::new(vec![
+                Span::styled(id_str, style),
+                Span::styled(&rec.date, style),
+                Span::styled(&rec.time, style),
+                Span::styled(&rec.duration, style),
+                Span::styled(&rec.metric_focus, style),
+                Span::styled(format!("{}", rec.sample_count), style),
+            ])
+        })
+        .collect();
+
+    if rows.is_empty() {
+        let empty_msg = Paragraph::new(
+            "No saved sessions found in ~/.local/share/perfo/recordings\nPress 'r' in history view to record a session.",
+        )
+        .style(Style::default().fg(ui.theme.muted));
+        frame.render_widget(empty_msg, table_area);
+    } else {
+        let widths = [
+            Constraint::Length(26),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Min(0),
+        ];
+        let table = Table::new(rows, widths).header(header);
+        frame.render_widget(table, table_area);
+    }
+
+    let help_line = Line::from(vec![
+        Span::styled("↑/↓/j/k", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" Select  "),
+        Span::styled("Enter", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" Load/Replay  "),
+        Span::styled("d", Style::default().fg(ui.theme.red)),
+        Span::raw(" Delete  "),
+        Span::styled("Esc/s", Style::default().fg(ui.theme.yellow)),
+        Span::raw(" Close"),
+    ]);
+    frame.render_widget(Paragraph::new(help_line), help_area);
 }
 
 fn clean_process_name(name: &str, cmd: &str, pid: u32) -> String {
@@ -1177,6 +1765,8 @@ mod tests {
         m = m.next();
         assert_eq!(m, HistoryMetric::Io);
         m = m.next();
+        assert_eq!(m, HistoryMetric::Net);
+        m = m.next();
         assert_eq!(m, HistoryMetric::Gpu);
         m = m.next();
         assert_eq!(m, HistoryMetric::Cpu);
@@ -1211,6 +1801,8 @@ mod tests {
                 read_bps: 100,
                 write_bps: 200,
                 gpu: 0.0,
+                net_rx_bps: 1000,
+                net_tx_bps: 2000,
                 top_procs: vec![],
             });
         }

@@ -971,7 +971,7 @@ Column {
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.space(4)
 
-              // PLAY button
+              // LOAD button
               Rectangle {
                 width: Style.space(48)
                 height: Style.space(16)
@@ -982,36 +982,8 @@ Column {
 
                 PlainText {
                   anchors.centerIn: parent
-                  text: "▶ PLAY"
-                  color: "#000000"
-                  font.family: historyPage.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
-
-                MouseArea {
-                  anchors.fill: parent
-                  onClicked: {
-                    historyPage.loadSession(modelData.path, modelData.id, true)
-                    historyPage.showSessionsMenu = false
-                  }
-                }
-              }
-
-              // LOAD / INSPECT button
-              Rectangle {
-                width: Style.space(40)
-                height: Style.space(16)
-                radius: Style.cornerRadius
-                color: "transparent"
-                border.color: historyPage.foreground
-                border.width: 1
-                opacity: 0.8
-
-                PlainText {
-                  anchors.centerIn: parent
                   text: "LOAD"
-                  color: historyPage.foreground
+                  color: "#000000"
                   font.family: historyPage.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -1414,10 +1386,10 @@ Column {
     spacing: Style.space(8)
 
     PlainText { width: Style.space(48); text: "PID"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
-    PlainText { width: Style.space(120); text: "PROCESS"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
-    PlainText { width: Style.space(60); text: historyPage.metricHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
-    PlainText { width: Style.space(48); text: historyPage.secondaryHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
-    PlainText { width: parent.width - Style.space(300); text: "COMMAND"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
+    PlainText { width: Style.space(110); text: "PROCESS"; color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
+    PlainText { width: Style.space(68); text: historyPage.metricHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
+    PlainText { width: Style.space(68); text: historyPage.secondaryHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption; horizontalAlignment: Text.AlignRight }
+    PlainText { width: parent.width - Style.space(330); text: historyPage.detailHeader(); color: historyPage.foreground; opacity: 0.55; font.family: historyPage.fontFamily; font.pixelSize: Style.font.caption }
   }
 
   // Process rows at selected sample
@@ -1438,7 +1410,7 @@ Column {
       }
 
       PlainText {
-        width: Style.space(120)
+        width: Style.space(110)
         text: historyPage.cleanName(modelData.name || modelData.cmd, modelData.pid)
         color: historyPage.foreground
         font.family: historyPage.fontFamily
@@ -1448,7 +1420,7 @@ Column {
       }
 
       PlainText {
-        width: Style.space(60)
+        width: Style.space(68)
         text: historyPage.metricCellText(modelData)
         color: Color.accent
         font.family: historyPage.fontFamily
@@ -1457,7 +1429,7 @@ Column {
       }
 
       PlainText {
-        width: Style.space(48)
+        width: Style.space(68)
         text: historyPage.secondaryCellText(modelData)
         color: historyPage.foreground
         font.family: historyPage.fontFamily
@@ -1466,10 +1438,10 @@ Column {
       }
 
       PlainText {
-        width: parent.width - Style.space(300)
-        text: String(modelData.cmd || "")
+        width: parent.width - Style.space(330)
+        text: historyPage.detailCellText(modelData)
         color: historyPage.foreground
-        opacity: 0.7
+        opacity: historyPage.metric === "NET" ? 0.95 : 0.7
         font.family: historyPage.fontFamily
         font.pixelSize: Style.font.bodySmall
         elide: Text.ElideRight
@@ -1847,15 +1819,22 @@ Column {
     if (metric === "CPU") return "CPU%"
     if (metric === "MEM") return "MEM%"
     if (metric === "GPU") return "GPU%"
-    if (metric === "IO") return "IO RATE"
-    if (metric === "NET") return "TCP EST"
+    if (metric === "IO") return "IO READ"
+    if (metric === "NET") return "IN (RX)"
     return metric
   }
 
   function secondaryHeader() {
     if (metric === "GPU") return "VRAM"
-    if (metric === "NET") return "UDP"
+    if (metric === "NET") return "OUT (TX)"
+    if (metric === "IO") return "IO WRITE"
     return "RAM"
+  }
+
+  function detailHeader() {
+    if (metric === "NET") return "TOTAL EXCHANGED / CONNS"
+    if (metric === "IO") return "RAM / COMMAND"
+    return "COMMAND"
   }
 
   function timingLabel() {
@@ -1897,9 +1876,17 @@ Column {
     var list = selectedSample.processes.slice()
     if (metric === "NET") {
       var netList = list.filter(function(p) {
-        return (Number(p.total_sockets) || 0) > 0 || (Number(p.tcp_est) || 0) > 0 || (Number(p.udp) || 0) > 0
+        return (Number(p.net_rx_bps) || 0) > 0 || (Number(p.net_tx_bps) || 0) > 0 ||
+               (Number(p.net_rx_bytes) || 0) > 0 || (Number(p.net_tx_bytes) || 0) > 0 ||
+               (Number(p.total_sockets) || 0) > 0 || (Number(p.tcp_est) || 0) > 0 || (Number(p.udp) || 0) > 0
       })
       netList.sort(function(a, b) {
+        var aRate = (Number(a.net_rx_bps) || 0) + (Number(a.net_tx_bps) || 0)
+        var bRate = (Number(b.net_rx_bps) || 0) + (Number(b.net_tx_bps) || 0)
+        if (bRate !== aRate) return bRate - aRate
+        var aBytes = (Number(a.net_rx_bytes) || 0) + (Number(a.net_tx_bytes) || 0)
+        var bBytes = (Number(b.net_rx_bytes) || 0) + (Number(b.net_tx_bytes) || 0)
+        if (bBytes !== aBytes) return bBytes - aBytes
         var diff = (Number(b.tcp_est) || 0) - (Number(a.tcp_est) || 0)
         if (diff !== 0) return diff
         return (Number(b.total_sockets) || 0) - (Number(a.total_sockets) || 0)
@@ -1941,12 +1928,14 @@ Column {
       return (Number(proc.gpu_percent) || 0) > 0 ? (Math.round(proc.gpu_percent) + "%") : "--"
     }
     if (metric === "IO") {
-      var totalIo = (Number(proc.read_bps) || 0) + (Number(proc.write_bps) || 0)
-      return totalIo > 0 ? formatRate(totalIo) : "--"
+      return (Number(proc.read_bps) || 0) > 0 ? formatRate(proc.read_bps) : "--"
     }
     if (metric === "NET") {
-      var est = Number(proc.tcp_est) || 0
-      return est > 0 ? (est + " conn") : "--"
+      var rxBps = Number(proc.net_rx_bps) || 0
+      if (rxBps > 0) return formatRate(rxBps)
+      var rxBytes = Number(proc.net_rx_bytes) || 0
+      if (rxBytes > 0) return formatBytes(rxBytes)
+      return "--"
     }
     return Math.round(Number(proc.cpu_percent) || 0) + "%"
   }
@@ -1955,11 +1944,43 @@ Column {
     if (metric === "GPU") {
       return (Number(proc.vram_bytes) || 0) > 0 ? formatBytes(proc.vram_bytes) : "--"
     }
+    if (metric === "IO") {
+      return (Number(proc.write_bps) || 0) > 0 ? formatRate(proc.write_bps) : "--"
+    }
     if (metric === "NET") {
-      var u = Number(proc.udp) || 0
-      return u > 0 ? (u + " sock") : "--"
+      var txBps = Number(proc.net_tx_bps) || 0
+      if (txBps > 0) return formatRate(txBps)
+      var txBytes = Number(proc.net_tx_bytes) || 0
+      if (txBytes > 0) return formatBytes(txBytes)
+      return "--"
     }
     return formatBytes(proc.mem_bytes)
+  }
+
+  function detailCellText(proc) {
+    if (metric === "NET") {
+      var rxB = Number(proc.net_rx_bytes) || 0
+      var txB = Number(proc.net_tx_bytes) || 0
+      var totB = rxB + txB
+      var parts = []
+      if (totB > 0) {
+        parts.push("Tot " + formatBytes(totB))
+      }
+      if ((Number(proc.tcp_est) || 0) > 0) {
+        parts.push(proc.tcp_est + " est")
+      } else if ((Number(proc.total_sockets) || 0) > 0) {
+        parts.push(proc.total_sockets + " sock")
+      }
+      if (parts.length === 0 && proc.cmd) {
+        return String(proc.cmd)
+      }
+      return parts.join(" │ ")
+    }
+    if (metric === "IO") {
+      var ramStr = formatBytes(proc.mem_bytes)
+      return ramStr + (proc.cmd ? (" │ " + String(proc.cmd)) : "")
+    }
+    return String(proc.cmd || "")
   }
 
   function cleanName(command, pid) {
@@ -1981,6 +2002,8 @@ Column {
   }
 
   function formatRate(bytes) {
+    var v = Number(bytes)
+    if (!isFinite(v) || v <= 0) return "--"
     return formatBytes(bytes) + "/s"
   }
 
@@ -2168,7 +2191,7 @@ Column {
       lines.push("GPU Usage            : " + sample.gpu + "%")
       lines.push("")
       lines.push("Active Processes at this timing:")
-      lines.push(padRight("PID", 8) + " | " + padLeft(historyPage.metricHeader(), 8) + " | " + padLeft(historyPage.secondaryHeader(), 10) + " | " + padRight("PROCESS", 18) + " | COMMAND")
+      lines.push(padRight("PID", 8) + " | " + padLeft(historyPage.metricHeader(), 10) + " | " + padLeft(historyPage.secondaryHeader(), 10) + " | " + padRight("PROCESS", 18) + " | " + historyPage.detailHeader())
       lines.push(subBorder)
       var procs = historyPage.sortedProcesses()
       for (var i = 0; i < procs.length; i++) {
@@ -2176,10 +2199,10 @@ Column {
         var pName = historyPage.cleanName(p.name || p.cmd, p.pid)
         lines.push(
           padRight(p.pid, 8) + " | " +
-          padLeft(historyPage.metricCellText(p), 8) + " | " +
+          padLeft(historyPage.metricCellText(p), 10) + " | " +
           padLeft(historyPage.secondaryCellText(p), 10) + " | " +
           padRight(pName, 18) + " | " +
-          (p.cmd || pName)
+          historyPage.detailCellText(p)
         )
       }
       if (procs.length === 0) {

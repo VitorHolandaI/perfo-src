@@ -652,7 +652,11 @@ Panel {
           tcp_est: Number(npItem.tcp_est) || 0,
           tcp_listen: Number(npItem.tcp_listen) || 0,
           udp: Number(npItem.udp) || 0,
-          total_sockets: (Number(npItem.tcp_est) || 0) + (Number(npItem.tcp_listen) || 0) + (Number(npItem.udp) || 0)
+          total_sockets: (Number(npItem.tcp_est) || 0) + (Number(npItem.tcp_listen) || 0) + (Number(npItem.udp) || 0),
+          rx_bytes: Number(npItem.rx_bytes) || 0,
+          tx_bytes: Number(npItem.tx_bytes) || 0,
+          rx_bps: Number(npItem.rx_bps) || 0,
+          tx_bps: Number(npItem.tx_bps) || 0
         })
       }
     }
@@ -694,7 +698,11 @@ Panel {
           tcp_est: netMatch ? netMatch.tcp_est : 0,
           tcp_listen: netMatch ? netMatch.tcp_listen : 0,
           udp: netMatch ? netMatch.udp : 0,
-          total_sockets: netMatch ? netMatch.total_sockets : 0
+          total_sockets: netMatch ? netMatch.total_sockets : 0,
+          net_rx_bps: netMatch ? netMatch.rx_bps : 0,
+          net_tx_bps: netMatch ? netMatch.tx_bps : 0,
+          net_rx_bytes: netMatch ? netMatch.rx_bytes : 0,
+          net_tx_bytes: netMatch ? netMatch.tx_bytes : 0
         })
       }
     }
@@ -723,7 +731,11 @@ Panel {
           tcp_est: 0,
           tcp_listen: 0,
           udp: 0,
-          total_sockets: 0
+          total_sockets: 0,
+          net_rx_bps: 0,
+          net_tx_bps: 0,
+          net_rx_bytes: 0,
+          net_tx_bytes: 0
         })
       }
     }
@@ -761,7 +773,11 @@ Panel {
           tcp_est: npSock.tcp_est,
           tcp_listen: npSock.tcp_listen,
           udp: npSock.udp,
-          total_sockets: npSock.total_sockets
+          total_sockets: npSock.total_sockets,
+          net_rx_bps: npSock.rx_bps,
+          net_tx_bps: npSock.tx_bps,
+          net_rx_bytes: npSock.rx_bytes,
+          net_tx_bytes: npSock.tx_bytes
         })
       }
     }

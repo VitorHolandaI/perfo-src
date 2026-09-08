@@ -262,17 +262,33 @@ coletor mantem apenas a fonte `acpi_fan` neste caso. Se a UI voltar a mostrar
 `FANS 0`, o primeiro diagnostico deve ser confirmar se o stream em execucao e a
 build atual, antes de concluir que o hardware nao tem fan legivel.
 
-## Dados ainda sem pagina propria
+## 6. GPU
 
-- `gpu.devices` agora aparece na pagina GPU do painel, com uso por dispositivo,
-  memoria quando fornecida pelo backend e processos associados por PID.
-- A tela `6:GPU` tambem exibe CPU%, RAM%, GPU%, VRAM por processo, usuario e
-  comando; em GPU integrada a VRAM por processo pode ser `--` por usar RAM
-  compartilhada.
-- `net.proc_net` e `net.listening` ja existem no JSON, mas ainda nao aparecem
-  na pagina NET.
-- Os detalhes avancados de disco e os metadados por core tambem estao no JSON
-  e aguardam uma apresentacao visual dedicada.
+Objetivo: monitorar aceleracao grafica, motores 3D/computacao, uso de VRAM e consumo de energia.
+- Suporte Intel via DRM fdinfo engine times (`render`, `blt`, `video`).
+- Suporte NVIDIA via NVML carregado dinamicamente (utilizacao de GPU, memoria dedicada, temperatura e potencia em Watts).
+- Processos de GPU associados com metricas de computacao e memoria por PID.
+
+## 7. TRACE
+
+Objetivo: registrar chamadas de sistema (syscalls) em tempo real sem dependencias externas como `strace`.
+- Usa a interface `ptrace` do Linux para anexar a um PID existente ou lancar comandos (`perfo trace -- ...`).
+- Rastreia chamadas, argumentos basicos, codigos de retorno e nomes de erro (`errno`).
+
+## 8. FANS & SENSORES
+
+Objetivo: mostrar temperatura de CPU e RPM somente quando o kernel disponibiliza essa informacao.
+- Leitura direta de `/sys/class/hwmon` com fallback limpo caso nao haja sensores legiveis (`NO READABLE COOLERS`).
+- Deduplicacao de drivers para evitar leituras duplicadas ou erraticas.
+
+## 9. HIST (Flight Recorder & Replay)
+
+Objetivo: analise historica de telemetria, gravacao de sessoes e reproducao interativa quadro a quadro.
+- **Linha do tempo (Timeline)**: exibe graficos com regua de tempo decorrido para CPU, MEM, IO, NET e GPU.
+- **Gravacao de sessoes (REC)**: permite gravar snapshots com duracao pre-configurada (30s, 2m, 5m, 15m, 30m, 1h) ou customizada em minutos.
+- **Modo Replay**: depuracao passo a passo, retroceder/avancar, pausa/play e retorno imediato ao fluxo ao vivo (`LIVE`).
+- **Modal de Sessoes**: listagem, carregamento de gravacoes anteriores e remocao de sessoes salvas em disco.
+- **Metricas de Rede por Processo**: rastreia throughput e bytes transferidos via Netlink TCP (`IN`, `OUT`, contagem de conexoes).
 
 ## Fontes tecnicas
 

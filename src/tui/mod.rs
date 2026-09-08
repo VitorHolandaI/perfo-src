@@ -363,6 +363,10 @@ fn handle_key(
         handle_menu_key(state, code);
         return false;
     }
+    if state.pane == Pane::History && state.history.sessions_modal {
+        handle_sessions_modal_key(state, code);
+        return false;
+    }
     if state.tracing {
         handle_tracing_key(state, code);
         return false;
@@ -379,6 +383,31 @@ fn handle_key(
         return false;
     }
     handle_normal_key(state, display_pids, code, system_theme)
+}
+
+fn handle_sessions_modal_key(state: &mut State, code: KeyCode) {
+    match code {
+        KeyCode::Esc
+        | KeyCode::Char('q')
+        | KeyCode::Char('Q')
+        | KeyCode::Char('s')
+        | KeyCode::Char('S') => {
+            state.history.close_sessions_modal();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.history.modal_prev();
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.history.modal_next();
+        }
+        KeyCode::Enter => {
+            state.history.modal_load_selected();
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+            state.history.modal_delete_selected();
+        }
+        _ => {}
+    }
 }
 
 fn handle_help_key(state: &mut State, code: KeyCode) {
@@ -569,12 +598,19 @@ fn handle_normal_key(
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if state.pane == Pane::History {
-                state.history.recording = !state.history.recording;
+                state.history.toggle_session_recording();
             }
             false
         }
         KeyCode::Char('C') => toggle_theme(state, system_theme),
-        KeyCode::Char('L') => toggle_lang(state),
+        KeyCode::Char('L') => {
+            if state.pane == Pane::History {
+                state.history.jump_to_live();
+                false
+            } else {
+                toggle_lang(state)
+            }
+        }
         KeyCode::Char('?') => {
             state.help = true;
             false
@@ -583,7 +619,14 @@ fn handle_normal_key(
             state.show_menu = !state.show_menu;
             false
         }
-        KeyCode::Char('s') => start_trace(state),
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            if state.pane == Pane::History {
+                state.history.open_sessions_modal();
+                false
+            } else {
+                start_trace(state)
+            }
+        }
         KeyCode::Char('z') | KeyCode::Char('Z') => {
             if state.pane == Pane::History {
                 state.history.span = state.history.span.next();
@@ -602,11 +645,27 @@ fn handle_normal_key(
         | KeyCode::PageDown
         | KeyCode::Home
         | KeyCode::End => handle_nav_key(state, display_pids, code),
-        KeyCode::Left | KeyCode::Right => {
-            if state.pane == Pane::Cpu && state.cores_focused {
+        KeyCode::Left => {
+            if state.pane == Pane::History {
+                state.history.step(-1);
+                false
+            } else if state.pane == Pane::Cpu && state.cores_focused {
                 move_core(state, code);
+                false
+            } else {
+                false
             }
-            false
+        }
+        KeyCode::Right => {
+            if state.pane == Pane::History {
+                state.history.step(1);
+                false
+            } else if state.pane == Pane::Cpu && state.cores_focused {
+                move_core(state, code);
+                false
+            } else {
+                false
+            }
         }
         KeyCode::Char(' ') => {
             if state.pane == Pane::History {

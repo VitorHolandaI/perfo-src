@@ -163,7 +163,7 @@ fn local_datetime_strings() -> (String, String, String) {
     }
 }
 
-pub fn list_recordings() -> io::Result<()> {
+pub fn get_recordings_list() -> Vec<RecordingMetadata> {
     let (rec_dir, max_recs) = get_config();
     prune_recordings(&rec_dir, max_recs);
 
@@ -247,15 +247,60 @@ pub fn list_recordings() -> io::Result<()> {
             }
         }
     }
+    out
+}
 
+pub fn list_recordings() -> io::Result<()> {
+    let out = get_recordings_list();
     let json_str = serde_json::to_string(&out).map_err(io::Error::other)?;
     println!("{}", json_str);
     Ok(())
 }
 
-pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
+pub fn save_session_data(
+    samples: Value,
+    dur_secs: u64,
+    metric_focus: &str,
+) -> io::Result<RecordingMetadata> {
     let (rec_dir, max_recs) = get_config();
+    let (date_str, time_str, id_str) = local_datetime_strings();
+    let filename = format!("{}.json", id_str);
+    let filepath = rec_dir.join(&filename);
 
+    let sample_count = samples.as_array().map(|a| a.len()).unwrap_or(0);
+    let duration_label = format_duration(dur_secs);
+
+    let record_obj = RecordingPayload {
+        id: id_str.clone(),
+        filename: filename.clone(),
+        date: date_str.clone(),
+        time: time_str.clone(),
+        duration_seconds: dur_secs,
+        duration_label: duration_label.clone(),
+        metric_focus: metric_focus.to_string(),
+        sample_count,
+        samples,
+    };
+
+    let file_str = serde_json::to_string(&record_obj).map_err(io::Error::other)?;
+    fs::write(&filepath, file_str)?;
+
+    prune_recordings(&rec_dir, max_recs);
+
+    Ok(RecordingMetadata {
+        id: id_str,
+        filename,
+        path: filepath.to_string_lossy().to_string(),
+        date: date_str,
+        time: time_str,
+        duration: duration_label,
+        duration_seconds: dur_secs,
+        sample_count,
+        metric_focus: metric_focus.to_string(),
+    })
+}
+
+pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     let raw = match arg {
         Some(path_str) => {
             let p = if let Some(rest) = path_str.strip_prefix("~/") {
@@ -279,10 +324,6 @@ pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     let payload: Value = serde_json::from_str(&raw)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid JSON: {}", e)))?;
 
-    let (date_str, time_str, id_str) = local_datetime_strings();
-    let filename = format!("{}.json", id_str);
-    let filepath = rec_dir.join(&filename);
-
     let samples = payload
         .get("samples")
         .cloned()
@@ -295,39 +336,25 @@ pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     let metric_focus = payload
         .get("metric_focus")
         .and_then(|v| v.as_str())
-        .unwrap_or("CPU")
-        .to_string();
-    let duration_label = format_duration(dur_secs);
+        .unwrap_or("CPU");
 
-    let record_obj = RecordingPayload {
-        id: id_str.clone(),
-        filename: filename.clone(),
-        date: date_str.clone(),
-        time: time_str.clone(),
-        duration_seconds: dur_secs,
-        duration_label: duration_label.clone(),
-        metric_focus,
-        sample_count,
-        samples,
-    };
-
-    let file_str = serde_json::to_string(&record_obj).map_err(io::Error::other)?;
-    fs::write(&filepath, file_str)?;
-
-    prune_recordings(&rec_dir, max_recs);
+    let meta = save_session_data(samples, dur_secs, metric_focus)?;
 
     let resp = serde_json::json!({
         "status": "ok",
-        "id": id_str,
-        "filename": filename,
-        "path": filepath.to_string_lossy(),
-        "duration": duration_label,
-        "date": date_str,
-        "time": time_str,
-        "sample_count": sample_count
+        "id": meta.id,
+        "filename": meta.filename,
+        "path": meta.path,
+        "duration": meta.duration,
+        "date": meta.date,
+        "time": meta.time,
+        "sample_count": meta.sample_count
     });
 
-    println!("{}", serde_json::to_string(&resp).map_err(io::Error::other)?);
+    println!(
+        "{}",
+        serde_json::to_string(&resp).map_err(io::Error::other)?
+    );
     Ok(())
 }
 
@@ -364,15 +391,35 @@ pub fn get_recording(target: Option<&str>) -> io::Result<()> {
     Ok(())
 }
 
-pub fn delete_recording(target: Option<&str>) -> io::Result<()> {
-    let target = target.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Missing recording ID or file path",
-        )
-    })?;
+pub fn load_recording_payload(target: &str) -> io::Result<RecordingPayload> {
     let (rec_dir, _) = get_config();
+    let path = if target.ends_with(".json") {
+        if let Some(rest) = target.strip_prefix("~/") {
+            get_home_dir().join(rest)
+        } else if target.contains('/') {
+            PathBuf::from(target)
+        } else {
+            rec_dir.join(target)
+        }
+    } else {
+        rec_dir.join(format!("{}.json", target))
+    };
 
+    if !path.exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Recording file not found: {:?}", path),
+        ));
+    }
+
+    let content = fs::read_to_string(&path)?;
+    let payload: RecordingPayload = serde_json::from_str(&content)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid JSON: {}", e)))?;
+    Ok(payload)
+}
+
+pub fn delete_recording_by_id(target: &str) -> io::Result<bool> {
+    let (rec_dir, _) = get_config();
     let path = if target.ends_with(".json") {
         if target.contains('/') {
             PathBuf::from(target)
@@ -385,10 +432,22 @@ pub fn delete_recording(target: Option<&str>) -> io::Result<()> {
 
     if path.exists() {
         fs::remove_file(&path)?;
-        println!(
-            "{}",
-            serde_json::json!({"status": "ok", "deleted": path.to_string_lossy()})
-        );
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
+pub fn delete_recording(target: Option<&str>) -> io::Result<()> {
+    let target = target.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Missing recording ID or file path",
+        )
+    })?;
+
+    if delete_recording_by_id(target)? {
+        println!("{}", serde_json::json!({"status": "ok", "deleted": target}));
     } else {
         println!(
             "{}",

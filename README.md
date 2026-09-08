@@ -17,12 +17,18 @@ the JSON commands remain usable.
 
 ## Features
 
-- Interactive CPU-focused TUI.
-- CPU, per-core usage, load, memory, swap, pressure, disk I/O and network data.
-- Process list with short process names and full command lines in the TUI.
+- Interactive CPU-focused TUI with 7 dedicated full-screen panes (CPU, IO, NET, MEM, Disks, GPU, History).
+- Omarchy Quickshell widget with 9 dynamic pages and status bar popout.
+- Historical flight recorder with real-time metric timeline graphs (CPU, MEM, IO, NET, GPU).
+- Session recording with custom duration presets (30s, 2m, 5m, 15m, 30m, 1h, custom minutes).
+- Interactive replay scrubber with step, jump, play/pause, and return to live stream.
+- Saved sessions manager modal to inspect, load, and delete recorded flight sessions.
+- Process-level network socket monitoring via Netlink TCP diagnostics (RX/TX bytes and transfer rates).
+- CPU, per-core usage, load, memory, swap, pressure (PSI), disk I/O and network throughput.
+- Process list with short process names, full command lines, tree view, and live sorting in the TUI.
 - Read-only fan RPM and temperature discovery through Linux hwmon.
-- Optional GPU data when the kernel exposes a supported interface.
-- JSON snapshots for scripts, bars and other widgets.
+- Optional GPU data (Intel DRM fdinfo, NVIDIA NVML, AMD sysfs) when available.
+- High-performance JSON stream (`perfo stream --json`) and snapshot (`perfo cpu --json`) for external scripts.
 - Built-in syscall tracing with `ptrace`; no `strace` dependency.
 
 ## Release Scope
@@ -180,6 +186,88 @@ For the marketplace, an optional root-level `preview.png` (also `jpg`, `jpeg`,
 `webp`, or `avif`) is used as the listing preview. Additional screenshots can
 be stored under `docs/images/` and linked from this README; they are not
 attached through the submission form.
+
+## Screenshots & Interface Gallery
+
+### Quickshell Widget (Desktop Views)
+
+The Omarchy widget integrates into the desktop shell with 9 specialized views, real-time sparklines, and a compact status bar popout:
+
+| Page | View | Description |
+| :--- | :--- | :--- |
+| **1** | **[Dashboard](docs/images/widgetpage1.png)** | System overview: aggregate CPU, memory, load averages, per-core bars, and top processes |
+| **2** | **[Disk I/O](docs/images/widgetpage2.png)** | Real-time read and write throughput sparklines, active storage devices, and I/O processes |
+| **3** | **[Network](docs/images/widgetpage3.png)** | Interface throughput (RX/TX), active network interfaces, and socket activity |
+| **4** | **[Memory](docs/images/widgetpage4.png)** | Physical RAM usage, swap space, PSI memory pressure, and top memory consumers |
+| **5** | **[Filesystems](docs/images/widgetpage5.png)** | Mounted disk partitions, mount points, used/free space, and capacity warnings |
+| **6** | **[GPU](docs/images/widgetpage6.png)** | GPU engine utilization, VRAM usage, temperature, and per-process GPU compute |
+| **7** | **[Syscall Tracer](docs/images/widgetpage7.png)** | Real-time ptrace syscall event logger for any running PID or spawned command |
+| **8** | **[Hardware Fans](docs/images/widgetpage8.png)** | Cooling fan RPMs and CPU/chassis temperature sensors discovered via hwmon |
+| **9** | **[Flight Recorder](docs/images/widgetpage9.png)** | Historical metric timeline, session recording, replay scrubber, and sessions modal |
+
+#### Page 1: Dashboard (`Dash`)
+![Widget Dashboard](docs/images/widgetpage1.png)
+
+#### Page 2: Disk I/O (`IO`)
+![Widget Disk IO](docs/images/widgetpage2.png)
+
+#### Page 3: Network Throughput (`NET`)
+![Widget Network](docs/images/widgetpage3.png)
+
+#### Page 4: Memory & Swap (`MEM`)
+![Widget Memory](docs/images/widgetpage4.png)
+
+#### Page 5: Storage Filesystems (`Disks`)
+![Widget Filesystems](docs/images/widgetpage5.png)
+
+#### Page 6: GPU Acceleration (`GPU`)
+![Widget GPU](docs/images/widgetpage6.png)
+
+#### Page 7: Syscall Tracer (`Trace`)
+![Widget Syscall Tracer](docs/images/widgetpage7.png)
+
+#### Page 8: Hardware Fans & Thermals (`Fans`)
+![Widget Fans](docs/images/widgetpage8.png)
+
+#### Page 9: History & Flight Replay (`Hist`)
+![Widget History and Flight Replay](docs/images/widgetpage9.png)
+
+---
+
+### Terminal TUI (Console Views)
+
+The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency monitoring with hotkeys (`1-7`, `Tab`, `h/l`):
+
+| Pane | View | Description |
+| :--- | :--- | :--- |
+| **1** | **[CPU Dashboard](docs/images/terminalpage1.png)** | Per-core utilization bars, CPU frequency, load average, uptime, and process tree |
+| **2** | **[Disk I/O](docs/images/terminalpage2.png)** | Device throughput, read/write rates, and top disk I/O processes |
+| **3** | **[Network](docs/images/terminalpage3.png)** | Interface bandwidth, Netlink socket byte tracking, connections, and per-process RX/TX |
+| **4** | **[Memory](docs/images/terminalpage4.png)** | RAM breakdown (used, free, buffers, cached), swap, and memory consumers |
+| **5** | **[Storage Mounts](docs/images/terminalpage5.png)** | Partition sizes, available space, filesystem types, and mount points |
+| **6** | **[GPU Monitor](docs/images/terminalpage6.png)** | Engine load, memory allocation, temperature, power, and process GPU compute |
+| **7** | **[History Analysis](docs/images/terminalpage7.png)** | Timeline graphs, recording (`r`), sessions modal (`s`), stepping, and flight replay |
+
+#### Pane 1: CPU Dashboard (`1:CPU`)
+![Terminal CPU Dashboard](docs/images/terminalpage1.png)
+
+#### Pane 2: Disk I/O Activity (`2:IO`)
+![Terminal Disk IO](docs/images/terminalpage2.png)
+
+#### Pane 3: Network Bandwidth & Sockets (`3:NET`)
+![Terminal Network](docs/images/terminalpage3.png)
+
+#### Pane 4: Memory & Swap Hierarchy (`4:MEM`)
+![Terminal Memory](docs/images/terminalpage4.png)
+
+#### Pane 5: Filesystems & Mounts (`5:Disks`)
+![Terminal Storage Mounts](docs/images/terminalpage5.png)
+
+#### Pane 6: GPU Engine & Compute (`6:GPU`)
+![Terminal GPU](docs/images/terminalpage6.png)
+
+#### Pane 7: History Analysis & Replay Scrubber (`7:Hist`)
+![Terminal History Analysis](docs/images/terminalpage7.png)
 
 ## Data Sources
 

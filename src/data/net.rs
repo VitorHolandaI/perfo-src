@@ -145,13 +145,17 @@ pub struct NetSnapshot {
     pub listening: Vec<ListeningPort>,
 }
 
-/// Per-process socket counts (TCP established/listening, UDP).
-#[derive(Clone, Serialize, Default)]
+/// Per-process socket counts (TCP established/listening, UDP) and network byte transfer.
+#[derive(Clone, Serialize, Default, PartialEq, Eq, Debug)]
 pub struct ProcNet {
     pub pid: u32,
     pub tcp_est: u32,
     pub tcp_listen: u32,
     pub udp: u32,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_bps: u64,
+    pub tx_bps: u64,
 }
 
 /// A listening port with the process serving it.
@@ -168,6 +172,7 @@ pub struct NetMonitor {
     last_refresh: Option<Instant>,
     prev: HashMap<String, DevCounters>,
     prev_retrans: u64,
+    prev_proc_bytes: HashMap<u32, (u64, u64)>,
     /// Per-interface rx/tx rate rings for the sparklines.
     history: HashMap<String, (VecDeque<f32>, VecDeque<f32>)>,
     rx_history: VecDeque<f32>,
@@ -188,6 +193,7 @@ impl NetMonitor {
             last_refresh: None,
             prev: HashMap::new(),
             prev_retrans: 0,
+            prev_proc_bytes: HashMap::new(),
             history: HashMap::new(),
             rx_history: VecDeque::new(),
             tx_history: VecDeque::new(),
@@ -281,7 +287,7 @@ impl NetMonitor {
             ifaces,
             rx_history: self.rx_history.clone(),
             tx_history: self.tx_history.clone(),
-            proc_net: proc_sockets(),
+            proc_net: proc_sockets(&mut self.prev_proc_bytes, elapsed),
             listening: listening_ports(),
         };
         self.prev = cur;
@@ -353,10 +359,125 @@ fn socket_line(line: &str, udp: bool) -> Option<(u64, Sock)> {
     Some((inode, class))
 }
 
+/// Inode -> (rx_bytes, tx_bytes) from Netlink INET_DIAG TCP sockets.
+fn tcp_socket_bytes() -> HashMap<u64, (u64, u64)> {
+    let mut out = HashMap::new();
+    for family in [libc::AF_INET as u8, libc::AF_INET6 as u8] {
+        query_inet_diag(family, &mut out);
+    }
+    out
+}
+
+fn query_inet_diag(family: u8, out: &mut HashMap<u64, (u64, u64)>) {
+    unsafe {
+        let fd = libc::socket(
+            libc::AF_NETLINK,
+            libc::SOCK_RAW,
+            4, /* NETLINK_INET_DIAG */
+        );
+        if fd < 0 {
+            return;
+        }
+        let tv = libc::timeval {
+            tv_sec: 0,
+            tv_usec: 100_000,
+        };
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVTIMEO,
+            &tv as *const _ as *const libc::c_void,
+            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+        );
+
+        let mut req = [0u8; 72];
+        req[0..4].copy_from_slice(&72u32.to_ne_bytes());
+        req[4..6].copy_from_slice(&20u16.to_ne_bytes());
+        req[6..8].copy_from_slice(&0x301u16.to_ne_bytes());
+        req[8..12].copy_from_slice(&1u32.to_ne_bytes());
+        req[16] = family;
+        req[17] = 6; // IPPROTO_TCP
+        req[18] = 2; // INET_DIAG_INFO
+        req[20..24].copy_from_slice(&0xffff_ffffu32.to_ne_bytes());
+
+        let sent = libc::send(fd, req.as_ptr() as *const libc::c_void, req.len(), 0);
+        if sent < 0 {
+            libc::close(fd);
+            return;
+        }
+
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
+            if n <= 0 {
+                break;
+            }
+            let n = n as usize;
+            let mut offset = 0;
+            let mut done = false;
+            while offset + 16 <= n {
+                let nl_len =
+                    u32::from_ne_bytes(buf[offset..offset + 4].try_into().unwrap_or_default())
+                        as usize;
+                let nl_type =
+                    u16::from_ne_bytes(buf[offset + 4..offset + 6].try_into().unwrap_or_default());
+                if nl_len < 16 || offset + nl_len > n || nl_type == 2 || nl_type == 3 {
+                    done = true;
+                    break;
+                }
+                let msg = &buf[offset + 16..offset + nl_len];
+                if msg.len() >= 72 {
+                    let inode =
+                        u32::from_ne_bytes(msg[68..72].try_into().unwrap_or_default()) as u64;
+                    let mut rta_offset = 72;
+                    while rta_offset + 4 <= msg.len() {
+                        let rta_len = u16::from_ne_bytes(
+                            msg[rta_offset..rta_offset + 2]
+                                .try_into()
+                                .unwrap_or_default(),
+                        ) as usize;
+                        let rta_type = u16::from_ne_bytes(
+                            msg[rta_offset + 2..rta_offset + 4]
+                                .try_into()
+                                .unwrap_or_default(),
+                        );
+                        if rta_len < 4 || rta_offset + rta_len > msg.len() {
+                            break;
+                        }
+                        if rta_type == 2
+                        /* INET_DIAG_INFO */
+                        {
+                            let info = &msg[rta_offset + 4..rta_offset + rta_len];
+                            if info.len() >= 208 {
+                                let rx = u64::from_ne_bytes(
+                                    info[128..136].try_into().unwrap_or_default(),
+                                );
+                                let tx = u64::from_ne_bytes(
+                                    info[200..208].try_into().unwrap_or_default(),
+                                );
+                                if inode > 0 {
+                                    out.insert(inode, (rx, tx));
+                                }
+                            }
+                        }
+                        rta_offset += (rta_len + 3) & !3;
+                    }
+                }
+                offset += (nl_len + 3) & !3;
+            }
+            if done {
+                break;
+            }
+        }
+        libc::close(fd);
+    }
+}
+
 /// Processes with open sockets, resolved by scanning /proc/<pid>/fd for
 /// `socket:[inode]` links. Only own (yama-visible) processes are readable.
-fn proc_sockets() -> Vec<ProcNet> {
+fn proc_sockets(prev_proc_bytes: &mut HashMap<u32, (u64, u64)>, elapsed: f32) -> Vec<ProcNet> {
     let inodes = socket_inodes();
+    let socket_bytes = tcp_socket_bytes();
     let mut per_pid: HashMap<u32, ProcNet> = HashMap::new();
     if let Ok(entries) = std::fs::read_dir("/proc") {
         for e in entries.flatten() {
@@ -389,11 +510,35 @@ fn proc_sockets() -> Vec<ProcNet> {
                     Sock::Udp => entry.udp += 1,
                     Sock::TcpOther => {}
                 }
+                if let Some(&(rx, tx)) = socket_bytes.get(&inode) {
+                    entry.rx_bytes = entry.rx_bytes.saturating_add(rx);
+                    entry.tx_bytes = entry.tx_bytes.saturating_add(tx);
+                }
             }
         }
     }
+
+    let mut cur_active = HashMap::new();
+    for entry in per_pid.values_mut() {
+        if let Some(&(prev_rx, prev_tx)) = prev_proc_bytes.get(&entry.pid) {
+            let rx_delta = entry.rx_bytes.saturating_sub(prev_rx);
+            let tx_delta = entry.tx_bytes.saturating_sub(prev_tx);
+            entry.rx_bps = rate(rx_delta, elapsed);
+            entry.tx_bps = rate(tx_delta, elapsed);
+        }
+        cur_active.insert(entry.pid, (entry.rx_bytes, entry.tx_bytes));
+    }
+    *prev_proc_bytes = cur_active;
+
     let mut list: Vec<ProcNet> = per_pid.into_values().collect();
-    list.sort_by_key(|p| std::cmp::Reverse(p.tcp_est + p.tcp_listen + p.udp));
+    list.sort_by_key(|p| {
+        std::cmp::Reverse(
+            (p.rx_bps + p.tx_bps) * 1000
+                + (p.rx_bytes + p.tx_bytes)
+                + (p.tcp_est as u64 * 100)
+                + (p.tcp_listen + p.udp) as u64,
+        )
+    });
     list.truncate(32);
     list
 }
