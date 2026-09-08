@@ -216,6 +216,9 @@ fn run_loop(
             terminal.draw(|frame| cpu::draw(frame, &ui))?;
         }
     }
+    if state.history.is_session_recording {
+        state.history.stop_and_save_session();
+    }
     Ok(())
 }
 
@@ -402,6 +405,7 @@ fn handle_sessions_modal_key(state: &mut State, code: KeyCode) {
         }
         KeyCode::Enter => {
             state.history.modal_load_selected();
+            state.history.close_sessions_modal();
         }
         KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
             state.history.modal_delete_selected();

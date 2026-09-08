@@ -22,6 +22,12 @@ Panel {
 
   onSnapshotChanged: root.recordHistorySample()
 
+  onPageChanged: {
+    if (root.page === 8 && historyPageComp) {
+      historyPageComp.refreshRecordings()
+    }
+  }
+
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -37,6 +43,9 @@ Panel {
 
   function open() {
     root.controller.show()
+    if (historyPageComp) {
+      historyPageComp.refreshRecordings()
+    }
   }
 
   function close() {
@@ -557,6 +566,7 @@ Panel {
           HistoryPage {
             id: historyPageComp
             width: parent.width
+            visible: parent.visible
             history: root.historyBuffer
             liveSample: root.currentLiveSample
             foreground: root.foreground

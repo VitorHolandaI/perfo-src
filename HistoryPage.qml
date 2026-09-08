@@ -177,14 +177,19 @@ Column {
   }
 
   function refreshRecordings() {
-    if (listRecordingsProc.running) {
-      listRecordingsProc.running = false
-    }
+    listRecordingsProc.running = false
+    listRecordingsProc.command = [historyPage.perfoBinPath, "record", "list"]
     listRecordingsProc.running = true
   }
 
   Component.onCompleted: {
     historyPage.refreshRecordings()
+  }
+
+  onVisibleChanged: {
+    if (visible) {
+      historyPage.refreshRecordings()
+    }
   }
 
   onShowSessionsMenuChanged: {
@@ -521,7 +526,8 @@ Column {
               var dur = historyPage.loadedSessionDuration ? historyPage.loadedSessionDuration : "REC"
               return "📁 " + dur + arrow
             }
-            return "📁 SESSIONS" + arrow
+            var count = (historyPage.savedRecordings && historyPage.savedRecordings.length > 0) ? " (" + historyPage.savedRecordings.length + ")" : ""
+            return "📁 SESSIONS" + count + arrow
           }
           color: (historyPage.showSessionsMenu || historyPage.loadedSessionId.length > 0) ? "#000000" : historyPage.foreground
           font.family: historyPage.fontFamily
@@ -1791,6 +1797,7 @@ Column {
   }
 
   function loadSession(recPath, recId, autoPlay, scrubToEnd) {
+    recordingFileReader.path = ""
     recordingFileReader.path = recPath
     var str = recordingFileReader.text()
     if (str && str.length > 0) {
