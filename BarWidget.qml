@@ -106,6 +106,8 @@ BarWidget {
     function jumpToLive() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpToLive() }
     function exportReport() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.exportReport() }
     function loadSession(p: string, id: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.loadSession(p, id, false, false) }
+    function jumpTimeline(dir: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpTimeline(dir) }
+    function stepTimeline(delta: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.stepTimeline(delta) }
   }
 
   Loader {

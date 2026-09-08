@@ -31,6 +31,7 @@ Column {
   property int playbackSpeed: 1
   property var cachedBars: []
   property var currentTopProcs: []
+  property real lastTopProcsUpdateTime: 0
 
   property bool isSessionRecording: false
   property var sessionRecordBuffer: []
@@ -88,9 +89,9 @@ Column {
 
   onMetricChanged: {
     rebuildVisibleBars()
-    updateTopProcesses()
+    updateTopProcesses(true)
   }
-  onSelectedSampleChanged: updateTopProcesses()
+  onSelectedSampleChanged: updateTopProcesses(false)
   onZoomLabelChanged: rebuildVisibleBars()
   onCustomSpanSecondsChanged: rebuildVisibleBars()
   onLoadedSessionIdChanged: rebuildVisibleBars()
@@ -135,6 +136,16 @@ Column {
     interval: 3500
     repeat: false
     onTriggered: historyPage.sessionNotification = ""
+  }
+
+  Timer {
+    id: topProcsThrottleTimer
+    interval: 60
+    repeat: false
+    onTriggered: {
+      historyPage.lastTopProcsUpdateTime = Date.now()
+      historyPage.currentTopProcs = historyPage.sortedProcesses()
+    }
   }
 
   FileView {
@@ -216,7 +227,7 @@ Column {
 
   Component.onCompleted: {
     rebuildVisibleBars()
-    updateTopProcesses()
+    updateTopProcesses(true)
     historyPage.refreshRecordings()
   }
 
@@ -1923,7 +1934,7 @@ Column {
           }
           sessionNotificationTimer.restart()
           rebuildVisibleBars()
-          updateTopProcesses()
+          updateTopProcesses(true)
           return true
         }
       } catch(e) {
@@ -1997,8 +2008,15 @@ Column {
     return "CPU " + cpuVal + "% │ MEM " + memVal + "% │ IO " + formatRate(ioVal) + " │ NET " + formatRate(netVal) + " │ GPU " + gpuVal + "%"
   }
 
-  function updateTopProcesses() {
-    currentTopProcs = sortedProcesses()
+  function updateTopProcesses(immediate) {
+    var now = Date.now()
+    if (immediate || (now - lastTopProcsUpdateTime > 100)) {
+      lastTopProcsUpdateTime = now
+      topProcsThrottleTimer.stop()
+      currentTopProcs = sortedProcesses()
+    } else {
+      topProcsThrottleTimer.restart()
+    }
   }
 
   function sortedProcesses() {
