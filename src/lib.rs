@@ -22,7 +22,7 @@ enum Command {
     StreamJson,
     Record {
         subcmd: String,
-        arg: Option<String>,
+        args: Vec<String>,
     },
     Bench {
         secs: u64,
@@ -47,8 +47,8 @@ fn parse(args: &[String]) -> Command {
         Some("stream") => Command::StreamJson,
         Some("record") | Some("records") | Some("recordings") => {
             let subcmd = args.get(1).cloned().unwrap_or_else(|| "list".to_string());
-            let arg = args.get(2).cloned();
-            Command::Record { subcmd, arg }
+            let subargs: Vec<String> = args.iter().skip(2).cloned().collect();
+            Command::Record { subcmd, args: subargs }
         }
         Some("export") => {
             let basename = args.get(1).cloned().unwrap_or_else(|| {
@@ -193,7 +193,7 @@ pub fn run() -> ExitCode {
                 }
             }
         }
-        Command::Record { subcmd, arg } => match recordings::dispatch(&subcmd, arg.as_deref()) {
+        Command::Record { subcmd, args } => match recordings::dispatch(&subcmd, &args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("perfo record: {e}");

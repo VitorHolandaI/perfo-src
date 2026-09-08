@@ -22,8 +22,14 @@ Column {
   property string exportStatus: ""
   property var loadedHistory: []
   property string loadedSessionId: ""
+  property string loadedSessionPath: ""
   property string loadedSessionTitle: ""
   property string loadedSessionDuration: ""
+  property var windowProcessCache: ({})
+  property int cachedWindowStart: -1
+  property int cachedWindowEnd: -1
+  property bool isFetchingWindow: false
+  property int pendingFetchIndex: -1
   property var savedRecordings: []
   property bool showSessionsMenu: false
   property string sessionNotification: ""
@@ -152,6 +158,93 @@ Column {
     id: recordingFileReader
     printErrors: false
     blockLoading: true
+  }
+
+  Timer {
+    id: inspectDebounceTimer
+    interval: 80
+    repeat: false
+    onTriggered: {
+      if (historyPage.loadedSessionId.length > 0 && historyPage.loadedSessionPath.length > 0) {
+        historyPage.fetchProcessWindow(historyPage.effectiveIndex)
+      }
+    }
+  }
+
+  Process {
+    id: loadTimelineProc
+    property string pendingRecPath: ""
+    property string pendingRecId: ""
+    property bool pendingAutoPlay: false
+    property bool pendingScrubToEnd: false
+    property string outputBuffer: ""
+    stdout: SplitParser {
+      onRead: function(line) {
+        loadTimelineProc.outputBuffer += line
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      if (exitCode === 0 && outputBuffer.length > 0) {
+        try {
+          var data = JSON.parse(outputBuffer)
+          historyPage.applyLoadedTimeline(data, pendingRecPath, pendingRecId, pendingAutoPlay, pendingScrubToEnd)
+        } catch(e) {
+          console.warn("Failed to parse timeline output:", e)
+          historyPage.sessionNotification = "Failed to parse timeline"
+          sessionNotificationTimer.restart()
+        }
+      } else {
+        historyPage.sessionNotification = "Failed to load timeline"
+        sessionNotificationTimer.restart()
+      }
+    }
+  }
+
+  Process {
+    id: inspectProc
+    property int requestedIndex: -1
+    property string outputBuffer: ""
+    stdout: SplitParser {
+      onRead: function(line) {
+        inspectProc.outputBuffer += line
+      }
+    }
+    onExited: function(exitCode, exitStatus) {
+      historyPage.isFetchingWindow = false
+      if (exitCode === 0 && outputBuffer.length > 0) {
+        try {
+          var data = JSON.parse(outputBuffer)
+          if (data && data.slices) {
+            var cache = Object.assign({}, historyPage.windowProcessCache)
+            for (var i = 0; i < data.slices.length; i++) {
+              var sl = data.slices[i]
+              cache[sl.index] = sl.processes || []
+            }
+            var keys = Object.keys(cache)
+            if (keys.length > 250) {
+              var cur = historyPage.effectiveIndex
+              for (var k = 0; k < keys.length; k++) {
+                var idx = Number(keys[k])
+                if (Math.abs(idx - cur) > 100) {
+                  delete cache[keys[k]]
+                }
+              }
+            }
+            historyPage.windowProcessCache = cache
+            historyPage.cachedWindowStart = data.start_index
+            historyPage.cachedWindowEnd = data.end_index
+            historyPage.currentTopProcs = historyPage.sortedProcesses()
+          }
+        } catch(e) {
+          console.warn("Failed to parse inspect slices:", e)
+        }
+      }
+      if (historyPage.pendingFetchIndex >= 0 && historyPage.pendingFetchIndex !== requestedIndex) {
+        var nextIdx = historyPage.pendingFetchIndex
+        historyPage.pendingFetchIndex = -1
+        historyPage.fetchProcessWindow(nextIdx)
+      }
+    }
   }
 
   Process {
@@ -1823,13 +1916,20 @@ Column {
     isSessionRecording = false
     sessionRecordBuffer = []
     loadedSessionId = ""
+    loadedSessionPath = ""
     loadedSessionTitle = ""
     loadedSessionDuration = ""
     loadedHistory = []
+    windowProcessCache = ({})
+    cachedWindowStart = -1
+    cachedWindowEnd = -1
+    if (inspectProc.running) inspectProc.running = false
+    if (loadTimelineProc.running) loadTimelineProc.running = false
     scrubIndex = -1
     isPlaying = false
     zoomLabel = "2m"
     rebuildVisibleBars()
+    updateTopProcesses(true)
   }
 
   function toggleSessionRecording() {
@@ -1845,9 +1945,15 @@ Column {
     targetRecordSeconds = currentZoomSeconds()
     isSessionRecording = true
     loadedSessionId = ""
+    loadedSessionPath = ""
     loadedSessionTitle = ""
     loadedSessionDuration = ""
     loadedHistory = []
+    windowProcessCache = ({})
+    cachedWindowStart = -1
+    cachedWindowEnd = -1
+    if (inspectProc.running) inspectProc.running = false
+    if (loadTimelineProc.running) loadTimelineProc.running = false
     scrubIndex = -1
     isPlaying = false
     sessionNotification = "Recording " + formatDuration(targetRecordSeconds) + "..."
@@ -1901,47 +2007,94 @@ Column {
     saveSessionData(buf, buf.length)
   }
 
+  function fetchProcessWindow(idx) {
+    if (!loadedSessionPath || loadedSessionPath.length === 0) return
+    if (isFetchingWindow) {
+      pendingFetchIndex = idx
+      return
+    }
+    isFetchingWindow = true
+    inspectProc.outputBuffer = ""
+    inspectProc.requestedIndex = idx
+    inspectProc.command = [
+      historyPage.perfoBinPath,
+      "record",
+      "inspect",
+      historyPage.loadedSessionPath,
+      String(idx),
+      "25"
+    ]
+    inspectProc.running = true
+  }
+
+  function applyLoadedTimeline(data, recPath, recId, autoPlay, scrubToEnd) {
+    if (!data || !data.samples || data.samples.length === 0) {
+      sessionNotification = "Recording has no samples"
+      sessionNotificationTimer.restart()
+      return false
+    }
+    isSessionRecording = false
+    sessionRecordBuffer = []
+    loadedHistory = data.samples
+    loadedSessionId = data.id || recId
+    loadedSessionPath = recPath
+    loadedSessionTitle = (data.date || "") + " " + (data.time || "")
+    loadedSessionDuration = data.duration_label || ""
+    windowProcessCache = ({})
+    cachedWindowStart = -1
+    cachedWindowEnd = -1
+    customSpanSeconds = data.samples.length
+    customMinutes = Math.max(1, Math.ceil(data.samples.length / 60))
+    zoomLabel = "CUSTOM"
+    scrubIndex = scrubToEnd ? (data.samples.length - 1) : 0
+    isPlaying = autoPlay
+    if (scrubToEnd) {
+      sessionNotification = "Saved " + (data.duration_label || "") + " session to disk!"
+    } else {
+      sessionNotification = "Loaded " + (data.duration_label || "") + " session"
+    }
+    sessionNotificationTimer.restart()
+    rebuildVisibleBars()
+    updateTopProcesses(true)
+    fetchProcessWindow(scrubIndex >= 0 ? scrubIndex : (data.samples.length - 1))
+    return true
+  }
+
   function loadSession(recPath, recId, autoPlay, scrubToEnd) {
+    var timelinePath = ""
+    if (recPath.endsWith(".json")) {
+      timelinePath = recPath.substring(0, recPath.lastIndexOf(".")) + ".timeline.json"
+    } else {
+      timelinePath = recPath + ".timeline.json"
+    }
+
     recordingFileReader.path = ""
-    recordingFileReader.path = recPath
+    recordingFileReader.path = timelinePath
     var str = recordingFileReader.text()
     if (str && str.length > 0) {
       try {
         var data = JSON.parse(str)
         if (data && data.samples && data.samples.length > 0) {
-          var samples = data.samples
-          for (var s = 0; s < samples.length; s++) {
-            var smp = samples[s]
-            if (smp && smp.processes && smp.processes.length > 6) {
-              smp.processes = smp.processes.slice(0, 6)
-            }
-          }
-          isSessionRecording = false
-          sessionRecordBuffer = []
-          loadedHistory = samples
-          loadedSessionId = data.id || recId
-          loadedSessionTitle = (data.date || "") + " " + (data.time || "")
-          loadedSessionDuration = data.duration_label || ""
-          customSpanSeconds = samples.length
-          customMinutes = Math.max(1, Math.ceil(samples.length / 60))
-          zoomLabel = "CUSTOM"
-          scrubIndex = scrubToEnd ? (samples.length - 1) : 0
-          isPlaying = autoPlay
-          if (scrubToEnd) {
-            sessionNotification = "Saved " + (data.duration_label || "") + " session to disk!"
-          } else {
-            sessionNotification = "Loaded " + (data.duration_label || "") + " session"
-          }
-          sessionNotificationTimer.restart()
-          rebuildVisibleBars()
-          updateTopProcesses(true)
-          return true
+          return applyLoadedTimeline(data, recPath, recId, autoPlay, scrubToEnd)
         }
       } catch(e) {
-        console.warn("Error parsing session file:", e)
+        console.warn("Timeline cache parse failed, generating:", e)
       }
     }
-    return false
+
+    loadTimelineProc.pendingRecPath = recPath
+    loadTimelineProc.pendingRecId = recId
+    loadTimelineProc.pendingAutoPlay = autoPlay || false
+    loadTimelineProc.pendingScrubToEnd = scrubToEnd || false
+    loadTimelineProc.outputBuffer = ""
+    loadTimelineProc.command = [
+      historyPage.perfoBinPath,
+      "record",
+      "timeline",
+      recPath
+    ]
+    loadTimelineProc.running = true
+    return true
   }
 
   function deleteSession(recId) {
@@ -2009,6 +2162,21 @@ Column {
   }
 
   function updateTopProcesses(immediate) {
+    if (loadedSessionId.length > 0 && loadedSessionPath.length > 0) {
+      var eff = effectiveIndex
+      if (windowProcessCache && windowProcessCache[eff]) {
+        currentTopProcs = sortedProcesses()
+        if (isPlaying && (eff > cachedWindowEnd - 5 || eff < cachedWindowStart + 5)) {
+          var targetPrefetch = isPlaying ? (eff + 20) : eff
+          fetchProcessWindow(targetPrefetch)
+        }
+        return
+      }
+      currentTopProcs = sortedProcesses()
+      inspectDebounceTimer.restart()
+      return
+    }
+
     var now = Date.now()
     if (immediate || (now - lastTopProcsUpdateTime > 100)) {
       lastTopProcsUpdateTime = now
@@ -2020,8 +2188,31 @@ Column {
   }
 
   function sortedProcesses() {
-    if (!selectedSample || !selectedSample.processes) return []
-    var list = selectedSample.processes.slice()
+    if (!selectedSample) return []
+    var list = null
+    if (selectedSample.processes && selectedSample.processes.length > 0) {
+      list = selectedSample.processes.slice()
+    } else if (loadedSessionId.length > 0 && windowProcessCache && windowProcessCache[effectiveIndex]) {
+      list = windowProcessCache[effectiveIndex].slice()
+    }
+
+    if (!list || list.length === 0) {
+      if (selectedSample.top_process && selectedSample.top_process.length > 0) {
+        return [{
+          pid: "--",
+          name: selectedSample.top_process,
+          cmd: selectedSample.top_process,
+          cpu_percent: selectedSample.cpu || 0,
+          mem_bytes: 0,
+          read_bps: selectedSample.read_bps || 0,
+          write_bps: selectedSample.write_bps || 0,
+          net_rx_bps: selectedSample.net_rx_bps || 0,
+          net_tx_bps: selectedSample.net_tx_bps || 0,
+          gpu_percent: selectedSample.gpu || 0
+        }]
+      }
+      return []
+    }
     if (metric === "NET") {
       var netList = list.filter(function(p) {
         return (Number(p.net_rx_bps) || 0) > 0 || (Number(p.net_tx_bps) || 0) > 0 ||
