@@ -2113,7 +2113,7 @@ Column {
     exportProc.command = [
       "sh",
       "-c",
-      "printf '%s' \"$1\" > \"$HOME/$2.txt\" && printf '%s' \"$3\" > \"$HOME/$2.json\"",
+      "printf '%s' \"$1\" > \"$HOME/$2.txt\" && printf '%s' \"$3\" > \"$HOME/$2.json\" && notify-send -a 'Perfo' 'History Exported' \"Saved: ~/$2.{txt,json}\" 2>/dev/null || true",
       "_",
       report,
       baseName,
@@ -2163,9 +2163,9 @@ Column {
       timeline: []
     }
 
-    var step = Math.max(1, Math.floor(historyPage.history.length / 1000))
-    for (var i = 0; i < historyPage.history.length; i += step) {
-      var s = historyPage.history[i]
+    var step = Math.max(1, Math.floor(historyPage.activeHistory.length / 1000))
+    for (var i = 0; i < historyPage.activeHistory.length; i += step) {
+      var s = historyPage.activeHistory[i]
       out.timeline.push({
         index: i,
         timestamp: s.timestamp,
