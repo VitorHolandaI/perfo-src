@@ -229,7 +229,7 @@ pub fn get_recordings_list() -> Vec<RecordingMetadata> {
                     let metric_focus = val
                         .get("metric_focus")
                         .and_then(|v| v.as_str())
-                        .unwrap_or("CPU")
+                        .unwrap_or("ALL")
                         .to_string();
 
                     out.push(RecordingMetadata {
@@ -316,8 +316,20 @@ pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
         }
         None => {
             let mut buf = String::new();
-            io::stdin().read_to_string(&mut buf)?;
-            buf
+            let n = io::stdin().read_line(&mut buf)?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "Empty input on stdin",
+                ));
+            }
+            let trimmed = buf.trim();
+            if trimmed.starts_with('{') && trimmed.ends_with('}') {
+                buf
+            } else {
+                let _ = io::stdin().read_to_string(&mut buf);
+                buf
+            }
         }
     };
 
@@ -336,7 +348,7 @@ pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     let metric_focus = payload
         .get("metric_focus")
         .and_then(|v| v.as_str())
-        .unwrap_or("CPU");
+        .unwrap_or("ALL");
 
     let meta = save_session_data(samples, dur_secs, metric_focus)?;
 

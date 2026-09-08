@@ -130,6 +130,14 @@ Column {
     property string lastSavedPath: ""
     property string lastSavedId: ""
     property string lastSavedDuration: ""
+    property string payloadToSend: ""
+    stdinEnabled: true
+    onStarted: {
+      if (payloadToSend.length > 0) {
+        saveRecordingProc.write(payloadToSend + "\n")
+        payloadToSend = ""
+      }
+    }
     stdout: SplitParser {
       onRead: function(line) {
         try {
@@ -145,13 +153,13 @@ Column {
     onExited: function(exitCode, exitStatus) {
       if (exitCode === 0) {
         var dur = saveRecordingProc.lastSavedDuration.length > 0 ? saveRecordingProc.lastSavedDuration : "session"
-        historyPage.sessionNotification = "Saved " + dur + "!"
+        historyPage.sessionNotification = "Saved " + dur + " to disk!"
         historyPage.refreshRecordings()
         if (saveRecordingProc.lastSavedPath.length > 0) {
-          historyPage.loadSession(saveRecordingProc.lastSavedPath, saveRecordingProc.lastSavedId, false)
+          historyPage.loadSession(saveRecordingProc.lastSavedPath, saveRecordingProc.lastSavedId, false, true)
         }
       } else {
-        historyPage.sessionNotification = "Save failed"
+        historyPage.sessionNotification = "Save failed (code " + exitCode + ")"
       }
       sessionNotificationTimer.restart()
     }
@@ -1738,8 +1746,8 @@ Column {
   function stopAndSaveSession() {
     if (!isSessionRecording) return
     isSessionRecording = false
-    if (sessionRecordBuffer.length >= 2) {
-      saveSessionData(sessionRecordBuffer, targetRecordSeconds)
+    if (sessionRecordBuffer.length >= 1) {
+      saveSessionData(sessionRecordBuffer, sessionRecordBuffer.length)
     } else {
       sessionRecordBuffer = []
       sessionNotification = "Recording cancelled"
@@ -1753,20 +1761,21 @@ Column {
 
   function saveSessionData(buf, targetSecs) {
     if (!buf || buf.length === 0) return
+    var actualDur = buf.length
     var payload = {
       samples: buf,
-      duration_seconds: buf.length,
-      metric_focus: historyPage.metric
+      duration_seconds: actualDur,
+      metric_focus: "ALL"
     }
     var jsonStr = JSON.stringify(payload)
     if (saveRecordingProc.running) {
       saveRecordingProc.running = false
     }
+    saveRecordingProc.payloadToSend = jsonStr
     saveRecordingProc.command = [
       historyPage.perfoBinPath,
       "record",
-      "save",
-      jsonStr
+      "save"
     ]
     saveRecordingProc.running = true
   }
@@ -1781,7 +1790,7 @@ Column {
     saveSessionData(buf, buf.length)
   }
 
-  function loadSession(recPath, recId, autoPlay) {
+  function loadSession(recPath, recId, autoPlay, scrubToEnd) {
     recordingFileReader.path = recPath
     var str = recordingFileReader.text()
     if (str && str.length > 0) {
@@ -1794,9 +1803,13 @@ Column {
           loadedSessionId = data.id || recId
           loadedSessionTitle = (data.date || "") + " " + (data.time || "")
           loadedSessionDuration = data.duration_label || ""
-          scrubIndex = 0
+          scrubIndex = scrubToEnd ? (data.samples.length - 1) : 0
           isPlaying = autoPlay
-          sessionNotification = "Loaded " + (data.duration_label || "") + " session"
+          if (scrubToEnd) {
+            sessionNotification = "Saved " + (data.duration_label || "") + " session to disk!"
+          } else {
+            sessionNotification = "Loaded " + (data.duration_label || "") + " session"
+          }
           sessionNotificationTimer.restart()
           return true
         }

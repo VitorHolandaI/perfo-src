@@ -455,10 +455,16 @@ impl HistoryState {
         let dur = self.session_record_buffer.len() as u64;
         let val = serde_json::to_value(&self.session_record_buffer)
             .unwrap_or(serde_json::Value::Array(Vec::new()));
-        match crate::recordings::save_session_data(val, dur, self.metric.label()) {
+        match crate::recordings::save_session_data(val, dur, "ALL") {
             Ok(meta) => {
+                let rec_id = meta.id.clone();
+                let dur_str = meta.duration.clone();
+                let _ = self.load_session(&rec_id);
+                if !self.loaded_samples.is_empty() {
+                    self.scrub_index = Some(self.loaded_samples.len() - 1);
+                }
                 self.export_status = Some((
-                    format!("Saved session: {} ({})", meta.id, meta.duration),
+                    format!("Saved session: {} ({})", rec_id, dur_str),
                     Instant::now(),
                 ));
             }

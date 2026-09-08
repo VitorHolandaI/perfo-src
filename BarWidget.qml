@@ -100,6 +100,7 @@ BarWidget {
     function setZoom(z: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.zoomLabel = z }
     function openCustomInput() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.customInputOpen = true }
     function applyCustomMinutes(m: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.applyCustomMinutes(String(m)) }
+    function jumpToLive() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpToLive() }
   }
 
   Loader {
