@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Ui
 
 BarWidget {
-  id: root
+  id: barWidgetRoot
   moduleName: "vitor.perfo"
   property var manifest: null
   property var snapshot: null
@@ -23,6 +23,8 @@ BarWidget {
     return Quickshell.env("HOME") + "/.local/bin/perfo"
   }
 
+  readonly property bool isRecording: panelLoader.item ? panelLoader.item.isSessionRecording : false
+
   readonly property string cpuLabel: snapshot ? "C " + Math.round(snapshot.overall_percent) + "%" : "C --"
   readonly property string memLabel: snapshot && snapshot.total_mem_bytes > 0
     ? "M " + Math.round(snapshot.used_mem_bytes * 100 / snapshot.total_mem_bytes) + "%"
@@ -35,19 +37,20 @@ BarWidget {
     if (gpuLabel) parts.push(gpuLabel)
     return parts.join("  ")
   }
+  readonly property string fullText: (isRecording ? "● REC  " : "") + label
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
-  implicitWidth: root.vertical ? root.barSize : button.implicitWidth
-  implicitHeight: root.barSize
+  implicitWidth: barWidgetRoot.vertical ? barWidgetRoot.barSize : button.implicitWidth
+  implicitHeight: barWidgetRoot.barSize
 
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
-    if ("bar" in target) target.bar = root.bar
-    if ("settings" in target) target.settings = root.settings
+    if ("bar" in target) target.bar = barWidgetRoot.bar
+    if ("settings" in target) target.settings = barWidgetRoot.settings
     if ("anchorItem" in target) target.anchorItem = button
-    if ("hostWidget" in target) target.hostWidget = root
+    if ("hostWidget" in target) target.hostWidget = barWidgetRoot
   }
 
   function open() {
@@ -63,20 +66,20 @@ BarWidget {
   }
 
   function toggle() {
-    if (root.opened) root.close()
-    else root.open()
+    if (barWidgetRoot.opened) barWidgetRoot.close()
+    else barWidgetRoot.open()
   }
 
   onBarChanged: injectPanel()
 
   Process {
     id: collector
-    command: [root.binaryPath, "stream", "--json"]
+    command: [barWidgetRoot.binaryPath, "stream", "--json"]
     running: true
     stdout: SplitParser {
       onRead: function(line) {
         try {
-          root.snapshot = JSON.parse(line)
+          barWidgetRoot.snapshot = JSON.parse(line)
         } catch (error) {
           console.warn("vitor.perfo: invalid JSON snapshot", error)
         }
@@ -86,11 +89,11 @@ BarWidget {
 
   IpcHandler {
     target: "vitor.perfo"
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.toggle() }
+    function open() { barWidgetRoot.open() }
+    function close() { barWidgetRoot.close() }
+    function show() { barWidgetRoot.open() }
+    function hide() { barWidgetRoot.close() }
+    function toggle() { barWidgetRoot.toggle() }
     function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
     function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
     function toggleRecording() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleSessionRecording() }
@@ -111,24 +114,70 @@ BarWidget {
     source: Qt.resolvedUrl("Panel.qml")
     visible: false
     onLoaded: {
-      root.injectPanel()
-      Qt.callLater(root.injectPanel)
+      barWidgetRoot.injectPanel()
+      Qt.callLater(barWidgetRoot.injectPanel)
     }
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
-    bar: root.bar
-    text: root.label
+    bar: barWidgetRoot.bar
+    text: barWidgetRoot.fullText
+    labelVisible: false
     horizontalMargin: 6
-    tooltipText: "Left: metrics | Middle: timeline & play | Right: full TUI"
+    tooltipText: barWidgetRoot.isRecording ? "Session recording active - Left: metrics | Middle: timeline | Right: full TUI" : "Left: metrics | Middle: timeline & play | Right: full TUI"
+
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(4)
+      enabled: false
+
+      // Pulsing red indicator when session is actively recording
+      Row {
+        visible: barWidgetRoot.isRecording
+        spacing: Style.space(3)
+        anchors.verticalCenter: parent.verticalCenter
+
+        Rectangle {
+          width: Style.space(6)
+          height: Style.space(6)
+          radius: Style.space(3)
+          color: Color.urgent
+          anchors.verticalCenter: parent.verticalCenter
+
+          SequentialAnimation on opacity {
+            running: barWidgetRoot.isRecording
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.25; duration: 600; easing.type: Easing.InOutQuad }
+            NumberAnimation { to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
+          }
+        }
+
+        PlainText {
+          text: "REC"
+          color: Color.urgent
+          font.family: button.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
+
+      PlainText {
+        text: barWidgetRoot.label
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
 
     onPressed: function(b) {
-      if (b === Qt.LeftButton) root.toggle()
+      if (b === Qt.LeftButton) barWidgetRoot.toggle()
       else if (b === Qt.MiddleButton && panelLoader.item) {
         panelLoader.item.page = 8
-        root.open()
+        barWidgetRoot.open()
       }
       else if (b === Qt.RightButton && panelLoader.item) panelLoader.item.openTerminal()
     }

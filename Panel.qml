@@ -19,6 +19,7 @@ Panel {
   property bool historyRecording: true
   property var currentLiveSample: null
   property alias historyPageComp: historyPageComp
+  readonly property bool isSessionRecording: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.isSessionRecording : false
 
   onSnapshotChanged: root.recordHistorySample()
 
