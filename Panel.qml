@@ -679,7 +679,7 @@ Panel {
     var procs = []
     if (root.snapshot.processes) {
       var raw = root.snapshot.processes
-      for (var i = 0; i < Math.min(raw.length, 30); i++) {
+      for (var i = 0; i < Math.min(raw.length, 8); i++) {
         var p = raw[i]
         var gpuMatch = null
         for (var gi = 0; gi < gpuProcs.length; gi++) {
@@ -695,10 +695,12 @@ Panel {
             break
           }
         }
+        var cmdStr = String(p.cmd || "")
+        if (cmdStr.length > 160) cmdStr = cmdStr.substring(0, 159) + "…"
         procs.push({
           pid: p.pid,
           name: p.name || "",
-          cmd: p.cmd || "",
+          cmd: cmdStr,
           cpu_percent: Number(p.cpu_percent) || 0,
           mem_bytes: Number(p.mem_bytes) || 0,
           user: p.user || "",

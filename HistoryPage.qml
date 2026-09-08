@@ -30,6 +30,7 @@ Column {
   property real currentMaxMetric: 100.0
   property int playbackSpeed: 1
   property var cachedBars: []
+  property var currentTopProcs: []
 
   property bool isSessionRecording: false
   property var sessionRecordBuffer: []
@@ -85,7 +86,11 @@ Column {
     }
   }
 
-  onMetricChanged: rebuildVisibleBars()
+  onMetricChanged: {
+    rebuildVisibleBars()
+    updateTopProcesses()
+  }
+  onSelectedSampleChanged: updateTopProcesses()
   onZoomLabelChanged: rebuildVisibleBars()
   onCustomSpanSecondsChanged: rebuildVisibleBars()
   onLoadedSessionIdChanged: rebuildVisibleBars()
@@ -211,6 +216,7 @@ Column {
 
   Component.onCompleted: {
     rebuildVisibleBars()
+    updateTopProcesses()
     historyPage.refreshRecordings()
   }
 
@@ -1324,7 +1330,7 @@ Column {
       // Dynamic cursor marker: ▲ pointing up to the tick track
       Item {
         id: rulerCursorMarker
-        visible: historyPage.history.length > 0
+        visible: historyPage.activeHistory.length > 0
         width: Style.space(14)
         height: parent.height
         x: Math.round(historyPage.rulerCursorRatio() * (parent.width - width))
@@ -1470,7 +1476,7 @@ Column {
 
   // Process rows at selected sample
   Repeater {
-    model: historyPage.sortedProcesses()
+    model: historyPage.currentTopProcs
 
     delegate: Row {
       width: historyPage.width
@@ -1526,7 +1532,7 @@ Column {
   }
 
   PlainText {
-    visible: historyPage.sortedProcesses().length === 0
+    visible: historyPage.currentTopProcs.length === 0
     text: {
       if (historyPage.metric === "GPU") return "no active GPU processes for this sample"
       if (historyPage.metric === "NET") return "no active network socket processes for this sample"
@@ -1781,7 +1787,7 @@ Column {
   }
 
   function cyclePlaybackSpeed() {
-    var speeds = [1, 2, 5, 10, 30, 60]
+    var speeds = [1, 2, 5, 10, 30, 60, 120, 300]
     var idx = speeds.indexOf(playbackSpeed)
     if (idx < 0 || idx === speeds.length - 1) {
       playbackSpeed = speeds[0]
@@ -1892,16 +1898,23 @@ Column {
       try {
         var data = JSON.parse(str)
         if (data && data.samples && data.samples.length > 0) {
+          var samples = data.samples
+          for (var s = 0; s < samples.length; s++) {
+            var smp = samples[s]
+            if (smp && smp.processes && smp.processes.length > 6) {
+              smp.processes = smp.processes.slice(0, 6)
+            }
+          }
           isSessionRecording = false
           sessionRecordBuffer = []
-          loadedHistory = data.samples
+          loadedHistory = samples
           loadedSessionId = data.id || recId
           loadedSessionTitle = (data.date || "") + " " + (data.time || "")
           loadedSessionDuration = data.duration_label || ""
-          customSpanSeconds = data.samples.length
-          customMinutes = Math.max(1, Math.ceil(data.samples.length / 60))
+          customSpanSeconds = samples.length
+          customMinutes = Math.max(1, Math.ceil(samples.length / 60))
           zoomLabel = "CUSTOM"
-          scrubIndex = scrubToEnd ? (data.samples.length - 1) : 0
+          scrubIndex = scrubToEnd ? (samples.length - 1) : 0
           isPlaying = autoPlay
           if (scrubToEnd) {
             sessionNotification = "Saved " + (data.duration_label || "") + " session to disk!"
@@ -1910,6 +1923,7 @@ Column {
           }
           sessionNotificationTimer.restart()
           rebuildVisibleBars()
+          updateTopProcesses()
           return true
         }
       } catch(e) {
@@ -1981,6 +1995,10 @@ Column {
     var netVal = (Number(selectedSample.net_rx_bps) || 0) + (Number(selectedSample.net_tx_bps) || 0)
     var gpuVal = Math.round(Number(selectedSample.gpu) || 0)
     return "CPU " + cpuVal + "% │ MEM " + memVal + "% │ IO " + formatRate(ioVal) + " │ NET " + formatRate(netVal) + " │ GPU " + gpuVal + "%"
+  }
+
+  function updateTopProcesses() {
+    currentTopProcs = sortedProcesses()
   }
 
   function sortedProcesses() {
