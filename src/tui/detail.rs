@@ -127,7 +127,7 @@ fn draw_mem_processes(frame: &mut Frame, area: Rect, ui: &Ui) {
             cpu::truncate(&p.user, 12),
             cpu::human_bytes(p.mem_bytes),
             pct,
-            cpu::truncate(&p.cmd, inner.width.saturating_sub(43) as usize)
+            cpu::truncate_with_scroll(&p.cmd, ui.cmd_scroll, inner.width.saturating_sub(43) as usize)
         )));
     }
     frame.render_widget(Paragraph::new(lines), inner);
@@ -268,7 +268,7 @@ fn gpu_process_rows(ui: &Ui, width: usize) -> Vec<(f32, String)> {
                             .map(cpu::short_bytes)
                             .unwrap_or_else(|| "--".into()),
                         cpu::truncate(&device.name, 12),
-                        cpu::truncate(&process.cmd, command_width),
+                        cpu::truncate_with_scroll(&process.cmd, ui.cmd_scroll, command_width),
                     ),
                 ))
             })

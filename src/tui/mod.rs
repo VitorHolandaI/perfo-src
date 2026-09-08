@@ -78,6 +78,7 @@ struct State {
     tracing: bool,
     trace_start_pid: Option<u32>,
     pub history: history::HistoryState,
+    cmd_scroll: usize,
 }
 
 impl Default for State {
@@ -108,6 +109,7 @@ impl Default for State {
             tracing: false,
             trace_start_pid: None,
             history: history::HistoryState::default(),
+            cmd_scroll: 0,
         }
     }
 }
@@ -212,6 +214,7 @@ fn run_loop(
                 status: &status,
                 searching: state.searching,
                 kill_prompt: state.kill_prompt,
+                cmd_scroll: state.cmd_scroll,
             };
             terminal.draw(|frame| cpu::draw(frame, &ui))?;
         }
@@ -657,6 +660,7 @@ fn handle_normal_key(
                 move_core(state, code);
                 false
             } else {
+                state.cmd_scroll = state.cmd_scroll.saturating_sub(10);
                 false
             }
         }
@@ -668,6 +672,7 @@ fn handle_normal_key(
                 move_core(state, code);
                 false
             } else {
+                state.cmd_scroll = state.cmd_scroll.saturating_add(10);
                 false
             }
         }
@@ -1172,6 +1177,25 @@ mod tests {
         assert_eq!(s.pane, Pane::Cpu);
         handle_key(&mut s, &[], KeyCode::Tab, KeyModifiers::empty(), None);
         assert!(s.cores_focused);
+    }
+
+    #[test]
+    fn horizontal_scroll_with_procs_focused() {
+        let mut s = State {
+            cores_focused: false,
+            ..State::default()
+        };
+        assert_eq!(s.cmd_scroll, 0);
+        handle_key(&mut s, &[], KeyCode::Right, KeyModifiers::empty(), None);
+        assert_eq!(s.cmd_scroll, 10);
+        handle_key(&mut s, &[], KeyCode::Right, KeyModifiers::empty(), None);
+        assert_eq!(s.cmd_scroll, 20);
+        handle_key(&mut s, &[], KeyCode::Left, KeyModifiers::empty(), None);
+        assert_eq!(s.cmd_scroll, 10);
+        handle_key(&mut s, &[], KeyCode::Left, KeyModifiers::empty(), None);
+        assert_eq!(s.cmd_scroll, 0);
+        handle_key(&mut s, &[], KeyCode::Left, KeyModifiers::empty(), None);
+        assert_eq!(s.cmd_scroll, 0);
     }
 
     #[test]

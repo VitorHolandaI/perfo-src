@@ -96,15 +96,21 @@ fn get_regs(pid: i32) -> io::Result<user_regs_struct> {
     Ok(regs)
 }
 
+#[cfg(target_env = "musl")]
+type PtraceRequest = libc::c_int;
+
+#[cfg(not(target_env = "musl"))]
+type PtraceRequest = libc::c_uint;
+
 fn ptrace_checked(
-    request: libc::c_uint,
+    request: PtraceRequest,
     pid: libc::pid_t,
     addr: *mut libc::c_void,
     data: *mut libc::c_void,
 ) -> io::Result<()> {
     // SAFETY: ptrace owns the request-specific interpretation of these
     // pointers; callers pass valid buffers or null for requests without one.
-    let result = unsafe { libc::ptrace(request, pid, addr, data) };
+    let result = unsafe { libc::ptrace(request as _, pid, addr, data) };
     if result == -1 {
         Err(io::Error::last_os_error())
     } else {
@@ -226,7 +232,7 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
             .take()
             .map(|signal| signal as *mut libc::c_void)
             .unwrap_or(std::ptr::null_mut());
-        ptrace_checked(libc::PTRACE_SYSCALL, pid, std::ptr::null_mut(), signal)?;
+        ptrace_checked(libc::PTRACE_SYSCALL as _, pid, std::ptr::null_mut(), signal)?;
         if wait_tracee(pid, &mut status)? {
             break;
         }
@@ -284,7 +290,7 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
         emit(format!("{name} = <interrupted>"));
     }
     if let Err(error) = ptrace_checked(
-        libc::PTRACE_DETACH,
+        libc::PTRACE_DETACH as _,
         pid,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -301,7 +307,7 @@ fn attach_preamble(pid: i32) -> io::Result<()> {
         // SAFETY: PTRACE_SEIZE (no stop, non-blocking attach) on a live pid;
         // EPERM when the yama policy forbids tracing non-children.
         let r = libc::ptrace(
-            libc::PTRACE_SEIZE,
+            libc::PTRACE_SEIZE as _,
             pid,
             0,
             libc::PTRACE_O_TRACESYSGOOD as *mut libc::c_void,
@@ -311,7 +317,7 @@ fn attach_preamble(pid: i32) -> io::Result<()> {
         }
         // Get an initial stop so we can start issuing PTRACE_SYSCALL.
         ptrace_checked(
-            libc::PTRACE_INTERRUPT,
+            libc::PTRACE_INTERRUPT as _,
             pid,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -386,7 +392,7 @@ pub fn spawn(cmd: &[String], filter: Option<&str>) -> io::Result<()> {
     // TRACEME doesn't take options; enable TRACESYSGOOD now so syscall stops
     // arrive as SIGTRAP|0x80 instead of plain SIGTRAP.
     ptrace_checked(
-        libc::PTRACE_SETOPTIONS,
+        libc::PTRACE_SETOPTIONS as _,
         pid,
         std::ptr::null_mut(),
         libc::PTRACE_O_TRACESYSGOOD as *mut libc::c_void,

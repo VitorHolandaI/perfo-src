@@ -70,6 +70,7 @@ pub struct Ui<'a> {
     pub status: &'a str,
     pub searching: bool,
     pub kill_prompt: bool,
+    pub cmd_scroll: usize,
 }
 
 fn cpu_color(v: f32, theme: &Theme) -> Color {
@@ -156,6 +157,25 @@ pub(super) fn truncate(s: &str, max: usize) -> String {
         s.to_string()
     } else {
         let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
+        t.push('…');
+        t
+    }
+}
+
+/// Shorten to AT MOST `max` chars (ellipsis included), starting at character `offset`.
+pub(super) fn truncate_with_scroll(s: &str, offset: usize, max: usize) -> String {
+    if max == 0 {
+        return String::new();
+    }
+    let total_chars = s.chars().count();
+    if offset >= total_chars {
+        return String::new();
+    }
+    let skipped: String = s.chars().skip(offset).collect();
+    if skipped.chars().count() <= max {
+        skipped
+    } else {
+        let mut t: String = skipped.chars().take(max.saturating_sub(1)).collect();
         t.push('…');
         t
     }
@@ -344,7 +364,7 @@ fn draw_process_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
                 "{:>6} {:>4.1}% {}",
                 row.process.pid,
                 row.process.cpu_percent,
-                truncate(&row.process.cmd, area.width.saturating_sub(15) as usize)
+                truncate_with_scroll(&row.process.cmd, ui.cmd_scroll, area.width.saturating_sub(15) as usize)
             ))
         })
         .collect();
@@ -1149,12 +1169,17 @@ fn draw_processes(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
     } else {
         "MEM".to_string()
     };
+    let cmd_hdr = if ui.cmd_scroll > 0 {
+        format!("COMMAND [»{}]", ui.cmd_scroll)
+    } else {
+        "COMMAND".to_string()
+    };
     let header = TableRow::new(vec![
         Cell::from("PID"),
         Cell::from("USER"),
         Cell::from(cpu_hdr),
         Cell::from(mem_hdr),
-        Cell::from("COMMAND"),
+        Cell::from(cmd_hdr),
     ])
     .style(
         Style::default()
@@ -1172,9 +1197,9 @@ fn draw_processes(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
                 String::new()
             };
             let cmd = if ui.full_cmd {
-                truncate(&r.process.cmd, 200)
+                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, 500)
             } else {
-                truncate(&r.process.cmd, 40)
+                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, 120)
             };
             TableRow::new(vec![
                 Cell::from(r.process.pid.to_string()),
@@ -1331,6 +1356,17 @@ mod tests {
         assert_eq!(truncate("hello world", 5), "hell…");
         assert_eq!(truncate("日本語テキスト", 3), "日本…");
         assert_eq!(truncate("exactly-nine", 9), "exactly-…");
+    }
+
+    #[test]
+    fn truncate_with_scroll_offsets_and_ellipsizes() {
+        let cmd = "firefox --private-window https://example.com";
+        assert_eq!(truncate_with_scroll(cmd, 0, 10), "firefox -…");
+        assert_eq!(truncate_with_scroll(cmd, 8, 16), "--private-windo…");
+        assert_eq!(truncate_with_scroll(cmd, 25, 30), "https://example.com");
+        assert_eq!(truncate_with_scroll(cmd, 100, 10), "");
+        assert_eq!(truncate_with_scroll("abc", 0, 0), "");
+        assert_eq!(truncate_with_scroll("日本語テキスト", 2, 3), "語テ…");
     }
 
     #[test]
