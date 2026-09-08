@@ -102,6 +102,7 @@ BarWidget {
     function applyCustomMinutes(m: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.applyCustomMinutes(String(m)) }
     function jumpToLive() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpToLive() }
     function exportReport() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.exportReport() }
+    function loadSession(p: string, id: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.loadSession(p, id, false, false) }
   }
 
   Loader {

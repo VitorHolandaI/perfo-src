@@ -201,6 +201,14 @@ Column {
   Process {
     id: exportProc
     property string targetFilename: ""
+    property string payloadToSend: ""
+    stdinEnabled: true
+    onStarted: {
+      if (payloadToSend.length > 0) {
+        exportProc.write(payloadToSend + "\n")
+        payloadToSend = ""
+      }
+    }
     onExited: function(exitCode, exitStatus) {
       if (exitCode === 0) {
         historyPage.exportStatus = "Saved: ~/" + targetFilename
@@ -689,6 +697,7 @@ Column {
 
         MouseArea {
           anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
           enabled: !exportProc.running
           onClicked: historyPage.exportReport()
         }
@@ -2096,6 +2105,9 @@ Column {
       exportStatusTimer.restart()
       return
     }
+    if (exportProc.running) {
+      exportProc.running = false
+    }
     var now = new Date()
     var datePart = now.getFullYear() +
       ("0" + (now.getMonth() + 1)).slice(-2) +
@@ -2104,20 +2116,27 @@ Column {
       ("0" + now.getMinutes()).slice(-2) +
       ("0" + now.getSeconds()).slice(-2)
     var baseName = "perfo-history-" + datePart + "-" + timePart
-    var txtFullPath = "~/" + baseName + ".txt"
-    var jsonFullPath = "~/" + baseName + ".json"
+
     var report = generateExportText(now)
-    var reportJson = generateExportJson(now)
+    var reportJsonStr = generateExportJson(now)
+    var reportJsonObj = null
+    try {
+      reportJsonObj = JSON.parse(reportJsonStr)
+    } catch(e) {
+      reportJsonObj = {}
+    }
+
+    var payload = JSON.stringify({
+      text: report,
+      json: reportJsonObj
+    })
 
     exportProc.targetFilename = baseName + ".{txt,json}"
+    exportProc.payloadToSend = payload
     exportProc.command = [
-      "sh",
-      "-c",
-      "printf '%s' \"$1\" > \"$HOME/$2.txt\" && printf '%s' \"$3\" > \"$HOME/$2.json\" && notify-send -a 'Perfo' 'History Exported' \"Saved: ~/$2.{txt,json}\" 2>/dev/null || true",
-      "_",
-      report,
-      baseName,
-      reportJson
+      historyPage.perfoBinPath,
+      "export",
+      baseName
     ]
     exportProc.running = true
   }

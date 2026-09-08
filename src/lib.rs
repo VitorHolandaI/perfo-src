@@ -32,6 +32,9 @@ enum Command {
         filter: Option<String>,
         cmd: Option<Vec<String>>,
     },
+    Export {
+        basename: String,
+    },
 }
 
 fn parse(args: &[String]) -> Command {
@@ -46,6 +49,29 @@ fn parse(args: &[String]) -> Command {
             let subcmd = args.get(1).cloned().unwrap_or_else(|| "list".to_string());
             let arg = args.get(2).cloned();
             Command::Record { subcmd, arg }
+        }
+        Some("export") => {
+            let basename = args.get(1).cloned().unwrap_or_else(|| {
+                let now = std::time::SystemTime::now();
+                let dur = now
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let sec = dur.as_secs() as libc::time_t;
+                unsafe {
+                    let mut tm = std::mem::zeroed::<libc::tm>();
+                    libc::localtime_r(&sec, &mut tm);
+                    format!(
+                        "perfo-history-{:04}{:02}{:02}-{:02}{:02}{:02}",
+                        tm.tm_year + 1900,
+                        tm.tm_mon + 1,
+                        tm.tm_mday,
+                        tm.tm_hour,
+                        tm.tm_min,
+                        tm.tm_sec
+                    )
+                }
+            });
+            Command::Export { basename }
         }
         Some("bench") => {
             let secs = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
@@ -171,6 +197,23 @@ pub fn run() -> ExitCode {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("perfo record: {e}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Export { basename } => match recordings::export_from_stdin(&basename) {
+            Ok((txt, json)) => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "exported",
+                        "txt": txt,
+                        "json": json,
+                    })
+                );
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("perfo export: {e}");
                 ExitCode::FAILURE
             }
         },
