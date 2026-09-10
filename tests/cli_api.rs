@@ -2,6 +2,7 @@
 //! consumer or the Omarchy widget would use it).
 
 use perfo::data::cpu::CpuMonitor;
+use perfo::data::summary::WidgetSummaryMonitor;
 
 #[test]
 fn snapshot_has_core_sections() {
@@ -37,5 +38,30 @@ fn snapshot_serializes_to_json() {
     assert!(json["net"]["rx_history"].is_array());
     assert!(json["net"]["tx_history"].is_array());
     assert!(json["gpu"]["devices"].is_array());
+    assert!(json["npu"]["devices"].is_array());
     assert!(json["fans"]["fans"].is_array());
+}
+
+#[test]
+fn widget_summary_contains_only_bar_metrics() {
+    let mut monitor = WidgetSummaryMonitor::new();
+    perfo::data::cpu::wait_sample_interval();
+    monitor.refresh();
+
+    let json = serde_json::to_value(monitor.snapshot()).expect("summary must serialize");
+    let keys = json.as_object().expect("summary must be an object").keys();
+    assert_eq!(
+        keys.cloned().collect::<std::collections::BTreeSet<_>>(),
+        [
+            "gpu".to_string(),
+            "npu".to_string(),
+            "overall_percent".to_string(),
+            "total_mem_bytes".to_string(),
+            "used_mem_bytes".to_string(),
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert!(json["gpu"]["devices"].is_array());
+    assert!(json["npu"]["devices"].is_array());
 }

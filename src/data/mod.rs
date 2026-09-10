@@ -4,5 +4,7 @@ pub mod fan;
 pub mod gpu;
 pub mod mem;
 pub mod net;
+pub mod npu;
 mod nvidia;
 pub mod psi;
+pub mod summary;

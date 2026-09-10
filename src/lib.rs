@@ -19,7 +19,9 @@ enum Command {
     Tui,
     TuiHistory,
     CpuJson,
-    StreamJson,
+    StreamJson {
+        summary: bool,
+    },
     Record {
         subcmd: String,
         args: Vec<String>,
@@ -44,11 +46,16 @@ fn parse(args: &[String]) -> Command {
         Some("-h") | Some("--help") | Some("help") => Command::Help,
         Some("-V") | Some("--version") | Some("version") => Command::Version,
         Some("cpu") => Command::CpuJson,
-        Some("stream") => Command::StreamJson,
+        Some("stream") => Command::StreamJson {
+            summary: args.iter().skip(1).any(|arg| arg == "--summary"),
+        },
         Some("record") | Some("records") | Some("recordings") => {
             let subcmd = args.get(1).cloned().unwrap_or_else(|| "list".to_string());
             let subargs: Vec<String> = args.iter().skip(2).cloned().collect();
-            Command::Record { subcmd, args: subargs }
+            Command::Record {
+                subcmd,
+                args: subargs,
+            }
         }
         Some("export") => {
             let basename = args.get(1).cloned().unwrap_or_else(|| {
@@ -113,7 +120,9 @@ USAGE:
   perfo                 interactive TUI (CPU focus)
   perfo hist | history  interactive history mode (timeline replay & export)
   perfo cpu --json      one-shot JSON snapshot (for widgets/scripts)
-  perfo stream --json   continuous JSON snapshots (for widgets)
+  perfo stream --json   continuous full JSON snapshots
+  perfo stream --json --summary
+                        continuous CPU/memory/GPU/NPU bar snapshots
   perfo record list     list saved session recordings (JSON)
   perfo record save <f> save session recording JSON file
   perfo record get <id> output recorded session JSON
@@ -172,13 +181,11 @@ pub fn run() -> ExitCode {
                 }
             }
         }
-        Command::StreamJson => {
-            let mut monitor = data::cpu::CpuMonitor::new();
+        Command::StreamJson { summary } => {
+            let mut monitor = JsonStreamMonitor::new(summary);
             loop {
                 data::cpu::wait_sample_interval();
-                monitor.refresh();
-                let snap = monitor.snapshot();
-                match serde_json::to_string(&snap) {
+                match monitor.refresh_json() {
                     Ok(json) => {
                         println!("{json}");
                         if let Err(e) = std::io::Write::flush(&mut std::io::stdout()) {
@@ -248,5 +255,54 @@ pub fn run() -> ExitCode {
             eprintln!("perfo bench: {n} full refreshes in {secs}s ({ms:.1} ms each)");
             ExitCode::SUCCESS
         }
+    }
+}
+
+enum JsonStreamMonitor {
+    Full(Box<data::cpu::CpuMonitor>),
+    Summary(Box<data::summary::WidgetSummaryMonitor>),
+}
+
+impl JsonStreamMonitor {
+    fn new(summary: bool) -> Self {
+        if summary {
+            Self::Summary(Box::default())
+        } else {
+            Self::Full(Box::default())
+        }
+    }
+
+    fn refresh_json(&mut self) -> serde_json::Result<String> {
+        match self {
+            Self::Full(monitor) => {
+                monitor.refresh();
+                serde_json::to_string(&monitor.snapshot())
+            }
+            Self::Summary(monitor) => {
+                monitor.refresh();
+                serde_json::to_string(&monitor.snapshot())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    #[test]
+    fn stream_summary_flag_selects_lightweight_monitor() {
+        assert!(matches!(
+            parse(&args(&["stream", "--json", "--summary"])),
+            Command::StreamJson { summary: true }
+        ));
+        assert!(matches!(
+            parse(&args(&["stream", "--json"])),
+            Command::StreamJson { summary: false }
+        ));
     }
 }

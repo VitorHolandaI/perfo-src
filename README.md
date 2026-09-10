@@ -28,6 +28,7 @@ the JSON commands remain usable.
 - Process list with short process names, full command lines, tree view, and live sorting in the TUI.
 - Read-only fan RPM and temperature discovery through Linux hwmon.
 - Optional GPU data (Intel DRM fdinfo, NVIDIA NVML, AMD sysfs) when available.
+- Native Intel NPU utilization, frequency, and allocated memory from `intel_vpu` sysfs; no `intel-npu-smi` or root access required.
 - High-performance JSON stream (`perfo stream --json`) and snapshot (`perfo cpu --json`) for external scripts.
 - Built-in syscall tracing with `ptrace`; no `strace` dependency.
 
@@ -191,7 +192,7 @@ attached through the submission form.
 
 ### Quickshell Widget (Desktop Views)
 
-The Omarchy widget integrates into the desktop shell with 9 specialized views, real-time sparklines, and a compact status bar popout:
+The Omarchy widget integrates into the desktop shell with specialized views, real-time sparklines, and a compact status bar popout:
 
 | Page | View | Description |
 | :--- | :--- | :--- |
@@ -200,7 +201,7 @@ The Omarchy widget integrates into the desktop shell with 9 specialized views, r
 | **3** | **[Network](docs/images/widgetpage3.png)** | Interface throughput (RX/TX), active network interfaces, and socket activity |
 | **4** | **[Memory](docs/images/widgetpage4.png)** | Physical RAM usage, swap space, PSI memory pressure, and top memory consumers |
 | **5** | **[Filesystems](docs/images/widgetpage5.png)** | Mounted disk partitions, mount points, used/free space, and capacity warnings |
-| **6** | **[GPU](docs/images/widgetpage6.png)** | GPU engine utilization, VRAM usage, temperature, and per-process GPU compute |
+| **6** | **[GPU / NPU](docs/images/widgetpage6.png)** | GPU engine utilization, VRAM, temperature, per-process GPU compute, and Intel NPU utilization, frequency, and memory |
 | **7** | **[Syscall Tracer](docs/images/widgetpage7.png)** | Real-time ptrace syscall event logger for any running PID or spawned command |
 | **8** | **[Hardware Fans](docs/images/widgetpage8.png)** | Cooling fan RPMs and CPU/chassis temperature sensors discovered via hwmon |
 | **9** | **[Flight Recorder](docs/images/widgetpage9.png)** | Historical metric timeline, session recording, replay scrubber, and sessions modal |
@@ -220,7 +221,7 @@ The Omarchy widget integrates into the desktop shell with 9 specialized views, r
 #### Page 5: Storage Filesystems (`Disks`)
 ![Widget Filesystems](docs/images/widgetpage5.png)
 
-#### Page 6: GPU Acceleration (`GPU`)
+#### Page 6: GPU and NPU Acceleration (`GPU`)
 ![Widget GPU](docs/images/widgetpage6.png)
 
 #### Page 7: Syscall Tracer (`Trace`)
@@ -245,7 +246,7 @@ The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency
 | **3** | **[Network](docs/images/terminalpage3.png)** | Interface bandwidth, Netlink socket byte tracking, connections, and per-process RX/TX |
 | **4** | **[Memory](docs/images/terminalpage4.png)** | RAM breakdown (used, free, buffers, cached), swap, and memory consumers |
 | **5** | **[Storage Mounts](docs/images/terminalpage5.png)** | Partition sizes, available space, filesystem types, and mount points |
-| **6** | **[GPU Monitor](docs/images/terminalpage6.png)** | Engine load, memory allocation, temperature, power, and process GPU compute |
+| **6** | **[GPU / NPU Monitor](docs/images/terminalpage6.png)** | GPU load, memory, temperature, power, process compute, and Intel NPU utilization and frequency |
 | **7** | **[History Analysis](docs/images/terminalpage7.png)** | Timeline graphs, recording (`r`), sessions modal (`s`), stepping, and flight replay |
 
 #### Pane 1: CPU Dashboard (`1:CPU`)
@@ -263,7 +264,7 @@ The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency
 #### Pane 5: Filesystems & Mounts (`5:Disks`)
 ![Terminal Storage Mounts](docs/images/terminalpage5.png)
 
-#### Pane 6: GPU Engine & Compute (`6:GPU`)
+#### Pane 6: GPU and NPU Acceleration (`6:GPU / NPU`)
 ![Terminal GPU](docs/images/terminalpage6.png)
 
 #### Pane 7: History Analysis & Replay Scrubber (`7:Hist`)
@@ -277,11 +278,12 @@ Perfo reads standard Linux interfaces before using a syscall:
   memory, network and process data.
 - `/sys/class/hwmon` for fan RPM and sensor values.
 - `/sys/class/drm` and driver sysfs files for supported GPU values.
+- `/sys/class/accel/accel*/device` for Intel NPU busy time, frequency, and allocated memory.
 - DRM fdinfo engine times for Intel i915 utilization.
 - dynamically loaded NVML for NVIDIA utilization, VRAM, temperature, and power.
 
 The monitor is read-only. It does not write PWM or EC files, load kernel
-modules, install daemons or require `lm_sensors`.
+modules, install daemons, require `lm_sensors`, or execute `intel-npu-smi`.
 
 Unavailable hardware values remain unavailable. A real stopped fan may report
 `0 RPM`; that is different from a sensor that does not exist or cannot be read.

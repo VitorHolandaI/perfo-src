@@ -364,7 +364,11 @@ fn draw_process_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
                 "{:>6} {:>4.1}% {}",
                 row.process.pid,
                 row.process.cpu_percent,
-                truncate_with_scroll(&row.process.cmd, ui.cmd_scroll, area.width.saturating_sub(15) as usize)
+                truncate_with_scroll(
+                    &row.process.cmd,
+                    ui.cmd_scroll,
+                    area.width.saturating_sub(15) as usize
+                )
             ))
         })
         .collect();

@@ -118,7 +118,11 @@ pub fn prune_recordings(rec_dir: &Path, max_recs: usize) {
                 p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
-                        .map(|s| s.starts_with("rec-") && s.ends_with(".json") && !s.ends_with(".timeline.json"))
+                        .map(|s| {
+                            s.starts_with("rec-")
+                                && s.ends_with(".json")
+                                && !s.ends_with(".timeline.json")
+                        })
                         .unwrap_or(false)
             })
             .collect();
@@ -130,7 +134,11 @@ pub fn prune_recordings(rec_dir: &Path, max_recs: usize) {
             for f in &files[max_recs..] {
                 let _ = fs::remove_file(f);
                 let mut p = f.clone();
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("rec").to_string();
+                let stem = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("rec")
+                    .to_string();
                 p.set_file_name(format!("{}.timeline.json", stem));
                 let _ = fs::remove_file(&p);
                 p.set_file_name(format!("{}.offsets.bin", stem));
@@ -193,15 +201,46 @@ fn read_recording_metadata(path: &Path) -> Option<RecordingMetadata> {
         serde_json::from_str(&data_str).ok()
     })?;
 
-    let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    let id = val
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
     let path_str = path.to_string_lossy().to_string();
-    let date = val.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let time = val.get("time").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let dur_secs = val.get("duration_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
-    let duration = val.get("duration_label").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| format_duration(dur_secs));
-    let sample_count = val.get("sample_count").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(0);
-    let metric_focus = val.get("metric_focus").and_then(|v| v.as_str()).unwrap_or("ALL").to_string();
+    let date = val
+        .get("date")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let time = val
+        .get("time")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let dur_secs = val
+        .get("duration_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let duration = val
+        .get("duration_label")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| format_duration(dur_secs));
+    let sample_count = val
+        .get("sample_count")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(0);
+    let metric_focus = val
+        .get("metric_focus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ALL")
+        .to_string();
 
     Some(RecordingMetadata {
         id,
@@ -229,7 +268,11 @@ pub fn get_recordings_list() -> Vec<RecordingMetadata> {
                 p.is_file()
                     && p.file_name()
                         .and_then(|n| n.to_str())
-                        .map(|s| s.starts_with("rec-") && s.ends_with(".json") && !s.ends_with(".timeline.json"))
+                        .map(|s| {
+                            s.starts_with("rec-")
+                                && s.ends_with(".json")
+                                && !s.ends_with(".timeline.json")
+                        })
                         .unwrap_or(false)
             })
             .collect();
@@ -440,7 +483,11 @@ pub fn delete_recording_by_id(target: &str) -> io::Result<bool> {
     if path.exists() {
         let _ = fs::remove_file(&path);
         let mut p = path.clone();
-        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("rec").to_string();
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("rec")
+            .to_string();
         p.set_file_name(format!("{}.timeline.json", stem));
         let _ = fs::remove_file(&p);
         p.set_file_name(format!("{}.offsets.bin", stem));
@@ -505,7 +552,8 @@ pub fn get_timeline(target: &str) -> io::Result<()> {
 
     if cache_path.exists() {
         if let (Ok(orig_meta), Ok(cache_meta)) = (path.metadata(), cache_path.metadata()) {
-            if let (Ok(orig_mtime), Ok(cache_mtime)) = (orig_meta.modified(), cache_meta.modified()) {
+            if let (Ok(orig_mtime), Ok(cache_mtime)) = (orig_meta.modified(), cache_meta.modified())
+            {
                 if cache_mtime >= orig_mtime {
                     if let Ok(cached) = fs::read_to_string(&cache_path) {
                         println!("{}", cached);
@@ -520,13 +568,40 @@ pub fn get_timeline(target: &str) -> io::Result<()> {
     let val: Value = serde_json::from_str(&content)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    let id = val.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let filename = val.get("filename").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let date = val.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let time = val.get("time").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let dur_secs = val.get("duration_seconds").and_then(|v| v.as_u64()).unwrap_or(0);
-    let dur_label = val.get("duration_label").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| format_duration(dur_secs));
-    let metric_focus = val.get("metric_focus").and_then(|v| v.as_str()).unwrap_or("ALL").to_string();
+    let id = val
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let filename = val
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let date = val
+        .get("date")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let time = val
+        .get("time")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let dur_secs = val
+        .get("duration_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let dur_label = val
+        .get("duration_label")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| format_duration(dur_secs));
+    let metric_focus = val
+        .get("metric_focus")
+        .and_then(|v| v.as_str())
+        .unwrap_or("ALL")
+        .to_string();
 
     let raw_samples = val.get("samples").and_then(|v| v.as_array());
     let mut timeline_samples = Vec::new();
@@ -536,7 +611,8 @@ pub fn get_timeline(target: &str) -> io::Result<()> {
             let mut top_p = String::new();
             if let Some(procs) = s.get("processes").and_then(|v| v.as_array()) {
                 if let Some(first) = procs.first() {
-                    top_p = first.get("name")
+                    top_p = first
+                        .get("name")
                         .or_else(|| first.get("cmd"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
@@ -652,7 +728,10 @@ pub fn scan_sample_offsets(bytes: &[u8]) -> Vec<(u64, u64)> {
 
 pub fn load_offsets(path: &Path) -> io::Result<Vec<(u64, u64)>> {
     let mut offsets_file = path.to_path_buf();
-    let stem = offsets_file.file_stem().and_then(|s| s.to_str()).unwrap_or("rec");
+    let stem = offsets_file
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("rec");
     offsets_file.set_file_name(format!("{}.offsets.bin", stem));
 
     if offsets_file.exists() {
@@ -662,7 +741,7 @@ pub fn load_offsets(path: &Path) -> io::Result<Vec<(u64, u64)>> {
                     let bytes = fs::read(&offsets_file)?;
                     let num_entries = bytes.len() / 16;
                     let mut out = Vec::with_capacity(num_entries);
-                    for chunk in bytes.chunks_exact(16) {
+                    for chunk in bytes.as_chunks::<16>().0 {
                         let start = u64::from_le_bytes(chunk[0..8].try_into().unwrap());
                         let end = u64::from_le_bytes(chunk[8..16].try_into().unwrap());
                         out.push((start, end));
@@ -697,7 +776,11 @@ pub fn inspect_recording(target: &str, index: usize, window: usize) -> io::Resul
 
     let win = window.max(1);
     let start = index.saturating_sub(win);
-    let end = if total > 0 { (index + win).min(total - 1) } else { 0 };
+    let end = if total > 0 {
+        (index + win).min(total - 1)
+    } else {
+        0
+    };
 
     let slices: Vec<Value> = if total > 0 && start <= end && end < total {
         let start_byte = offsets[start].0;
@@ -717,9 +800,12 @@ pub fn inspect_recording(target: &str, index: usize, window: usize) -> io::Resul
         match serde_json::from_slice::<Vec<Value>>(&json_buf) {
             Ok(parsed) => {
                 let mut out_slices = Vec::with_capacity(parsed.len());
-                for (i, s) in (start..=end).zip(parsed.into_iter()) {
+                for (i, s) in (start..=end).zip(parsed) {
                     let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-                    let procs = s.get("processes").cloned().unwrap_or_else(|| Value::Array(Vec::new()));
+                    let procs = s
+                        .get("processes")
+                        .cloned()
+                        .unwrap_or_else(|| Value::Array(Vec::new()));
                     out_slices.push(serde_json::json!({
                         "index": i,
                         "timestamp": ts,
@@ -728,9 +814,7 @@ pub fn inspect_recording(target: &str, index: usize, window: usize) -> io::Resul
                 }
                 out_slices
             }
-            Err(_) => {
-                legacy_inspect_slices(&path, start, end)?
-            }
+            Err(_) => legacy_inspect_slices(&path, start, end)?,
         }
     } else {
         legacy_inspect_slices(&path, start, end)?
@@ -753,15 +837,21 @@ fn legacy_inspect_slices(path: &Path, start: usize, end: usize) -> io::Result<Ve
     let content = fs::read_to_string(path)?;
     let val: Value = serde_json::from_str(&content)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    let samples = val.get("samples").and_then(|v| v.as_array()).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "Recording has no samples array")
-    })?;
+    let samples = val
+        .get("samples")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "Recording has no samples array")
+        })?;
 
     let mut slices = Vec::new();
     for i in start..=end {
         if let Some(s) = samples.get(i) {
             let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-            let procs = s.get("processes").cloned().unwrap_or_else(|| Value::Array(Vec::new()));
+            let procs = s
+                .get("processes")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
             slices.push(serde_json::json!({
                 "index": i,
                 "timestamp": ts,
@@ -788,8 +878,14 @@ pub fn dispatch(subcmd: &str, args: &[String]) -> io::Result<()> {
             let target = args.first().ok_or_else(|| {
                 io::Error::new(io::ErrorKind::InvalidInput, "Missing recording path or ID")
             })?;
-            let idx = args.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
-            let win = args.get(2).and_then(|s| s.parse::<usize>().ok()).unwrap_or(15);
+            let idx = args
+                .get(1)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(0);
+            let win = args
+                .get(2)
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(15);
             inspect_recording(target, idx, win)
         }
         other => Err(io::Error::new(
@@ -865,9 +961,18 @@ mod tests {
         let json = br#"{"id":"test","samples":[{"cpu":10},{"cpu":20,"cmd":"test}"},{"cpu":30}]}"#;
         let offsets = scan_sample_offsets(json);
         assert_eq!(offsets.len(), 3);
-        assert_eq!(&json[offsets[0].0 as usize..offsets[0].1 as usize], br#"{"cpu":10}"#);
-        assert_eq!(&json[offsets[1].0 as usize..offsets[1].1 as usize], br#"{"cpu":20,"cmd":"test}"}"#);
-        assert_eq!(&json[offsets[2].0 as usize..offsets[2].1 as usize], br#"{"cpu":30}"#);
+        assert_eq!(
+            &json[offsets[0].0 as usize..offsets[0].1 as usize],
+            br#"{"cpu":10}"#
+        );
+        assert_eq!(
+            &json[offsets[1].0 as usize..offsets[1].1 as usize],
+            br#"{"cpu":20,"cmd":"test}"}"#
+        );
+        assert_eq!(
+            &json[offsets[2].0 as usize..offsets[2].1 as usize],
+            br#"{"cpu":30}"#
+        );
     }
 
     #[test]
@@ -877,4 +982,3 @@ mod tests {
         assert!(offsets.is_empty());
     }
 }
-

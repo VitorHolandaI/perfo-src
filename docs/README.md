@@ -8,6 +8,7 @@ implementation decisions used by `perfo`.
 - [Research sources](research/omarchy-plugins.md)
 - [Hardware monitoring](hardware/hwmon.md)
 - [GPU monitoring](hardware/gpu.md)
+- [Intel NPU monitoring](hardware/npu.md)
 - [Process metrics](runtime/processes.md)
 - [UI pages and formulas](ui-pages.md)
 - [Implementation decisions](architecture.md)

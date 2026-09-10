@@ -3,6 +3,7 @@ mod detail;
 mod help;
 pub mod history;
 mod net_summary;
+mod npu;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
@@ -430,10 +431,7 @@ fn handle_help_key(state: &mut State, code: KeyCode) {
         | KeyCode::Char('j') => {
             state.help_page = (state.help_page + 1).min(HELP_LAST_PAGE);
         }
-        KeyCode::Left
-        | KeyCode::PageUp
-        | KeyCode::Char('p')
-        | KeyCode::Char('k') => {
+        KeyCode::Left | KeyCode::PageUp | KeyCode::Char('p') | KeyCode::Char('k') => {
             state.help_page = state.help_page.saturating_sub(1);
         }
         KeyCode::Char('?')
@@ -497,7 +495,7 @@ fn handle_kill_key(state: &mut State, code: KeyCode) {
 
 fn to_base64(data: &[u8]) -> String {
     const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
@@ -1045,9 +1043,7 @@ fn status_line_for_width(state: &State, width: usize) -> String {
         if med_hist.chars().count() <= width {
             return med_hist;
         }
-        return format!(
-            "[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit"
-        );
+        return format!("[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit");
     }
     let pane = match state.pane {
         Pane::Cpu => {
@@ -1101,12 +1097,21 @@ fn status_line_for_width(state: &State, width: usize) -> String {
                 }
                 tokens.push("/ search".into());
                 if width == 0 || width >= 160 {
-                    tokens.push(format!("t tree{}", if state.tree { " \u{2713}" } else { "" }));
+                    tokens.push(format!(
+                        "t tree{}",
+                        if state.tree { " \u{2713}" } else { "" }
+                    ));
                     tokens.push("s trace".into());
                 }
                 if width == 0 || width >= 190 {
-                    tokens.push(format!("H threads{}", if state.show_threads { " \u{2713}" } else { "" }));
-                    tokens.push(format!("K kernel{}", if state.show_kernel { " \u{2713}" } else { "" }));
+                    tokens.push(format!(
+                        "H threads{}",
+                        if state.show_threads { " \u{2713}" } else { "" }
+                    ));
+                    tokens.push(format!(
+                        "K kernel{}",
+                        if state.show_kernel { " \u{2713}" } else { "" }
+                    ));
                     tokens.push("i reverse".into());
                 }
             }
@@ -1427,8 +1432,10 @@ mod tests {
 
     #[test]
     fn history_status_line_contains_help() {
-        let mut s = State::default();
-        s.pane = Pane::History;
+        let s = State {
+            pane: Pane::History,
+            ..State::default()
+        };
         assert!(status_line_for_width(&s, 80).contains("help"));
         assert!(status_line_for_width(&s, 140).contains("help"));
     }
@@ -1515,6 +1522,9 @@ mod tests {
         };
         handle_key(&mut s, &[], KeyCode::Char('y'), KeyModifiers::empty(), None);
         assert!(s.status_msg.is_some());
-        assert!(s.status_msg.as_ref().unwrap().contains("copiado") || s.status_msg.as_ref().unwrap().contains("Copied"));
+        assert!(
+            s.status_msg.as_ref().unwrap().contains("copiado")
+                || s.status_msg.as_ref().unwrap().contains("Copied")
+        );
     }
 }

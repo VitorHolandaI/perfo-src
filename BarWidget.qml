@@ -8,7 +8,8 @@ BarWidget {
   id: barWidgetRoot
   moduleName: "vitor.perfo"
   property var manifest: null
-  property var snapshot: null
+  property var summarySnapshot: null
+  property var detailSnapshot: null
 
   // The shell injects `manifest` for bar, service and panel kinds only, never
   // for bar-widget, so the binary is resolved relative to this file instead.
@@ -24,6 +25,9 @@ BarWidget {
   }
 
   readonly property bool isRecording: panelLoader.item ? panelLoader.item.isSessionRecording : false
+  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  readonly property bool needsDetails: opened || isRecording
+  readonly property var snapshot: needsDetails && detailSnapshot ? detailSnapshot : summarySnapshot
 
   readonly property string cpuLabel: snapshot ? "C " + Math.round(snapshot.overall_percent) + "%" : "C --"
   readonly property string memLabel: snapshot && snapshot.total_mem_bytes > 0
@@ -32,14 +36,19 @@ BarWidget {
   readonly property string gpuLabel: snapshot && snapshot.gpu && snapshot.gpu.devices && snapshot.gpu.devices.length > 0 && snapshot.gpu.devices[0].usage_percent !== null
     ? "G " + Math.round(snapshot.gpu.devices[0].usage_percent) + "%"
     : ""
+  readonly property string npuLabel: npuUsageLabel()
   readonly property string label: {
     var parts = [cpuLabel, memLabel]
     if (gpuLabel) parts.push(gpuLabel)
+    if (npuLabel) parts.push(npuLabel)
     return parts.join("  ")
   }
   readonly property string fullText: (isRecording ? "● REC  " : "") + label
-  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
+
+  onNeedsDetailsChanged: {
+    if (!needsDetails) detailSnapshot = null
+  }
 
   implicitWidth: barWidgetRoot.vertical ? barWidgetRoot.barSize : button.implicitWidth
   implicitHeight: barWidgetRoot.barSize
@@ -70,18 +79,48 @@ BarWidget {
     else barWidgetRoot.open()
   }
 
+  function npuUsageLabel() {
+    var devices = snapshot && snapshot.npu ? snapshot.npu.devices : null
+    if (!devices || devices.length === 0) return ""
+    var highest = null
+    for (var index = 0; index < devices.length; index++) {
+      var value = devices[index].utilization_percent
+      if (value === null || value === undefined || value === "") continue
+      var number = Number(value)
+      if (isFinite(number) && (highest === null || number > highest)) highest = number
+    }
+    return highest === null ? "N --" : "N " + Math.round(highest) + "%"
+  }
+
   onBarChanged: injectPanel()
 
   Process {
-    id: collector
-    command: [barWidgetRoot.binaryPath, "stream", "--json"]
-    running: true
+    id: summaryCollector
+    command: [barWidgetRoot.binaryPath, "stream", "--json", "--summary"]
+    running: !barWidgetRoot.needsDetails
     stdout: SplitParser {
       onRead: function(line) {
+        if (barWidgetRoot.needsDetails) return
         try {
-          barWidgetRoot.snapshot = JSON.parse(line)
+          barWidgetRoot.summarySnapshot = JSON.parse(line)
         } catch (error) {
-          console.warn("vitor.perfo: invalid JSON snapshot", error)
+          console.warn("vitor.perfo: invalid summary JSON snapshot", error)
+        }
+      }
+    }
+  }
+
+  Process {
+    id: detailCollector
+    command: [barWidgetRoot.binaryPath, "stream", "--json"]
+    running: barWidgetRoot.needsDetails
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (!barWidgetRoot.needsDetails) return
+        try {
+          barWidgetRoot.detailSnapshot = JSON.parse(line)
+        } catch (error) {
+          console.warn("vitor.perfo: invalid detail JSON snapshot", error)
         }
       }
     }

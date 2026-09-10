@@ -11,7 +11,7 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  property var snapshot: hostWidget ? hostWidget.snapshot : null
+  property var snapshot: hostWidget ? hostWidget.detailSnapshot : null
   property int page: 0
   readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST", "HELP"]
   property var historyBuffer: []
@@ -153,6 +153,11 @@ Panel {
       ? root.snapshot.gpu.devices : []
   }
 
+  function npus() {
+    return root.snapshot && root.snapshot.npu && root.snapshot.npu.devices
+      ? root.snapshot.npu.devices : []
+  }
+
   function processName(command, pid) {
     var executable = String(command || "").trim().split(/\s+/)[0]
     if (!executable) return String(pid)
@@ -284,7 +289,9 @@ Panel {
 
       Item {
         width: parent.width
-        height: root.page === 8 ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(360)) : Style.space(260)
+        height: root.page === 8
+          ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(360))
+          : (root.page === 7 && root.npus().length > 0 ? Style.space(320) : Style.space(260))
         clip: true
 
         Column {
@@ -570,6 +577,7 @@ Panel {
           GpuPage {
             width: parent.width
             devices: root.gpus()
+            npuDevices: root.npus()
             processes: root.snapshot && root.snapshot.processes ? root.snapshot.processes : []
             totalMemoryBytes: root.snapshot ? root.snapshot.total_mem_bytes : 0
             foreground: root.foreground
@@ -901,17 +909,18 @@ Panel {
 
   function recordHistorySample() {
     var sample = root.sampleFromSnapshot()
-    if (sample) {
-      root.currentLiveSample = sample
+    if (!sample) return
+    if (root.historyRecording) {
+      var buf = root.historyBuffer
+      buf.push(sample)
+      if (buf.length > root.maxHistorySamples + 50) {
+        buf = buf.slice(buf.length - root.maxHistorySamples)
+      }
+      root.historyBuffer = buf
     }
-    if (!root.historyRecording || !sample) return
-
-    var buf = root.historyBuffer
-    buf.push(sample)
-    if (buf.length > root.maxHistorySamples + 50) {
-      buf = buf.slice(buf.length - root.maxHistorySamples)
-    }
-    root.historyBuffer = buf
+    // liveSample changes after the in-place append so HistoryPage rebuilds
+    // against the latest buffer without copying the full history every tick.
+    root.currentLiveSample = sample
   }
 
   function ensureHistoryCapacity(needed) {

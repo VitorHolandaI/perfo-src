@@ -116,11 +116,13 @@ use crate::data::fan::{FanMonitor, FanSnapshot};
 use crate::data::gpu::{GpuMonitor, GpuSnapshot};
 use crate::data::mem::{self, MemSnapshot};
 use crate::data::net::{NetMonitor, NetSnapshot};
+use crate::data::npu::{NpuMonitor, NpuSnapshot};
 
 #[derive(Serialize)]
 pub struct CpuSnapshot {
     pub fans: FanSnapshot,
     pub gpu: GpuSnapshot,
+    pub npu: NpuSnapshot,
     pub overall_percent: f32,
     /// % of time CPUs spent waiting on disk I/O (from /proc/stat iowait).
     pub iowait_percent: f32,
@@ -386,6 +388,7 @@ pub struct CpuMonitor {
     disks: DiskMonitor,
     fans: FanMonitor,
     gpu: GpuMonitor,
+    npu: NpuMonitor,
     net: NetMonitor,
     users_cache: HashMap<u32, String>,
     /// pid -> last-run CPU, refreshed only on full process refreshes.
@@ -463,6 +466,7 @@ impl CpuMonitor {
             disks: DiskMonitor::new(),
             fans: FanMonitor::new(),
             gpu: GpuMonitor::new(),
+            npu: NpuMonitor::new(),
             net: NetMonitor::new(),
             users_cache: HashMap::new(),
             last_cpu: HashMap::new(),
@@ -507,6 +511,7 @@ impl CpuMonitor {
         self.components.refresh(false);
         self.disks.refresh();
         self.gpu.refresh();
+        self.npu.refresh();
         self.net.refresh();
         let now = Instant::now();
         let elapsed = self
@@ -574,6 +579,7 @@ impl CpuMonitor {
         self.sys.refresh_memory();
         self.components.refresh(false);
         self.gpu.refresh();
+        self.npu.refresh();
         let stat = std::fs::read_to_string("/proc/stat").unwrap_or_default();
         let current = stat_iowait_from(&stat);
         self.iowait_percent = iowait_percent(self.stat_prev, current);
@@ -682,6 +688,7 @@ impl CpuMonitor {
         CpuSnapshot {
             fans: self.fans.snapshot(),
             gpu: self.gpu.snapshot(),
+            npu: self.npu.snapshot(),
             overall_percent,
             iowait_percent: self.iowait_percent,
             per_core,

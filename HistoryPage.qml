@@ -49,6 +49,7 @@ Column {
   readonly property bool inputActiveFocus: customInputOpen
   readonly property bool isCustomZoom: zoomLabel === "CUSTOM"
   readonly property var activeHistory: isSessionRecording ? sessionRecordBuffer : (loadedSessionId.length > 0 ? loadedHistory : history)
+  property int activeHistoryLength: 0
   readonly property string perfoBinPath: {
     var p = String(Qt.resolvedUrl("bin/perfo"))
     if (p.indexOf("file://") === 0) p = p.substring(7)
@@ -56,29 +57,29 @@ Column {
   }
 
   readonly property int effectiveIndex: {
-    if (activeHistory.length === 0) return -1
-    if (scrubIndex < 0 || scrubIndex >= activeHistory.length) return activeHistory.length - 1
+    if (activeHistoryLength === 0) return -1
+    if (scrubIndex < 0 || scrubIndex >= activeHistoryLength) return activeHistoryLength - 1
     return scrubIndex
   }
 
   readonly property int selectedBarIndex: {
-    if (!activeHistory || activeHistory.length === 0 || effectiveIndex < 0) return -1
+    if (!activeHistory || activeHistoryLength === 0 || effectiveIndex < 0) return -1
     var span = currentZoomSeconds()
-    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
-    var sliceCount = activeHistory.length - startIdx
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistoryLength - span)
+    var sliceCount = activeHistoryLength - startIdx
     if (sliceCount <= 0) return -1
     var eff = effectiveIndex
-    if (eff < startIdx || eff >= activeHistory.length) return -1
+    if (eff < startIdx || eff >= activeHistoryLength) return -1
     var barCount = cachedBars.length > 0 ? cachedBars.length : 100
     if (sliceCount <= barCount) return eff - startIdx
     return Math.min(barCount - 1, Math.floor(((eff - startIdx) / sliceCount) * barCount))
   }
 
-  readonly property bool isLive: !isSessionRecording && loadedSessionId.length === 0 && (scrubIndex < 0 || (activeHistory.length > 0 && effectiveIndex >= activeHistory.length - 1))
+  readonly property bool isLive: !isSessionRecording && loadedSessionId.length === 0 && (scrubIndex < 0 || (activeHistoryLength > 0 && effectiveIndex >= activeHistoryLength - 1))
 
   readonly property var selectedSample: {
     if (isLive && liveSample) return liveSample
-    if (activeHistory.length === 0 || effectiveIndex < 0) return liveSample
+    if (activeHistoryLength === 0 || effectiveIndex < 0) return liveSample
     return activeHistory[effectiveIndex]
   }
 
@@ -91,6 +92,10 @@ Column {
         historyPage.stopAndSaveSession()
       }
     }
+    if (!isSessionRecording && loadedSessionId.length === 0 && isRecording) {
+      activeHistoryLength = activeHistory.length
+      rebuildVisibleBars()
+    }
   }
 
   onMetricChanged: {
@@ -102,6 +107,7 @@ Column {
   onCustomSpanSecondsChanged: rebuildVisibleBars()
   onLoadedSessionIdChanged: rebuildVisibleBars()
   onActiveHistoryChanged: {
+    activeHistoryLength = activeHistory ? activeHistory.length : 0
     if (loadedSessionId.length === 0) {
       rebuildVisibleBars()
     }
@@ -113,13 +119,13 @@ Column {
     id: playbackTimer
     interval: 1000
     repeat: true
-    running: historyPage.isPlaying && historyPage.activeHistory.length > 0
+    running: historyPage.isPlaying && historyPage.activeHistoryLength > 0
     onTriggered: {
       var step = historyPage.playbackSpeed || 1
       var next = historyPage.effectiveIndex + step
-      if (next >= historyPage.activeHistory.length) {
+      if (next >= historyPage.activeHistoryLength) {
         if (historyPage.loadedSessionId.length > 0) {
-          historyPage.scrubIndex = historyPage.activeHistory.length - 1
+          historyPage.scrubIndex = historyPage.activeHistoryLength - 1
         } else {
           historyPage.scrubIndex = -1
         }
@@ -319,6 +325,7 @@ Column {
   }
 
   Component.onCompleted: {
+    activeHistoryLength = activeHistory ? activeHistory.length : 0
     rebuildVisibleBars()
     updateTopProcesses(true)
     historyPage.refreshRecordings()
@@ -1260,7 +1267,7 @@ Column {
 
           color: isSelected
             ? Color.accent
-            : (modelData.rawIndex === historyPage.activeHistory.length - 1
+            : (modelData.rawIndex === historyPage.activeHistoryLength - 1
                 ? Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.75)
                 : Qt.rgba(historyPage.foreground.r, historyPage.foreground.g, historyPage.foreground.b, 0.35))
 
@@ -1279,7 +1286,7 @@ Column {
     // Vertical needle cursor line running through the bars
     Rectangle {
       id: needleCursor
-      visible: historyPage.activeHistory.length > 0
+      visible: historyPage.activeHistoryLength > 0
       width: 2
       height: parent.height - 4
       anchors.verticalCenter: parent.verticalCenter
@@ -1310,7 +1317,7 @@ Column {
 
     PlainText {
       anchors.centerIn: parent
-      visible: historyPage.activeHistory.length === 0
+      visible: historyPage.activeHistoryLength === 0
       text: historyPage.loadedSessionId.length > 0 ? "empty recording" : "collecting history snapshots..."
       color: historyPage.foreground
       opacity: 0.5
@@ -1434,7 +1441,7 @@ Column {
       // Dynamic cursor marker: ▲ pointing up to the tick track
       Item {
         id: rulerCursorMarker
-        visible: historyPage.activeHistory.length > 0
+        visible: historyPage.activeHistoryLength > 0
         width: Style.space(14)
         height: parent.height
         x: Math.round(historyPage.rulerCursorRatio() * (parent.width - width))
@@ -1492,7 +1499,7 @@ Column {
         color: historyPage.isLive ? "transparent" : Color.accent
         border.color: Color.accent
         border.width: 1
-        visible: historyPage.activeHistory.length > 0
+        visible: historyPage.activeHistoryLength > 0
 
         PlainText {
           id: cursorTimeBadgeText
@@ -1750,10 +1757,10 @@ Column {
   }
 
   function rulerCursorRatio() {
-    if (!activeHistory || activeHistory.length === 0) return 1.0
+    if (!activeHistory || activeHistoryLength === 0) return 1.0
     var span = currentZoomSeconds()
-    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
-    var sliceCount = activeHistory.length - startIdx
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistoryLength - span)
+    var sliceCount = activeHistoryLength - startIdx
     if (sliceCount <= 1) return 1.0
     var eff = effectiveIndex
     if (eff < startIdx) return 0.0
@@ -1761,22 +1768,22 @@ Column {
   }
 
   function rulerStartTime() {
-    if (!activeHistory || activeHistory.length === 0) {
+    if (!activeHistory || activeHistoryLength === 0) {
       if (liveSample && liveSample.timestamp) return liveSample.timestamp + " (+0s)"
       return "--:--:--"
     }
     var span = currentZoomSeconds()
-    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistoryLength - span)
     var sample = activeHistory[startIdx]
     var t = (sample && sample.timestamp) ? sample.timestamp : "--:--:--"
     return t + " (+0s)"
   }
 
   function rulerEndTime() {
-    var sample = (isLive && liveSample) ? liveSample : (activeHistory && activeHistory.length > 0 ? activeHistory[activeHistory.length - 1] : null)
+    var sample = (isLive && liveSample) ? liveSample : (activeHistory && activeHistoryLength > 0 ? activeHistory[activeHistoryLength - 1] : null)
     if (!sample) return "--:--:--"
     var span = currentZoomSeconds()
-    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistoryLength : Math.min(span, Math.max(1, activeHistoryLength))
     var t = sample.timestamp ? sample.timestamp : "--:--:--"
     var suffix = isLive ? " (+" + formatDuration(totalSpan) + " LIVE)" : " (+" + formatDuration(totalSpan) + ")"
     return t + suffix
@@ -1786,26 +1793,26 @@ Column {
     if (isSessionRecording) {
       return formatTimerClock(sessionRecordBuffer.length) + " / " + formatTimerClock(targetRecordSeconds)
     }
-    if (!activeHistory || activeHistory.length === 0) return "00:00 / 00:00"
+    if (!activeHistory || activeHistoryLength === 0) return "00:00 / 00:00"
     var span = currentZoomSeconds()
-    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
-    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistoryLength - span)
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistoryLength : Math.min(span, Math.max(1, activeHistoryLength))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
-      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistory.length - 1 - startIdx)) * totalSpan)))
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistoryLength - 1 - startIdx)) * totalSpan)))
     return formatTimerClock(elapsed) + " / " + formatTimerClock(totalSpan)
   }
 
   function timerOffsetLabel() {
-    if (!activeHistory || activeHistory.length === 0 || !selectedSample) return "+0s"
+    if (!activeHistory || activeHistoryLength === 0 || !selectedSample) return "+0s"
     var span = currentZoomSeconds()
-    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistory.length - span)
-    var totalSpan = (loadedSessionId.length > 0) ? activeHistory.length : Math.min(span, Math.max(1, activeHistory.length))
+    var startIdx = (loadedSessionId.length > 0) ? 0 : Math.max(0, activeHistoryLength - span)
+    var totalSpan = (loadedSessionId.length > 0) ? activeHistoryLength : Math.min(span, Math.max(1, activeHistoryLength))
     var eff = effectiveIndex
     var elapsed = isLive
       ? totalSpan
-      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistory.length - 1 - startIdx)) * totalSpan)))
+      : Math.min(totalSpan, Math.max(0, Math.round(((eff - startIdx) / Math.max(1, activeHistoryLength - 1 - startIdx)) * totalSpan)))
     return "+" + formatDuration(elapsed)
   }
 

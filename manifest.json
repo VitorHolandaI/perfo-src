@@ -5,7 +5,7 @@
   "version": "0.1.2",
   "author": "Vitor",
   "license": "MIT",
-  "description": "CPU, memory, I/O, network, filesystem, fan, and GPU performance",
+  "description": "CPU, memory, I/O, network, filesystem, fan, GPU, and Intel NPU performance",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Perfo",
-    "description": "CPU, memory, I/O, network, filesystem, fan, and GPU performance",
+    "description": "CPU, memory, I/O, network, filesystem, fan, GPU, and Intel NPU performance",
     "category": "System",
     "allowMultiple": false
   }

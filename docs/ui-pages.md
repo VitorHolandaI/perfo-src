@@ -276,14 +276,16 @@ coletor mantem apenas a fonte `acpi_fan` neste caso. Se a UI voltar a mostrar
 `FANS 0`, o primeiro diagnostico deve ser confirmar se o stream em execucao e a
 build atual, antes de concluir que o hardware nao tem fan legivel.
 
-## 8. GPU
+## 8. GPU / NPU
 
 ![Page 8: GPU](images/widgetpage8.png)
 
-Objetivo: monitorar aceleracao grafica, motores 3D/computacao, uso de VRAM e consumo de energia.
+Objetivo: monitorar aceleracao grafica e neural, motores 3D/computacao, uso de memoria e consumo de energia quando disponivel.
 - Suporte Intel via DRM fdinfo engine times (`render`, `blt`, `video`).
 - Suporte NVIDIA via NVML carregado dinamicamente (utilizacao de GPU, memoria dedicada, temperatura e potencia em Watts).
 - Processos de GPU associados com metricas de computacao e memoria por PID.
+- NPU Intel via `intel_vpu`: uso calculado pelo delta de `npu_busy_time_us`, frequencia atual/maxima e memoria alocada, sem `sudo` ou ferramenta externa.
+- Potencia, temperatura e utilizacao NPU por processo nao sao fabricadas quando o sysfs sem privilegios nao fornece essas metricas.
 
 ## 9. HIST (Flight Recorder & Replay)
 

@@ -127,7 +127,11 @@ fn draw_mem_processes(frame: &mut Frame, area: Rect, ui: &Ui) {
             cpu::truncate(&p.user, 12),
             cpu::human_bytes(p.mem_bytes),
             pct,
-            cpu::truncate_with_scroll(&p.cmd, ui.cmd_scroll, inner.width.saturating_sub(43) as usize)
+            cpu::truncate_with_scroll(
+                &p.cmd,
+                ui.cmd_scroll,
+                inner.width.saturating_sub(43) as usize
+            )
         )));
     }
     frame.render_widget(Paragraph::new(lines), inner);
@@ -144,10 +148,10 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
 }
 
 pub(super) fn draw_gpu_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let panel = cpu::block("6:GPU", false, &ui.theme);
+    let panel = cpu::block("6:ACCEL", false, &ui.theme);
     frame.render_widget(panel.clone(), area);
     let inner = panel.inner(area);
-    let lines = ui
+    let mut lines = ui
         .snap
         .gpu
         .devices
@@ -167,6 +171,7 @@ pub(super) fn draw_gpu_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
             ))
         })
         .collect::<Vec<_>>();
+    lines.extend(super::npu::summary_lines(&ui.snap.npu.devices));
     let lines = if lines.is_empty() {
         vec![Line::from("no readable GPUs")]
     } else {
@@ -176,12 +181,20 @@ pub(super) fn draw_gpu_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
 }
 
 pub(super) fn draw_gpu(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let panel = cpu::block("6:GPU", ui.pane == Pane::Gpu, &ui.theme);
+    let panel = cpu::block("6:GPU / NPU", ui.pane == Pane::Gpu, &ui.theme);
     frame.render_widget(panel.clone(), area);
     let inner = panel.inner(area);
-    let [devices, processes] =
-        Layout::vertical([Constraint::Length(5), Constraint::Min(0)]).areas(inner);
+    let npu_height = super::npu::panel_height(&ui.snap.npu.devices);
+    let [devices, npus, processes] = Layout::vertical([
+        Constraint::Length(5),
+        Constraint::Length(npu_height),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
     draw_gpu_devices(frame, devices, ui);
+    if npu_height > 0 {
+        super::npu::draw(frame, npus, &ui.snap.npu.devices);
+    }
     draw_gpu_processes(frame, processes, ui);
 }
 
