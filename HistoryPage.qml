@@ -42,6 +42,7 @@ Column {
   property bool isSessionRecording: false
   property var sessionRecordBuffer: []
   property int targetRecordSeconds: 120
+  property bool showRecordMenu: false
   property bool recordCpu: true
   property bool recordMem: true
   property bool recordIo: true
@@ -374,14 +375,24 @@ Column {
   }
 
   onVisibleChanged: {
-    if (visible) {
+    if (!visible) {
+      showRecordMenu = false
+      showSessionsMenu = false
+    } else {
       historyPage.refreshRecordings()
     }
   }
 
   onShowSessionsMenuChanged: {
     if (showSessionsMenu) {
+      showRecordMenu = false
       historyPage.refreshRecordings()
+    }
+  }
+
+  onShowRecordMenuChanged: {
+    if (showRecordMenu) {
+      showSessionsMenu = false
     }
   }
 
@@ -632,11 +643,12 @@ Column {
 
       // REC / STOP button
       Rectangle {
-        width: historyPage.isSessionRecording ? Style.space(52) : Style.space(46)
+        id: recButtonBox
+        width: historyPage.isSessionRecording ? Style.space(52) : (historyPage.showRecordMenu ? Style.space(52) : Style.space(48))
         height: Style.space(18)
         radius: Style.cornerRadius
         anchors.verticalCenter: parent.verticalCenter
-        color: historyPage.isSessionRecording ? Color.urgent : "transparent"
+        color: historyPage.isSessionRecording ? Color.urgent : (historyPage.showRecordMenu ? Color.urgent : "transparent")
         border.color: Color.urgent
         border.width: 1
 
@@ -648,12 +660,12 @@ Column {
             height: 6
             radius: 3
             anchors.verticalCenter: parent.verticalCenter
-            color: historyPage.isSessionRecording ? "#ffffff" : Color.urgent
+            color: (historyPage.isSessionRecording || historyPage.showRecordMenu) ? "#ffffff" : Color.urgent
           }
           PlainText {
             anchors.verticalCenter: parent.verticalCenter
-            text: historyPage.isSessionRecording ? "STOP" : "REC"
-            color: historyPage.isSessionRecording ? "#ffffff" : Color.urgent
+            text: historyPage.isSessionRecording ? "STOP" : (historyPage.showRecordMenu ? "REC ▲" : "REC ▾")
+            color: (historyPage.isSessionRecording || historyPage.showRecordMenu) ? "#ffffff" : Color.urgent
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -662,66 +674,26 @@ Column {
 
         MouseArea {
           anchors.fill: parent
-          onClicked: historyPage.toggleSessionRecording()
-        }
-      }
-
-      // Selective recording subsystem pills
-      Row {
-        spacing: Style.space(2)
-        anchors.verticalCenter: parent.verticalCenter
-        opacity: historyPage.isSessionRecording ? 0.85 : 1.0
-
-        Repeater {
-          model: [
-            { id: "cpu", label: "CPU", prop: "recordCpu" },
-            { id: "mem", label: "MEM", prop: "recordMem" },
-            { id: "io",  label: "IO",  prop: "recordIo" },
-            { id: "net", label: "NET", prop: "recordNet" },
-            { id: "gpu", label: "GPU", prop: "recordGpu" }
-          ]
-          delegate: Rectangle {
-            id: recPillBox
-            readonly property bool isChecked: historyPage[modelData.prop]
-            width: recPillText.implicitWidth + Style.space(8)
-            height: Style.space(18)
-            radius: Style.cornerRadius
-            color: isChecked ? (historyPage.isSessionRecording ? Color.urgent : Color.accent) : "transparent"
-            border.color: isChecked ? (historyPage.isSessionRecording ? Color.urgent : Color.accent) : historyPage.foreground
-            border.width: 1
-            opacity: isChecked ? 1.0 : 0.45
-
-            PlainText {
-              id: recPillText
-              anchors.centerIn: parent
-              text: (isChecked ? "✓ " : "") + modelData.label
-              color: isChecked ? (historyPage.isSessionRecording ? "#ffffff" : "#000000") : historyPage.foreground
-              font.family: historyPage.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: isChecked
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              enabled: !historyPage.isSessionRecording
-              onClicked: {
-                var activeCount = (historyPage.recordCpu ? 1 : 0) +
-                                  (historyPage.recordMem ? 1 : 0) +
-                                  (historyPage.recordIo ? 1 : 0) +
-                                  (historyPage.recordNet ? 1 : 0) +
-                                  (historyPage.recordGpu ? 1 : 0)
-                if (isChecked && activeCount <= 1) {
-                  return
-                }
-                historyPage[modelData.prop] = !isChecked
-              }
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            if (historyPage.isSessionRecording) {
+              historyPage.stopSessionRecording()
+            } else {
+              historyPage.showSessionsMenu = false
+              historyPage.showRecordMenu = !historyPage.showRecordMenu
             }
           }
         }
       }
 
-      // PLAY REC / PAUSE button
-      Rectangle {
+      // Playback, scrubbing, and export controls (hidden during active recording)
+      Row {
+        visible: !historyPage.isSessionRecording
+        spacing: Style.space(3)
+        anchors.verticalCenter: parent.verticalCenter
+
+        // PLAY REC / PAUSE button
+        Rectangle {
         width: playButtonText.implicitWidth + Style.space(10)
         height: Style.space(18)
         radius: Style.cornerRadius
@@ -969,6 +941,22 @@ Column {
           onClicked: historyPage.exportReport()
         }
       }
+
+      // Live recording indicator label (visible only during active recording)
+      Row {
+        visible: historyPage.isSessionRecording
+        spacing: Style.space(6)
+        anchors.verticalCenter: parent.verticalCenter
+
+        PlainText {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "● RECORDING LIVE STREAM..."
+          color: Color.urgent
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+      }
     }
 
     // Right side: Status notification and Prominent Timer badge anchored to right
@@ -1012,7 +1000,9 @@ Column {
           anchors.centerIn: parent
           text: {
             if (historyPage.isSessionRecording) {
-              return "● REC " + historyPage.timerClockString()
+              var focusStr = historyPage.recordingFocusSummary()
+              var tag = (focusStr === "ALL" || focusStr === "NONE") ? "" : (" (" + focusStr + ")")
+              return "● REC" + tag + " " + historyPage.timerClockString()
             }
             if (historyPage.loadedSessionId.length > 0) {
               return (historyPage.isPlaying ? "▶ REC " : "📁 REC ") + historyPage.timerClockString()
@@ -1026,6 +1016,200 @@ Column {
           font.pixelSize: Style.font.caption
           font.bold: true
         }
+      }
+    }
+  }
+
+  // Submenu panel for selective recording configuration
+  Rectangle {
+    id: recordPanel
+    visible: historyPage.showRecordMenu && !historyPage.isSessionRecording
+    width: historyPage.width
+    height: recordColumn.implicitHeight + Style.space(14)
+    color: "transparent"
+    border.color: Color.urgent
+    border.width: 1
+    radius: Style.cornerRadius
+
+    Column {
+      id: recordColumn
+      anchors.fill: parent
+      anchors.margins: Style.space(6)
+      spacing: Style.space(5)
+
+      // Header row
+      Item {
+        width: parent.width
+        height: Style.space(20)
+
+        Row {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(4)
+
+          Rectangle {
+            width: 6
+            height: 6
+            radius: 3
+            anchors.verticalCenter: parent.verticalCenter
+            color: Color.urgent
+          }
+          PlainText {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "RECORD SESSION: SELECT METRICS TO CAPTURE"
+            color: Color.urgent
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+        }
+
+        Row {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(4)
+
+          // START RECORDING button
+          Rectangle {
+            width: Style.space(80)
+            height: Style.space(18)
+            radius: Style.cornerRadius
+            color: Color.urgent
+
+            PlainText {
+              anchors.centerIn: parent
+              text: "● START"
+              color: "#ffffff"
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: {
+                historyPage.showRecordMenu = false
+                historyPage.startSessionRecording()
+              }
+            }
+          }
+
+          // CANCEL / CLOSE button
+          Rectangle {
+            width: Style.space(18)
+            height: Style.space(18)
+            radius: Style.cornerRadius
+            color: "transparent"
+            border.color: historyPage.foreground
+            border.width: 1
+
+            PlainText {
+              anchors.centerIn: parent
+              text: "✕"
+              color: historyPage.foreground
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: historyPage.showRecordMenu = false
+            }
+          }
+        }
+      }
+
+      // Divider line
+      Rectangle {
+        width: parent.width
+        height: 1
+        color: Color.urgent
+        opacity: 0.3
+      }
+
+      // Subsystems pills row
+      Row {
+        width: parent.width
+        height: Style.space(22)
+        spacing: Style.space(4)
+
+        PlainText {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "METRICS:"
+          color: historyPage.foreground
+          opacity: 0.6
+          font.family: historyPage.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+
+        Repeater {
+          model: ["CPU", "MEM", "IO", "NET", "GPU"]
+          delegate: Rectangle {
+            readonly property bool isChecked: historyPage.isRecordSubsystemChecked(modelData)
+            width: pillLabel.implicitWidth + Style.space(10)
+            height: Style.space(20)
+            radius: Style.cornerRadius
+            color: isChecked ? Color.urgent : "transparent"
+            border.color: isChecked ? Color.urgent : historyPage.foreground
+            border.width: 1
+            opacity: isChecked ? 1.0 : 0.45
+
+            PlainText {
+              id: pillLabel
+              anchors.centerIn: parent
+              text: (isChecked ? "☑ " : "☐ ") + (index + 1) + "." + modelData
+              color: isChecked ? "#ffffff" : historyPage.foreground
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: isChecked
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: historyPage.toggleRecordSubsystem(modelData)
+            }
+          }
+        }
+
+        // ALL toggle button
+        Rectangle {
+          readonly property bool allChecked: historyPage.recordCpu && historyPage.recordMem && historyPage.recordIo && historyPage.recordNet && historyPage.recordGpu
+          width: Style.space(34)
+          height: Style.space(20)
+          radius: Style.cornerRadius
+          color: allChecked ? Color.urgent : "transparent"
+          border.color: allChecked ? Color.urgent : historyPage.foreground
+          border.width: 1
+          opacity: allChecked ? 1.0 : 0.6
+
+          PlainText {
+            anchors.centerIn: parent
+            text: "ALL"
+            color: allChecked ? "#ffffff" : historyPage.foreground
+            font.family: historyPage.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: allChecked
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: historyPage.toggleAllRecordSubsystems()
+          }
+        }
+      }
+
+      // Explanatory footer note
+      PlainText {
+        text: "Duration matches span (" + historyPage.zoomLabel + ") │ Press 1-5 or click to toggle │ Enter or 'r' to start"
+        color: historyPage.foreground
+        opacity: 0.5
+        font.family: historyPage.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
   }
@@ -2135,6 +2319,7 @@ Column {
   }
 
   function startSessionRecording() {
+    showRecordMenu = false
     sessionRecordBuffer = []
     targetRecordSeconds = currentZoomSeconds()
     isSessionRecording = true
@@ -2157,6 +2342,7 @@ Column {
   function stopAndSaveSession() {
     if (!isSessionRecording) return
     isSessionRecording = false
+    showRecordMenu = false
     if (sessionRecordBuffer.length >= 1) {
       saveSessionData(sessionRecordBuffer, sessionRecordBuffer.length)
     } else {
@@ -2168,6 +2354,51 @@ Column {
 
   function stopSessionRecording() {
     stopAndSaveSession()
+  }
+
+  function isRecordSubsystemChecked(name) {
+    var n = String(name).toLowerCase()
+    if (n === "cpu") return recordCpu
+    if (n === "mem") return recordMem
+    if (n === "io") return recordIo
+    if (n === "net") return recordNet
+    if (n === "gpu") return recordGpu
+    return false
+  }
+
+  function toggleRecordSubsystem(name) {
+    var n = String(name).toLowerCase()
+    if (n === "cpu") recordCpu = !recordCpu
+    else if (n === "mem") recordMem = !recordMem
+    else if (n === "io") recordIo = !recordIo
+    else if (n === "net") recordNet = !recordNet
+    else if (n === "gpu") recordGpu = !recordGpu
+
+    var count = (recordCpu ? 1 : 0) + (recordMem ? 1 : 0) + (recordIo ? 1 : 0) + (recordNet ? 1 : 0) + (recordGpu ? 1 : 0)
+    if (count === 0) {
+      if (n === "cpu") recordCpu = true
+      else if (n === "mem") recordMem = true
+      else if (n === "io") recordIo = true
+      else if (n === "net") recordNet = true
+      else if (n === "gpu") recordGpu = true
+    }
+  }
+
+  function toggleAllRecordSubsystems() {
+    var all = recordCpu && recordMem && recordIo && recordNet && recordGpu
+    if (all) {
+      recordCpu = true
+      recordMem = false
+      recordIo = false
+      recordNet = false
+      recordGpu = false
+    } else {
+      recordCpu = true
+      recordMem = true
+      recordIo = true
+      recordNet = true
+      recordGpu = true
+    }
   }
 
   function recordingFocusSummary() {

@@ -136,6 +136,8 @@ BarWidget {
     function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
     function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
     function toggleRecording() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleSessionRecording() }
+    function toggleRecordMenu() { if (panelLoader.item && panelLoader.item.historyPageComp) { panelLoader.item.historyPageComp.showSessionsMenu = false; panelLoader.item.historyPageComp.showRecordMenu = !panelLoader.item.historyPageComp.showRecordMenu } }
+    function toggleRecordSubsystem(name: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleRecordSubsystem(name) }
     function isRecording(): bool { return (panelLoader.item && panelLoader.item.historyPageComp) ? panelLoader.item.historyPageComp.isSessionRecording : false }
     function toggleSessionsMenu() { if (panelLoader.item) panelLoader.item.toggleSessionsMenu() }
     function setMetric(m: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.metric = m }

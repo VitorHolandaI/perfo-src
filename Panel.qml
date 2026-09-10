@@ -204,7 +204,19 @@ Panel {
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.switchPage(dx)
       }
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.page === 8 && typeof historyPageComp !== "undefined" && historyPageComp) {
+          if (historyPageComp.showRecordMenu) {
+            historyPageComp.showRecordMenu = false
+            return
+          }
+          if (historyPageComp.showSessionsMenu) {
+            historyPageComp.showSessionsMenu = false
+            return
+          }
+        }
+        root.close()
+      }
       onTextKey: function(text) {
         if (text === "?" || text === "/") {
           root.page = (root.page === 9 ? 0 : 9)
@@ -217,8 +229,33 @@ Panel {
           if (text === "]" || text === "}") { historyPageComp.jumpTimeline(1); return }
           if (text === " ") { historyPageComp.togglePlayback(); return }
           if (text === "0") { historyPageComp.jumpToLive(); return }
-          if (text === "r" || text === "R") { historyPageComp.toggleSessionRecording(); return }
-          if (text === "s" || text === "S") { historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu; return }
+          if (historyPageComp.showRecordMenu) {
+            if (text === "1") { historyPageComp.toggleRecordSubsystem("cpu"); return }
+            if (text === "2") { historyPageComp.toggleRecordSubsystem("mem"); return }
+            if (text === "3") { historyPageComp.toggleRecordSubsystem("io"); return }
+            if (text === "4") { historyPageComp.toggleRecordSubsystem("net"); return }
+            if (text === "5") { historyPageComp.toggleRecordSubsystem("gpu"); return }
+            if (text === "a" || text === "A") { historyPageComp.toggleAllRecordSubsystems(); return }
+            if (text === "r" || text === "R" || text === "\r" || text === "\n") {
+              historyPageComp.showRecordMenu = false
+              historyPageComp.startSessionRecording()
+              return
+            }
+          }
+          if (text === "r" || text === "R") {
+            if (historyPageComp.isSessionRecording) {
+              historyPageComp.stopSessionRecording()
+            } else {
+              historyPageComp.showSessionsMenu = false
+              historyPageComp.showRecordMenu = !historyPageComp.showRecordMenu
+            }
+            return
+          }
+          if (text === "s" || text === "S") {
+            historyPageComp.showRecordMenu = false
+            historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu
+            return
+          }
         }
         if (text === "h" || text === "H") root.switchPage(-1)
         else if (text === "l" || text === "L") root.switchPage(1)
@@ -290,7 +327,7 @@ Panel {
       Item {
         width: parent.width
         height: root.page === 8
-          ? ((typeof historyPageComp !== "undefined" && historyPageComp && historyPageComp.showSessionsMenu) ? Style.space(480) : Style.space(360))
+          ? ((typeof historyPageComp !== "undefined" && historyPageComp && (historyPageComp.showSessionsMenu || historyPageComp.showRecordMenu)) ? Style.space(480) : Style.space(360))
           : (root.page === 7 && root.npus().length > 0 ? Style.space(320) : Style.space(260))
         clip: true
 
