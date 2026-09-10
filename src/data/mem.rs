@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use super::psi;
 
-#[derive(Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct MemSnapshot {
     pub total: u64,
     /// Memory used by applications: total - free - buffers - cache.

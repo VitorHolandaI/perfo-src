@@ -57,7 +57,7 @@ impl WidgetSummaryMonitor {
                 .with_memory(MemoryRefreshKind::everything()),
         );
         let mut gpu = GpuMonitor::new();
-        gpu.refresh();
+        gpu.refresh_summary();
         let mut monitor = Self {
             sys,
             gpu,
@@ -73,7 +73,7 @@ impl WidgetSummaryMonitor {
         self.sys.refresh_memory();
         let now = Instant::now();
         if gpu_sample_due(self.gpu_sampled_at, now) {
-            self.gpu.refresh();
+            self.gpu.refresh_summary();
             self.gpu_sampled_at = Some(now);
         }
         self.npu.refresh();

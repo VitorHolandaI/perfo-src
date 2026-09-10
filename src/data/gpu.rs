@@ -96,7 +96,7 @@ impl IntelDrm {
             .collect()
     }
 
-    fn refresh(&mut self) {
+    fn refresh(&mut self, processes: bool) {
         let now = Instant::now();
         let current = read_drm_engine_times(&self.pdev);
         let elapsed = self
@@ -110,11 +110,14 @@ impl IntelDrm {
                 elapsed,
             )
         });
-        self.processes = self
-            .previous
-            .as_ref()
-            .map(|previous| process_gpu_usage(previous, &current, elapsed))
-            .unwrap_or_default();
+        self.processes = if processes {
+            self.previous
+                .as_ref()
+                .map(|previous| process_gpu_usage(previous, &current, elapsed))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         self.previous = Some(current);
         self.sampled_at = Some(now);
     }
@@ -350,10 +353,18 @@ impl GpuMonitor {
     }
 
     pub fn refresh(&mut self) {
+        self.refresh_with_processes(true);
+    }
+
+    pub fn refresh_summary(&mut self) {
+        self.refresh_with_processes(false);
+    }
+
+    fn refresh_with_processes(&mut self, processes: bool) {
         for backend in &mut self.backends {
             match backend {
-                Backend::Intel(drm) => drm.refresh(),
-                Backend::Nvidia(nvidia) => nvidia.refresh(),
+                Backend::Intel(drm) => drm.refresh(processes),
+                Backend::Nvidia(nvidia) => nvidia.refresh(processes),
                 Backend::Amd(_) => {}
             }
         }

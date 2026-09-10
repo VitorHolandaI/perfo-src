@@ -1,7 +1,7 @@
 //! Integration test through the library's public API (the way an external
 //! consumer or the Omarchy widget would use it).
 
-use perfo::data::cpu::CpuMonitor;
+use perfo::data::cpu::{CollectionProfile, CpuMonitor};
 use perfo::data::summary::WidgetSummaryMonitor;
 
 #[test]
@@ -64,4 +64,39 @@ fn widget_summary_contains_only_bar_metrics() {
     );
     assert!(json["gpu"]["devices"].is_array());
     assert!(json["npu"]["devices"].is_array());
+}
+
+#[test]
+fn dashboard_snapshot_omits_hidden_provider_details() {
+    let mut monitor = CpuMonitor::new_for(CollectionProfile::Dashboard);
+    perfo::data::cpu::wait_sample_interval();
+    monitor.refresh_for(CollectionProfile::Dashboard, true);
+    let snapshot = monitor.snapshot_for(CollectionProfile::Dashboard);
+
+    assert!(snapshot.processes.is_empty());
+    assert!(snapshot.per_core.is_empty());
+    assert!(snapshot.net.proc_net.is_empty());
+    assert!(snapshot.net.listening.is_empty());
+    assert!(snapshot.disks.iter().all(|disk| disk.temp_c.is_none()));
+    assert!(snapshot
+        .gpu
+        .devices
+        .iter()
+        .all(|device| device.processes.is_empty()));
+    assert_eq!(snapshot.mem.psi_some_10, 0.0);
+}
+
+#[test]
+fn cpu_snapshot_omits_non_cpu_providers() {
+    let mut monitor = CpuMonitor::new_for(CollectionProfile::Cpu);
+    perfo::data::cpu::wait_sample_interval();
+    monitor.refresh_for(CollectionProfile::Cpu, true);
+    let snapshot = monitor.snapshot_for(CollectionProfile::Cpu);
+
+    assert!(!snapshot.per_core.is_empty());
+    assert!(snapshot.disks.is_empty());
+    assert!(snapshot.net.ifaces.is_empty());
+    assert!(snapshot.gpu.devices.is_empty());
+    assert!(snapshot.npu.devices.is_empty());
+    assert_eq!(snapshot.total_mem_bytes, 0);
 }

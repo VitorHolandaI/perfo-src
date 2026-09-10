@@ -132,7 +132,7 @@ pub struct NetTotals {
     pub tcp_established: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Default, Serialize)]
 pub struct NetSnapshot {
     pub ifaces: Vec<NetInfo>,
     pub totals: NetTotals,
@@ -211,6 +211,10 @@ impl NetMonitor {
     }
 
     pub fn refresh(&mut self) {
+        self.refresh_with_details(true, true);
+    }
+
+    pub fn refresh_with_details(&mut self, processes: bool, listeners: bool) {
         let now = Instant::now();
         let elapsed = self
             .last_refresh
@@ -275,6 +279,12 @@ impl NetMonitor {
             total_tx as f32,
             super::disk::HISTORY_SAMPLES,
         );
+        let proc_net = if processes {
+            proc_sockets(&mut self.prev_proc_bytes, elapsed)
+        } else {
+            self.prev_proc_bytes.clear();
+            Vec::new()
+        };
         self.snapshot = NetSnapshot {
             totals: NetTotals {
                 rx_bps: total_rx,
@@ -287,8 +297,12 @@ impl NetMonitor {
             ifaces,
             rx_history: self.rx_history.clone(),
             tx_history: self.tx_history.clone(),
-            proc_net: proc_sockets(&mut self.prev_proc_bytes, elapsed),
-            listening: listening_ports(),
+            proc_net,
+            listening: if listeners {
+                listening_ports()
+            } else {
+                Vec::new()
+            },
         };
         self.prev = cur;
         self.last_refresh = Some(now);

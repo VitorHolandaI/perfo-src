@@ -253,6 +253,14 @@ impl DiskMonitor {
     }
 
     pub fn refresh(&mut self) {
+        self.refresh_with_details(true);
+    }
+
+    pub fn refresh_summary(&mut self) {
+        self.refresh_with_details(false);
+    }
+
+    fn refresh_with_details(&mut self, details: bool) {
         // refresh(false) refreshes everything, including the io_usage deltas
         // that Disk::usage() reports as "since the last refresh".
         self.disks.refresh(false);
@@ -299,33 +307,41 @@ impl DiskMonitor {
             })
             .collect();
         self.dm_aliases = dm_aliases;
-        self.io_stats = cur
-            .iter()
-            .filter_map(|(name, c)| {
-                self.prev_stats
-                    .get(name)
-                    .map(|p| (name.clone(), io_stats_from(p, c, elapsed)))
-            })
-            .collect();
+        self.io_stats = if details {
+            cur.iter()
+                .filter_map(|(name, c)| {
+                    self.prev_stats
+                        .get(name)
+                        .map(|p| (name.clone(), io_stats_from(p, c, elapsed)))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
         // Byte-rate history for the sparklines, from the same diskstats
         // deltas as the table columns (not sysinfo, which lags a refresh).
-        for (name, c) in cur.iter() {
-            if let Some(p) = self.prev_stats.get(name) {
-                let rb = d_sectors(p.sectors_read, c.sectors_read) * BYTES_PER_SECTOR;
-                let wb = d_sectors(p.sectors_written, c.sectors_written) * BYTES_PER_SECTOR;
-                let (rq, wq) = self
-                    .history
-                    .entry(name.clone())
-                    .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
-                push_capped(rq, rb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
-                push_capped(wq, wb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
+        if details {
+            for (name, c) in cur.iter() {
+                if let Some(p) = self.prev_stats.get(name) {
+                    let rb = d_sectors(p.sectors_read, c.sectors_read) * BYTES_PER_SECTOR;
+                    let wb = d_sectors(p.sectors_written, c.sectors_written) * BYTES_PER_SECTOR;
+                    let (rq, wq) = self
+                        .history
+                        .entry(name.clone())
+                        .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
+                    push_capped(rq, rb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
+                    push_capped(wq, wb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
+                }
             }
+            self.history.retain(|name, _| cur.contains_key(name));
+            let (p10, p60, p300) = psi::some("io");
+            self.io_pressure = [p10, p60, p300];
+        } else {
+            self.history.clear();
+            self.io_pressure = [0.0; 3];
         }
-        self.history.retain(|name, _| cur.contains_key(name));
         self.prev_stats = cur;
         self.last_refresh = Some(now);
-        let (p10, p60, p300) = psi::some("io");
-        self.io_pressure = [p10, p60, p300];
     }
 
     /// PSI I/O pressure "some" averages (10s/60s/300s).
@@ -339,6 +355,10 @@ impl DiskMonitor {
     }
 
     pub fn snapshot(&self) -> Vec<DiskInfo> {
+        self.snapshot_with_temperatures(true)
+    }
+
+    pub fn snapshot_with_temperatures(&self, temperatures: bool) -> Vec<DiskInfo> {
         const REAL_FS: [&str; 9] = [
             "btrfs", "vfat", "ext4", "xfs", "f2fs", "ntfs", "zfs", "exfat", "ext2",
         ];
@@ -373,10 +393,14 @@ impl DiskMonitor {
                     write_bps: self.usage_rates.get(&key).map(|rates| rates.1).unwrap_or(0),
                     total_read_bytes: u.total_read_bytes,
                     total_written_bytes: u.total_written_bytes,
-                    temp_c: nvme_temp_c(
-                        &Path::new("/sys/block")
-                            .join(self.dm_aliases.get(key.as_str()).unwrap_or(&key)),
-                    ),
+                    temp_c: temperatures
+                        .then(|| {
+                            nvme_temp_c(
+                                &Path::new("/sys/block")
+                                    .join(self.dm_aliases.get(key.as_str()).unwrap_or(&key)),
+                            )
+                        })
+                        .flatten(),
                     io,
                 }
             })

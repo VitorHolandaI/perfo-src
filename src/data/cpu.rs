@@ -149,6 +149,220 @@ pub struct CpuSnapshot {
     pub processes: Vec<ProcessInfo>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CollectionProfile {
+    Dashboard,
+    Cpu,
+    Io,
+    Net,
+    Mem,
+    Disks,
+    Gpu,
+    History,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct CollectionNeeds {
+    cpu: bool,
+    cpu_details: bool,
+    cpu_temperatures: bool,
+    memory: bool,
+    memory_details: bool,
+    processes: bool,
+    process_cpu: bool,
+    process_memory: bool,
+    process_tasks: bool,
+    process_affinity: bool,
+    process_io: bool,
+    disks: bool,
+    disk_details: bool,
+    disk_temperatures: bool,
+    io_wait: bool,
+    network: bool,
+    network_processes: bool,
+    network_listeners: bool,
+    gpu: bool,
+    gpu_processes: bool,
+    npu: bool,
+    fans: bool,
+}
+
+impl CollectionNeeds {
+    fn full() -> Self {
+        Self {
+            cpu: true,
+            cpu_details: true,
+            cpu_temperatures: true,
+            memory: true,
+            memory_details: true,
+            processes: true,
+            process_cpu: true,
+            process_memory: true,
+            process_tasks: true,
+            process_affinity: true,
+            process_io: true,
+            disks: true,
+            disk_temperatures: true,
+            disk_details: true,
+            io_wait: true,
+            network: true,
+            network_processes: true,
+            network_listeners: true,
+            gpu: true,
+            gpu_processes: true,
+            npu: true,
+            fans: true,
+        }
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            cpu: self.cpu || other.cpu,
+            cpu_details: self.cpu_details || other.cpu_details,
+            cpu_temperatures: self.cpu_temperatures || other.cpu_temperatures,
+            memory: self.memory || other.memory,
+            memory_details: self.memory_details || other.memory_details,
+            processes: self.processes || other.processes,
+            process_cpu: self.process_cpu || other.process_cpu,
+            process_memory: self.process_memory || other.process_memory,
+            process_tasks: self.process_tasks || other.process_tasks,
+            process_affinity: self.process_affinity || other.process_affinity,
+            process_io: self.process_io || other.process_io,
+            disks: self.disks || other.disks,
+            disk_details: self.disk_details || other.disk_details,
+            disk_temperatures: self.disk_temperatures || other.disk_temperatures,
+            io_wait: self.io_wait || other.io_wait,
+            network: self.network || other.network,
+            network_processes: self.network_processes || other.network_processes,
+            network_listeners: self.network_listeners || other.network_listeners,
+            gpu: self.gpu || other.gpu,
+            gpu_processes: self.gpu_processes || other.gpu_processes,
+            npu: self.npu || other.npu,
+            fans: self.fans || other.fans,
+        }
+    }
+}
+
+impl CollectionProfile {
+    fn needs(self) -> CollectionNeeds {
+        match self {
+            Self::Dashboard => CollectionNeeds {
+                cpu: true,
+                memory: true,
+                disks: true,
+                network: true,
+                gpu: true,
+                npu: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Cpu => CollectionNeeds {
+                cpu: true,
+                cpu_details: true,
+                cpu_temperatures: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
+                process_tasks: true,
+                process_affinity: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Io => CollectionNeeds {
+                disks: true,
+                disk_details: true,
+                disk_temperatures: true,
+                io_wait: true,
+                processes: true,
+                process_io: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Net => CollectionNeeds {
+                processes: true,
+                network: true,
+                network_processes: true,
+                network_listeners: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Mem => CollectionNeeds {
+                memory: true,
+                memory_details: true,
+                processes: true,
+                process_memory: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Disks => CollectionNeeds {
+                disks: true,
+                disk_temperatures: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Gpu => CollectionNeeds {
+                memory: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
+                gpu: true,
+                gpu_processes: true,
+                npu: true,
+                ..CollectionNeeds::default()
+            },
+            Self::History => CollectionNeeds {
+                cpu: true,
+                memory: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
+                process_tasks: true,
+                process_io: true,
+                disks: true,
+                network: true,
+                network_processes: true,
+                gpu: true,
+                gpu_processes: true,
+                ..CollectionNeeds::default()
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CollectionPlan {
+    pub visible: CollectionProfile,
+    pub recording: bool,
+}
+
+impl CollectionPlan {
+    pub const fn new(visible: CollectionProfile, recording: bool) -> Self {
+        Self { visible, recording }
+    }
+
+    pub const fn for_profile(visible: CollectionProfile) -> Self {
+        Self {
+            visible,
+            recording: false,
+        }
+    }
+
+    fn needs(self) -> CollectionNeeds {
+        let visible_needs = self.visible.needs();
+        if self.recording {
+            visible_needs.union(CollectionProfile::History.needs())
+        } else {
+            visible_needs
+        }
+    }
+}
+
+impl Default for CollectionPlan {
+    fn default() -> Self {
+        Self::for_profile(CollectionProfile::Dashboard)
+    }
+}
+
+impl From<CollectionProfile> for CollectionPlan {
+    fn from(profile: CollectionProfile) -> Self {
+        Self::for_profile(profile)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Debug)]
 pub enum CoreType {
     /// Performance core: private L2.
@@ -240,6 +454,19 @@ fn per_core_temps(components: &Components) -> Vec<Option<f32>> {
     (0..cpu_count())
         .map(|i| core_id_of(i).and_then(|id| by_core.get(&id).copied()))
         .collect()
+}
+
+fn cpu_temperature(components: &Components) -> Option<f32> {
+    components
+        .list()
+        .iter()
+        .filter(|component| {
+            let label = component.label();
+            let short = label.strip_prefix("coretemp ").unwrap_or(label);
+            short.contains("Package") || short.starts_with("Core") || short.contains("PECI")
+        })
+        .filter_map(|component| component.temperature())
+        .max_by(|left, right| left.total_cmp(right))
 }
 
 /// Max frequency of each cpu (MHz) from cpufreq sysfs (source is kHz).
@@ -452,6 +679,14 @@ impl Default for CpuMonitor {
 
 impl CpuMonitor {
     pub fn new() -> Self {
+        Self::new_with_needs(CollectionNeeds::full())
+    }
+
+    pub fn new_for(plan: impl Into<CollectionPlan>) -> Self {
+        Self::new_with_needs(plan.into().needs())
+    }
+
+    fn new_with_needs(needs: CollectionNeeds) -> Self {
         // new_all() does a heavyweight first refresh (disks, net, users,
         // processes with everything); build only CPU + memory here and let
         // do_refresh handle the rest, so startup stays cheap.
@@ -483,42 +718,99 @@ impl CpuMonitor {
         };
         monitor.max_freq_mhz = per_core_max_freqs();
         monitor.core_types = core_types_of(&monitor.max_freq_mhz);
-        // Seed CPU deltas so the first real refresh has a window to measure.
-        monitor.refresh();
+        // Seed counter deltas only for providers required by the initial view.
+        monitor.refresh_needs(needs, true);
         monitor
     }
 
-    fn do_refresh(sys: &mut System) {
-        sys.refresh_cpu_usage();
-        sys.refresh_memory();
-        sys.refresh_processes_specifics(
-            ProcessesToUpdate::All,
-            true,
-            ProcessRefreshKind::nothing()
-                .with_memory()
-                .with_cpu()
-                .with_user(UpdateKind::OnlyIfNotSet)
-                .with_cmd(UpdateKind::OnlyIfNotSet)
-                .with_exe(UpdateKind::OnlyIfNotSet)
-                .with_tasks(),
-        );
+    fn refresh_processes(&mut self, needs: CollectionNeeds) {
+        let mut refresh = ProcessRefreshKind::nothing()
+            .with_user(UpdateKind::OnlyIfNotSet)
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .with_exe(UpdateKind::OnlyIfNotSet);
+        if needs.process_cpu {
+            refresh = refresh.with_cpu();
+        }
+        if needs.process_memory {
+            refresh = refresh.with_memory();
+        }
+        if needs.process_tasks {
+            refresh = refresh.with_tasks();
+        }
+        self.sys
+            .refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
     }
 
     /// Full refresh: CPU + memory + all process stats + last-run CPU map.
     /// Expensive (tens of thousands of /proc reads); call sparingly (~every 2s).
     pub fn refresh(&mut self) {
-        Self::do_refresh(&mut self.sys);
-        self.components.refresh(false);
-        self.disks.refresh();
-        self.gpu.refresh();
-        self.npu.refresh();
-        self.net.refresh();
+        self.refresh_needs(CollectionNeeds::full(), true);
+    }
+
+    pub fn refresh_for(&mut self, plan: impl Into<CollectionPlan>, detailed_tick: bool) {
+        self.refresh_needs(plan.into().needs(), detailed_tick);
+    }
+
+    fn refresh_needs(&mut self, needs: CollectionNeeds, detailed_tick: bool) {
+        if needs.cpu {
+            self.sys.refresh_cpu_usage();
+        }
+        if needs.memory {
+            self.sys.refresh_memory();
+        }
+        if detailed_tick && needs.processes {
+            self.refresh_processes(needs);
+        }
+        if needs.cpu_temperatures {
+            self.components.refresh(false);
+        }
+        if detailed_tick && needs.disks {
+            if needs.disk_details {
+                self.disks.refresh();
+            } else {
+                self.disks.refresh_summary();
+            }
+        }
+        if needs.gpu && (detailed_tick || needs.gpu_processes) {
+            if needs.gpu_processes {
+                self.gpu.refresh();
+            } else {
+                self.gpu.refresh_summary();
+            }
+        }
+        if needs.npu {
+            self.npu.refresh();
+        }
+        if detailed_tick && needs.network {
+            self.net
+                .refresh_with_details(needs.network_processes, needs.network_listeners);
+        }
+        if detailed_tick && needs.process_affinity {
+            self.refresh_process_affinity();
+        }
+        if detailed_tick && needs.process_io {
+            self.refresh_process_io();
+        }
+        if needs.io_wait {
+            self.refresh_iowait();
+        }
+    }
+
+    fn refresh_process_affinity(&mut self) {
+        self.last_cpu = self
+            .sys
+            .processes()
+            .keys()
+            .filter_map(|pid| last_cpu_of(pid.as_u32()).map(|cpu| (pid.as_u32(), cpu)))
+            .collect();
+    }
+
+    fn refresh_process_io(&mut self) {
         let now = Instant::now();
         let elapsed = self
             .last_full
             .map(|t| t.elapsed().as_secs_f32())
             .unwrap_or(0.0);
-        let mut m = HashMap::with_capacity(self.sys.processes().len());
         let mut io_cur: HashMap<u32, (u64, u64)> =
             HashMap::with_capacity(self.sys.processes().len());
         let mut io_rates: HashMap<u32, (u64, u64)> =
@@ -527,9 +819,6 @@ impl CpuMonitor {
             HashMap::with_capacity(self.sys.processes().len());
         for pid in self.sys.processes().keys() {
             let pid = pid.as_u32();
-            if let Some(c) = last_cpu_of(pid) {
-                m.insert(pid, c);
-            }
             // /proc/<pid>/io is one tiny file per process; the page cache
             // keeps the read cheap (~µs) once warm.
             if let Some((rb, wb)) = proc_io_of(pid) {
@@ -548,7 +837,6 @@ impl CpuMonitor {
                 io_cur.insert(pid, (rb, wb));
             }
         }
-        self.last_cpu = m;
         // Rolling per-process window: reset every IO_WINDOW_SECS so the
         // "who hammered the disk" list is a bounded recent history.
         if now.duration_since(self.io_window_start).as_secs() >= IO_WINDOW_SECS {
@@ -562,151 +850,243 @@ impl CpuMonitor {
         }
         self.io_prev = io_cur;
         self.io_rates = io_rates;
+        self.last_full = Some(now);
+    }
+
+    fn refresh_iowait(&mut self) {
         let stat = std::fs::read_to_string("/proc/stat").unwrap_or_default();
         let (iw, tot) = stat_iowait_from(&stat);
-        self.iowait_percent = self
-            .last_full
-            .map(|_| iowait_percent(self.stat_prev, (iw, tot)))
-            .unwrap_or(0.0);
+        self.iowait_percent = iowait_percent(self.stat_prev, (iw, tot));
         self.stat_prev = (iw, tot);
-        self.last_full = Some(now);
     }
 
     /// Cheap refresh: CPU + memory + temperatures only. Process data stays at
     /// the last full refresh; use between full refreshes so the bars stay smooth.
     pub fn refresh_light(&mut self) {
-        self.sys.refresh_cpu_usage();
-        self.sys.refresh_memory();
-        self.components.refresh(false);
-        self.gpu.refresh();
-        self.npu.refresh();
-        let stat = std::fs::read_to_string("/proc/stat").unwrap_or_default();
-        let current = stat_iowait_from(&stat);
-        self.iowait_percent = iowait_percent(self.stat_prev, current);
-        self.stat_prev = current;
+        self.refresh_needs(CollectionNeeds::full(), false);
     }
 
     pub fn snapshot(&mut self) -> CpuSnapshot {
+        self.snapshot_needs(CollectionNeeds::full())
+    }
+
+    pub fn snapshot_for(&mut self, plan: impl Into<CollectionPlan>) -> CpuSnapshot {
+        self.snapshot_needs(plan.into().needs())
+    }
+
+    fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
         // On Linux every thread appears as its own /proc entry; map each
         // thread tid to its owning process via Process::tasks().
         let mut task_of: HashMap<u32, u32> = HashMap::new();
-        for (pid, p) in self.sys.processes() {
-            if let Some(tids) = p.tasks() {
-                for t in tids {
-                    task_of.insert(t.as_u32(), pid.as_u32());
+        if needs.processes {
+            for (pid, p) in self.sys.processes() {
+                if let Some(tids) = p.tasks() {
+                    for t in tids {
+                        task_of.insert(t.as_u32(), pid.as_u32());
+                    }
                 }
             }
         }
 
-        let overall_percent = self.sys.global_cpu_usage();
-        self.history.push_back(overall_percent);
-        if self.history.len() > crate::data::disk::HISTORY_SAMPLES {
-            self.history.pop_front();
+        let overall_percent = if needs.cpu {
+            self.sys.global_cpu_usage()
+        } else {
+            0.0
+        };
+        if needs.cpu {
+            self.history.push_back(overall_percent);
+            if self.history.len() > crate::data::disk::HISTORY_SAMPLES {
+                self.history.pop_front();
+            }
         }
         // iowait needs a delta between two /proc/stat samples; stat_prev
         // holds the latest, so the first snapshot reports 0.
-        let per_core: Vec<f32> = self.sys.cpus().iter().map(|c| c.cpu_usage()).collect();
-        let per_core_types = self.core_types.clone();
-        let per_core_freq_mhz: Vec<u64> = self.sys.cpus().iter().map(|c| c.frequency()).collect();
-        let per_core_max_freq_mhz = self.max_freq_mhz.clone();
-        let cpu_temp_c: Option<f32> = self
-            .components
-            .list()
-            .iter()
-            .filter(|c| {
-                let l = c.label();
-                let short = l.strip_prefix("coretemp ").unwrap_or(l);
-                short.contains("Package") || short.starts_with("Core") || short.contains("PECI")
-            })
-            .filter_map(|c| c.temperature())
-            .max_by(|a, b| a.total_cmp(b));
-        let per_core_temp_c = per_core_temps(&self.components);
-        let la = sysinfo::System::load_average();
-        let load_avg = [la.one, la.five, la.fifteen];
+        let per_core = if needs.cpu_details {
+            self.sys.cpus().iter().map(|cpu| cpu.cpu_usage()).collect()
+        } else {
+            Vec::new()
+        };
+        let per_core_types = if needs.cpu_details {
+            self.core_types.clone()
+        } else {
+            Vec::new()
+        };
+        let per_core_freq_mhz = if needs.cpu_details {
+            self.sys.cpus().iter().map(|cpu| cpu.frequency()).collect()
+        } else {
+            Vec::new()
+        };
+        let per_core_max_freq_mhz = if needs.cpu_details {
+            self.max_freq_mhz.clone()
+        } else {
+            Vec::new()
+        };
+        let cpu_temp_c = needs
+            .cpu_temperatures
+            .then(|| cpu_temperature(&self.components))
+            .flatten();
+        let per_core_temp_c = if needs.cpu_temperatures {
+            per_core_temps(&self.components)
+        } else {
+            Vec::new()
+        };
+        let load_avg = if needs.cpu {
+            let load = sysinfo::System::load_average();
+            [load.one, load.five, load.fifteen]
+        } else {
+            [0.0; 3]
+        };
 
         // Username lookups hit NSS; cache them per uid instead of resolving
         // every process every tick.
         let mut cache = std::mem::take(&mut self.users_cache);
-        let mut processes: Vec<ProcessInfo> = self
-            .sys
-            .processes()
-            .iter()
-            .map(|(pid, p)| {
-                let pid_u = pid.as_u32();
-                let owner = task_of.get(&pid_u).copied();
-                let user = match p.user_id().map(|u| **u) {
-                    Some(uid) => match cache.get(&uid) {
-                        Some(n) => n.clone(),
-                        None => {
-                            let n = user_name_of(uid);
-                            cache.insert(uid, n.clone());
-                            n
-                        }
-                    },
-                    None => "?".into(),
-                };
-                let cmd = if p.cmd().is_empty() {
-                    p.name().to_string_lossy().into_owned()
-                } else {
-                    p.cmd()
-                        .iter()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                let (read_bps, write_bps) = self.io_rates.get(&pid_u).copied().unwrap_or((0, 0));
-                let (win_read_bytes, win_write_bytes) =
-                    self.io_window.get(&pid_u).copied().unwrap_or((0, 0));
-                ProcessInfo {
-                    pid: pid_u,
-                    name: p.name().to_string_lossy().into_owned(),
-                    ppid: p.parent().map(|pp| pp.as_u32()),
-                    owner,
-                    is_kernel: pid_u == 2 || p.parent().map(|pp| pp.as_u32()) == Some(2),
-                    user,
-                    cpu_percent: p.cpu_usage(),
-                    mem_bytes: p.memory(),
-                    cmd,
-                    last_cpu: self.last_cpu.get(&pid_u).copied(),
-                    read_bps,
-                    write_bps,
-                    win_read_bytes,
-                    win_write_bytes,
-                }
-            })
-            .collect();
-        let active_uids: HashSet<u32> = self
-            .sys
-            .processes()
-            .values()
-            .filter_map(|process| process.user_id().map(|uid| **uid))
-            .collect();
-        cache.retain(|uid, _| active_uids.contains(uid));
+        let mut processes: Vec<ProcessInfo> = if needs.processes {
+            self.sys
+                .processes()
+                .iter()
+                .map(|(pid, p)| {
+                    let pid_u = pid.as_u32();
+                    let owner = task_of.get(&pid_u).copied();
+                    let user = match p.user_id().map(|u| **u) {
+                        Some(uid) => match cache.get(&uid) {
+                            Some(n) => n.clone(),
+                            None => {
+                                let n = user_name_of(uid);
+                                cache.insert(uid, n.clone());
+                                n
+                            }
+                        },
+                        None => "?".into(),
+                    };
+                    let cmd = if p.cmd().is_empty() {
+                        p.name().to_string_lossy().into_owned()
+                    } else {
+                        p.cmd()
+                            .iter()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    };
+                    let (read_bps, write_bps) =
+                        self.io_rates.get(&pid_u).copied().unwrap_or((0, 0));
+                    let (win_read_bytes, win_write_bytes) =
+                        self.io_window.get(&pid_u).copied().unwrap_or((0, 0));
+                    ProcessInfo {
+                        pid: pid_u,
+                        name: p.name().to_string_lossy().into_owned(),
+                        ppid: p.parent().map(|pp| pp.as_u32()),
+                        owner,
+                        is_kernel: pid_u == 2 || p.parent().map(|pp| pp.as_u32()) == Some(2),
+                        user,
+                        cpu_percent: p.cpu_usage(),
+                        mem_bytes: p.memory(),
+                        cmd,
+                        last_cpu: self.last_cpu.get(&pid_u).copied(),
+                        read_bps,
+                        write_bps,
+                        win_read_bytes,
+                        win_write_bytes,
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if needs.processes {
+            let active_uids: HashSet<u32> = self
+                .sys
+                .processes()
+                .values()
+                .filter_map(|process| process.user_id().map(|uid| **uid))
+                .collect();
+            cache.retain(|uid, _| active_uids.contains(uid));
+        }
         self.users_cache = cache;
         processes.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent));
 
+        let mem = if needs.memory_details {
+            mem::snapshot()
+        } else if needs.memory {
+            MemSnapshot {
+                total: self.sys.total_memory(),
+                used: self.sys.used_memory(),
+                ..MemSnapshot::default()
+            }
+        } else {
+            MemSnapshot::default()
+        };
+
         CpuSnapshot {
-            fans: self.fans.snapshot(),
-            gpu: self.gpu.snapshot(),
-            npu: self.npu.snapshot(),
+            fans: if needs.fans {
+                self.fans.snapshot()
+            } else {
+                FanSnapshot::default()
+            },
+            gpu: if needs.gpu {
+                self.gpu.snapshot()
+            } else {
+                GpuSnapshot::default()
+            },
+            npu: if needs.npu {
+                self.npu.snapshot()
+            } else {
+                NpuSnapshot::default()
+            },
             overall_percent,
-            iowait_percent: self.iowait_percent,
+            iowait_percent: if needs.io_wait {
+                self.iowait_percent
+            } else {
+                0.0
+            },
             per_core,
-            core_count: self.sys.cpus().len(),
+            core_count: if needs.cpu_details {
+                self.sys.cpus().len()
+            } else {
+                0
+            },
             per_core_types,
             per_core_freq_mhz,
             per_core_max_freq_mhz,
             per_core_temp_c,
             cpu_temp_c,
             load_avg,
-            total_mem_bytes: self.sys.total_memory(),
-            used_mem_bytes: self.sys.used_memory(),
-            mem: mem::snapshot(),
-            io_pressure_some: self.disks.io_pressure(),
-            io_history: self.disks.history().clone(),
-            disks: self.disks.snapshot(),
-            net: self.net.snapshot(),
-            cpu_history: self.history.clone(),
+            total_mem_bytes: if needs.memory {
+                self.sys.total_memory()
+            } else {
+                0
+            },
+            used_mem_bytes: if needs.memory {
+                self.sys.used_memory()
+            } else {
+                0
+            },
+            mem,
+            io_pressure_some: if needs.disks {
+                self.disks.io_pressure()
+            } else {
+                [0.0; 3]
+            },
+            io_history: if needs.disks {
+                self.disks.history().clone()
+            } else {
+                HashMap::new()
+            },
+            disks: if needs.disks {
+                self.disks
+                    .snapshot_with_temperatures(needs.disk_temperatures)
+            } else {
+                Vec::new()
+            },
+            net: if needs.network {
+                self.net.snapshot()
+            } else {
+                NetSnapshot::default()
+            },
+            cpu_history: if needs.cpu {
+                self.history.clone()
+            } else {
+                VecDeque::new()
+            },
             processes,
         }
     }
@@ -732,6 +1112,146 @@ const IO_WINDOW_SECS: u64 = 300;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dashboard_collects_only_aggregate_providers() {
+        let needs = CollectionProfile::Dashboard.needs();
+        assert!(needs.cpu);
+        assert!(needs.memory);
+        assert!(needs.disks);
+        assert!(needs.network);
+        assert!(needs.gpu);
+        assert!(needs.npu);
+        assert!(!needs.processes);
+        assert!(!needs.process_io);
+        assert!(!needs.cpu_temperatures);
+        assert!(!needs.disk_temperatures);
+        assert!(!needs.fans);
+    }
+
+    #[test]
+    fn detail_profiles_enable_only_their_dependencies() {
+        assert_eq!(
+            CollectionProfile::Cpu.needs(),
+            CollectionNeeds {
+                cpu: true,
+                cpu_details: true,
+                cpu_temperatures: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
+                process_tasks: true,
+                process_affinity: true,
+                ..CollectionNeeds::default()
+            }
+        );
+        assert_eq!(
+            CollectionProfile::Io.needs(),
+            CollectionNeeds {
+                disks: true,
+                disk_details: true,
+                disk_temperatures: true,
+                io_wait: true,
+                process_io: true,
+                processes: true,
+                ..CollectionNeeds::default()
+            }
+        );
+        assert_eq!(
+            CollectionProfile::Net.needs(),
+            CollectionNeeds {
+                network: true,
+                network_processes: true,
+                network_listeners: true,
+                processes: true,
+                ..CollectionNeeds::default()
+            }
+        );
+        assert_eq!(
+            CollectionProfile::Mem.needs(),
+            CollectionNeeds {
+                memory: true,
+                memory_details: true,
+                processes: true,
+                process_memory: true,
+                ..CollectionNeeds::default()
+            }
+        );
+        assert_eq!(
+            CollectionProfile::Disks.needs(),
+            CollectionNeeds {
+                disks: true,
+                disk_temperatures: true,
+                ..CollectionNeeds::default()
+            }
+        );
+        assert_eq!(
+            CollectionProfile::Gpu.needs(),
+            CollectionNeeds {
+                memory: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
+                gpu: true,
+                gpu_processes: true,
+                npu: true,
+                ..CollectionNeeds::default()
+            }
+        );
+    }
+
+    #[test]
+    fn history_profile_collects_every_recorded_metric() {
+        let needs = CollectionProfile::History.needs();
+        assert!(needs.cpu);
+        assert!(needs.memory);
+        assert!(needs.disks);
+        assert!(needs.network);
+        assert!(needs.gpu);
+        assert!(needs.processes);
+        assert!(needs.process_io);
+    }
+
+    #[test]
+    fn collection_needs_union_combines_flags() {
+        let a = CollectionNeeds {
+            cpu: true,
+            cpu_details: true,
+            ..CollectionNeeds::default()
+        };
+        let b = CollectionNeeds {
+            disks: true,
+            network: true,
+            ..CollectionNeeds::default()
+        };
+        let combined = a.union(b);
+        assert!(combined.cpu);
+        assert!(combined.cpu_details);
+        assert!(combined.disks);
+        assert!(combined.network);
+        assert!(!combined.memory);
+    }
+
+    #[test]
+    fn collection_plan_unions_visible_and_recording_needs() {
+        let plan = CollectionPlan::new(CollectionProfile::Cpu, true);
+        let needs = plan.needs();
+        assert!(needs.cpu);
+        assert!(needs.cpu_details);
+        assert!(needs.cpu_temperatures);
+        assert!(needs.process_affinity);
+        assert!(needs.disks);
+        assert!(needs.network);
+        assert!(needs.network_processes);
+        assert!(needs.gpu);
+        assert!(needs.process_io);
+
+        let non_recording = CollectionPlan::new(CollectionProfile::Cpu, false);
+        let non_rec_needs = non_recording.needs();
+        assert!(non_rec_needs.cpu_details);
+        assert!(!non_rec_needs.disks);
+        assert!(!non_rec_needs.network);
+    }
 
     #[test]
     fn last_cpu_from_stat_reads_field_39() {

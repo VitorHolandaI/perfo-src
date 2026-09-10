@@ -2,7 +2,6 @@ pub mod cpu;
 mod detail;
 mod help;
 pub mod history;
-mod net_summary;
 mod npu;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -12,7 +11,7 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::{init, restore};
 
-use crate::data::cpu::{CpuMonitor, CpuSnapshot, ProcessInfo};
+use crate::data::cpu::{CollectionPlan, CollectionProfile, CpuMonitor, CpuSnapshot, ProcessInfo};
 use crate::theme::{self, Theme};
 use crate::trace;
 use cpu::{Pane, Row, SortKey, Ui};
@@ -31,15 +30,34 @@ pub fn run() -> std::io::Result<()> {
 
 pub fn run_with_pane(pane: Pane) -> std::io::Result<()> {
     let mut terminal = init();
-    let mut monitor = CpuMonitor::new();
     let mut state = State::default();
     if pane != Pane::Cpu {
         state.pane = pane;
         state.fullscreen = true;
     }
+    let mut monitor = CpuMonitor::new_for(collection_plan(&state));
     let result = run_loop(&mut terminal, &mut monitor, state);
     restore();
     result
+}
+
+fn visible_profile(state: &State) -> CollectionProfile {
+    if !state.fullscreen {
+        return CollectionProfile::Dashboard;
+    }
+    match state.pane {
+        Pane::Cpu => CollectionProfile::Cpu,
+        Pane::Io => CollectionProfile::Io,
+        Pane::Net => CollectionProfile::Net,
+        Pane::Mem => CollectionProfile::Mem,
+        Pane::Disks => CollectionProfile::Disks,
+        Pane::Gpu => CollectionProfile::Gpu,
+        Pane::History => CollectionProfile::History,
+    }
+}
+
+fn collection_plan(state: &State) -> CollectionPlan {
+    CollectionPlan::new(visible_profile(state), state.history.is_session_recording)
 }
 
 /// UI language for help text.
@@ -124,6 +142,8 @@ fn run_loop(
     let mut snap: Option<CpuSnapshot> = None;
     let mut last_tick = Instant::now() - TICK;
     let mut full_tick = false;
+    let mut active_plan = collection_plan(&state);
+    let mut force_refresh = false;
     let system_theme = theme::system();
 
     let (trace_tx, trace_rx) = mpsc::channel::<String>();
@@ -131,23 +151,24 @@ fn run_loop(
     let mut trace_thread: Option<std::thread::JoinHandle<()>> = None;
 
     loop {
-        if last_tick.elapsed() >= TICK && !state.paused {
+        if last_tick.elapsed() >= TICK && (!state.paused || force_refresh) {
             // Process stats are the expensive part; refresh them every other
             // tick so the bars stay at 1s while the table lags 2s.
-            if full_tick {
-                monitor.refresh();
-            } else {
-                monitor.refresh_light();
-            }
+            monitor.refresh_for(active_plan, full_tick);
             full_tick = !full_tick;
-            let s = monitor.snapshot();
-            state.history.record_snapshot(&s);
-            state.history.advance_playback();
+            let s = monitor.snapshot_for(active_plan);
+            if active_plan.recording || active_plan.visible == CollectionProfile::History {
+                state.history.record_snapshot(&s);
+                state.history.advance_playback();
+            }
             snap = Some(s);
             last_tick = Instant::now();
+            force_refresh = false;
         }
 
-        let wait = if last_tick.elapsed() >= TICK {
+        let wait = if state.paused && !force_refresh {
+            TICK
+        } else if last_tick.elapsed() >= TICK {
             Duration::ZERO
         } else {
             TICK.saturating_sub(last_tick.elapsed())
@@ -168,6 +189,16 @@ fn run_loop(
             }
         }
 
+        let requested_plan = collection_plan(&state);
+        if requested_plan != active_plan {
+            active_plan = requested_plan;
+            full_tick = true;
+            force_refresh = true;
+            last_tick = Instant::now() - TICK;
+            snap = None;
+            continue;
+        }
+
         // Manage the tracer thread.
         manage_trace_thread(
             &mut state,
@@ -178,7 +209,11 @@ fn run_loop(
         );
 
         if let Some(s) = &snap {
-            let (rows, pids, selected) = prepare(s, &mut state);
+            let (rows, pids, selected) = if active_plan.visible == CollectionProfile::Cpu {
+                prepare(s, &mut state)
+            } else {
+                (Vec::new(), Vec::new(), None)
+            };
             display_pids = pids;
             let term_width = terminal.size().map(|s| s.width as usize).unwrap_or(0);
             let status = status_line_for_width(&state, term_width);
@@ -612,6 +647,9 @@ fn handle_normal_key(
     code: KeyCode,
     system_theme: Option<Theme>,
 ) -> bool {
+    if !state.fullscreen {
+        return handle_dashboard_key(state, code, system_theme);
+    }
     match code {
         KeyCode::Char('q') | KeyCode::Char('Q') => true,
         KeyCode::Esc => {
@@ -845,6 +883,32 @@ fn handle_normal_key(
     }
 }
 
+fn handle_dashboard_key(state: &mut State, code: KeyCode, system_theme: Option<Theme>) -> bool {
+    if matches!(code, KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc) {
+        return true;
+    }
+    match code {
+        KeyCode::Char('1') => focus_pane(state, Pane::Cpu),
+        KeyCode::Char('2') => focus_pane(state, Pane::Io),
+        KeyCode::Char('3') => focus_pane(state, Pane::Net),
+        KeyCode::Char('4') => focus_pane(state, Pane::Mem),
+        KeyCode::Char('5') => focus_pane(state, Pane::Disks),
+        KeyCode::Char('6') => focus_pane(state, Pane::Gpu),
+        KeyCode::Char('7') => focus_pane(state, Pane::History),
+        KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('h') => state.help = true,
+        KeyCode::Char('m') => state.show_menu = !state.show_menu,
+        KeyCode::Char('z') | KeyCode::Char('Z') => state.paused = !state.paused,
+        KeyCode::Char('C') => {
+            toggle_theme(state, system_theme);
+        }
+        KeyCode::Char('L') => {
+            toggle_lang(state);
+        }
+        _ => {}
+    }
+    false
+}
+
 fn handle_menu_key(state: &mut State, code: KeyCode) {
     match code {
         KeyCode::Char('m') | KeyCode::Esc => state.show_menu = false,
@@ -1013,7 +1077,7 @@ fn status_line_for_width(state: &State, width: usize) -> String {
     if let Some(msg) = &state.status_msg {
         return msg.clone();
     }
-    if state.pane == Pane::History {
+    if state.fullscreen && state.pane == Pane::History {
         let rec = if state.history.recording {
             "● REC"
         } else {
@@ -1045,81 +1109,95 @@ fn status_line_for_width(state: &State, width: usize) -> String {
         }
         return format!("[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit");
     }
-    let pane = match state.pane {
-        Pane::Cpu => {
-            if state.cores_focused {
-                "[1:CPU + PROCS | CORES] "
-            } else {
-                "[1:CPU + PROCS | PROCESSES] "
+    let pane = if !state.fullscreen {
+        "[DASHBOARD] "
+    } else {
+        match state.pane {
+            Pane::Cpu => {
+                if state.cores_focused {
+                    "[1:CPU + PROCS | CORES] "
+                } else {
+                    "[1:CPU + PROCS | PROCESSES] "
+                }
             }
+            Pane::Io => "[2:IO] ",
+            Pane::Net => "[3:NET] ",
+            Pane::Mem => "[4:MEM] ",
+            Pane::Disks => "[5:DISKS] ",
+            Pane::Gpu => "[6:GPU] ",
+            Pane::History => "[7:HIST] ",
         }
-        Pane::Io => "[2:IO] ",
-        Pane::Net => "[3:NET] ",
-        Pane::Mem => "[4:MEM] ",
-        Pane::Disks => "[5:DISKS] ",
-        Pane::Gpu => "[6:GPU] ",
-        Pane::History => "[7:HIST] ",
     };
     let full = if state.fullscreen { "[FULL] " } else { "" };
     let paused = if state.paused { "\u{23F8} PAUSED " } else { "" };
-    let filter = state
-        .core_filter
-        .map(|c| format!("core filter {c} | Esc clears | "))
-        .unwrap_or_default();
+    let filter = if state.fullscreen && state.pane == Pane::Cpu {
+        state
+            .core_filter
+            .map(|c| format!("core filter {c} | Esc clears | "))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let prefix = format!("{pane}{full}{paused}{filter}");
 
     let mandatory_suffix = " | ? help | q quit";
     let suffix_len = mandatory_suffix.chars().count();
 
     let mut tokens: Vec<String> = Vec::new();
-    match state.pane {
-        Pane::Cpu => {
-            if state.cores_focused {
-                tokens.push("m menu".into());
-                tokens.push("Tab procs".into());
-                tokens.push("Enter filter core".into());
-                tokens.push("arrows nav".into());
-                if width == 0 || width >= 120 {
-                    tokens.push("p CPU".into());
-                    tokens.push("M MEM".into());
-                    tokens.push("z pause".into());
-                }
-            } else {
-                tokens.push("m menu".into());
-                tokens.push("Tab cores".into());
-                tokens.push("y/Enter copy".into());
-                tokens.push("←→ scroll".into());
-                tokens.push("↑↓ nav".into());
-                tokens.push("k kill".into());
-                if width == 0 || width >= 135 {
-                    tokens.push("p CPU".into());
-                    tokens.push("M MEM".into());
-                }
-                tokens.push("/ search".into());
-                if width == 0 || width >= 160 {
-                    tokens.push(format!(
-                        "t tree{}",
-                        if state.tree { " \u{2713}" } else { "" }
-                    ));
-                    tokens.push("s trace".into());
-                }
-                if width == 0 || width >= 190 {
-                    tokens.push(format!(
-                        "H threads{}",
-                        if state.show_threads { " \u{2713}" } else { "" }
-                    ));
-                    tokens.push(format!(
-                        "K kernel{}",
-                        if state.show_kernel { " \u{2713}" } else { "" }
-                    ));
-                    tokens.push("i reverse".into());
+    if !state.fullscreen {
+        tokens.push("m menu".into());
+        tokens.push("1-7 panes".into());
+        tokens.push("z pause".into());
+    } else {
+        match state.pane {
+            Pane::Cpu => {
+                if state.cores_focused {
+                    tokens.push("m menu".into());
+                    tokens.push("Tab procs".into());
+                    tokens.push("Enter filter core".into());
+                    tokens.push("arrows nav".into());
+                    if width == 0 || width >= 120 {
+                        tokens.push("p CPU".into());
+                        tokens.push("M MEM".into());
+                        tokens.push("z pause".into());
+                    }
+                } else {
+                    tokens.push("m menu".into());
+                    tokens.push("Tab cores".into());
+                    tokens.push("y/Enter copy".into());
+                    tokens.push("←→ scroll".into());
+                    tokens.push("↑↓ nav".into());
+                    tokens.push("k kill".into());
+                    if width == 0 || width >= 135 {
+                        tokens.push("p CPU".into());
+                        tokens.push("M MEM".into());
+                    }
+                    tokens.push("/ search".into());
+                    if width == 0 || width >= 160 {
+                        tokens.push(format!(
+                            "t tree{}",
+                            if state.tree { " \u{2713}" } else { "" }
+                        ));
+                        tokens.push("s trace".into());
+                    }
+                    if width == 0 || width >= 190 {
+                        tokens.push(format!(
+                            "H threads{}",
+                            if state.show_threads { " \u{2713}" } else { "" }
+                        ));
+                        tokens.push(format!(
+                            "K kernel{}",
+                            if state.show_kernel { " \u{2713}" } else { "" }
+                        ));
+                        tokens.push("i reverse".into());
+                    }
                 }
             }
-        }
-        _ => {
-            tokens.push("m menu".into());
-            tokens.push("1-7 panes".into());
-            tokens.push("z pause".into());
+            _ => {
+                tokens.push("m menu".into());
+                tokens.push("1-7 panes".into());
+                tokens.push("z pause".into());
+            }
         }
     }
 
@@ -1257,7 +1335,10 @@ mod tests {
 
     #[test]
     fn keys_toggle_sort_pause_theme() {
-        let mut s = State::default();
+        let mut s = State {
+            fullscreen: true,
+            ..State::default()
+        };
         handle_key(&mut s, &[], KeyCode::Char('M'), KeyModifiers::empty(), None);
         assert_eq!(s.sort, SortKey::Mem);
         handle_key(&mut s, &[], KeyCode::Char('p'), KeyModifiers::empty(), None);
@@ -1307,6 +1388,72 @@ mod tests {
     }
 
     #[test]
+    fn collection_profile_follows_visible_view() {
+        let mut state = State::default();
+        assert_eq!(visible_profile(&state), CollectionProfile::Dashboard);
+        assert_eq!(
+            collection_plan(&state),
+            CollectionPlan::new(CollectionProfile::Dashboard, false)
+        );
+
+        state.fullscreen = true;
+        for (pane, profile) in [
+            (Pane::Cpu, CollectionProfile::Cpu),
+            (Pane::Io, CollectionProfile::Io),
+            (Pane::Net, CollectionProfile::Net),
+            (Pane::Mem, CollectionProfile::Mem),
+            (Pane::Disks, CollectionProfile::Disks),
+            (Pane::Gpu, CollectionProfile::Gpu),
+            (Pane::History, CollectionProfile::History),
+        ] {
+            state.pane = pane;
+            assert_eq!(visible_profile(&state), profile);
+            assert_eq!(collection_plan(&state), CollectionPlan::new(profile, false));
+        }
+    }
+
+    #[test]
+    fn dashboard_ignores_detail_only_shortcuts() {
+        let mut state = State::default();
+        handle_key(&mut state, &[], KeyCode::Tab, KeyModifiers::empty(), None);
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('/'),
+            KeyModifiers::empty(),
+            None,
+        );
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('s'),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(!state.cores_focused);
+        assert!(!state.searching);
+        assert!(!state.tracing);
+    }
+
+    #[test]
+    fn session_recording_updates_collection_plan() {
+        let mut state = State::default();
+        state.history.is_session_recording = true;
+        assert_eq!(
+            collection_plan(&state),
+            CollectionPlan::new(CollectionProfile::Dashboard, true)
+        );
+
+        state.fullscreen = true;
+        state.pane = Pane::Cpu;
+        assert_eq!(
+            collection_plan(&state),
+            CollectionPlan::new(CollectionProfile::Cpu, true)
+        );
+        assert_eq!(visible_profile(&state), CollectionProfile::Cpu);
+    }
+
+    #[test]
     fn lang_toggles_between_pt_and_en() {
         let mut s = State::default();
         assert_eq!(s.lang, Lang::En);
@@ -1337,7 +1484,10 @@ mod tests {
 
     #[test]
     fn search_typing_and_escape() {
-        let mut s = State::default();
+        let mut s = State {
+            fullscreen: true,
+            ..State::default()
+        };
         handle_key(&mut s, &[], KeyCode::Char('/'), KeyModifiers::empty(), None);
         assert!(s.searching);
         handle_key(&mut s, &[], KeyCode::Char('a'), KeyModifiers::empty(), None);
@@ -1352,6 +1502,7 @@ mod tests {
     fn esc_clears_core_filter_then_quits() {
         let mut s = State {
             core_filter: Some(2),
+            fullscreen: true,
             ..State::default()
         };
         assert!(!handle_key(
@@ -1392,7 +1543,10 @@ mod tests {
 
     #[test]
     fn kill_prompt_requires_selection() {
-        let mut s = State::default();
+        let mut s = State {
+            fullscreen: true,
+            ..State::default()
+        };
         handle_key(&mut s, &[], KeyCode::Char('k'), KeyModifiers::empty(), None);
         assert!(!s.kill_prompt);
         s.selected_pid = Some(99999);
@@ -1406,6 +1560,8 @@ mod tests {
     #[test]
     fn status_line_shows_context() {
         let mut s = State::default();
+        assert!(status_line(&s).contains("[DASHBOARD]"));
+        s.fullscreen = true;
         assert!(status_line(&s).contains("[1:CPU + PROCS | PROCESSES]"));
         s.cores_focused = true;
         assert!(status_line(&s).contains("[1:CPU + PROCS | CORES]"));
@@ -1420,13 +1576,12 @@ mod tests {
         let s = State::default();
         let st100 = status_line_for_width(&s, 100);
         assert!(st100.chars().count() <= 100);
-        assert!(st100.contains("y/Enter copy"));
+        assert!(st100.contains("1-7 panes"));
         assert!(st100.contains("help"));
 
         let st140 = status_line_for_width(&s, 140);
         assert!(st140.chars().count() <= 140);
-        assert!(st140.contains("y/Enter copy"));
-        assert!(st140.contains("scroll"));
+        assert!(st140.contains("1-7 panes"));
         assert!(st140.contains("help"));
     }
 
@@ -1434,6 +1589,7 @@ mod tests {
     fn history_status_line_contains_help() {
         let s = State {
             pane: Pane::History,
+            fullscreen: true,
             ..State::default()
         };
         assert!(status_line_for_width(&s, 80).contains("help"));
@@ -1442,7 +1598,10 @@ mod tests {
 
     #[test]
     fn tab_switches_cpu_subfocus_without_changing_panel() {
-        let mut s = State::default();
+        let mut s = State {
+            fullscreen: true,
+            ..State::default()
+        };
         assert!(!s.cores_focused);
         handle_key(&mut s, &[], KeyCode::Tab, KeyModifiers::empty(), None);
         assert!(s.cores_focused);
@@ -1455,6 +1614,7 @@ mod tests {
     fn horizontal_scroll_with_procs_focused() {
         let mut s = State {
             cores_focused: false,
+            fullscreen: true,
             ..State::default()
         };
         assert_eq!(s.cmd_scroll, 0);
@@ -1518,6 +1678,7 @@ mod tests {
     fn copy_key_sets_status_message() {
         let mut s = State {
             selected_pid: Some(std::process::id()),
+            fullscreen: true,
             ..State::default()
         };
         handle_key(&mut s, &[], KeyCode::Char('y'), KeyModifiers::empty(), None);

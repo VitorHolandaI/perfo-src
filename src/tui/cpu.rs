@@ -17,9 +17,6 @@ const WARN_PCT: f32 = 50.0;
 /// Frequency ratio thresholds (of the core's own max).
 const FREQ_HIGH_RATIO: f32 = 0.66;
 const FREQ_MID_RATIO: f32 = 0.33;
-/// Disk bar thresholds (percentages).
-const DISK_HOT_PCT: f32 = 85.0;
-const DISK_WARN_PCT: f32 = 70.0;
 /// Cap on rendered core rows (defensive against huge machines).
 const MAX_CORE_ROWS: usize = 64;
 
@@ -263,31 +260,9 @@ pub fn draw(frame: &mut Frame, ui: &Ui) {
         }
         draw_status(frame, status_area, ui);
     } else {
-        // Dashboard keeps one compact summary of every subsystem visible;
-        // `m` or the number shortcuts open a detailed view.
-        let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
-        let [cpu_area, mid_area, lower_area, status_area] = Layout::vertical([
-            Constraint::Length(6 + core_lines as u16),
-            Constraint::Length(7),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
-        .areas(frame.area());
-        draw_cpu(frame, cpu_area, ui, true);
-        let [mem_area, disk_area, io_area] = Layout::horizontal([
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
-        ])
-        .areas(mid_area);
-        draw_mem(frame, mem_area, ui);
-        draw_disks(frame, disk_area, ui);
-        draw_io_summary(frame, io_area, ui);
-        let [net_area, proc_area] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(lower_area);
-        draw_net_summary(frame, net_area, ui);
-        draw_process_summary(frame, proc_area, ui);
+        let [dashboard_area, status_area] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+        draw_dashboard(frame, dashboard_area, ui);
         draw_status(frame, status_area, ui);
     }
     if ui.help {
@@ -298,7 +273,146 @@ pub fn draw(frame: &mut Frame, ui: &Ui) {
     }
 }
 
-/// Fullscreen CPU window: one frame around CPU, memory, disks, and processes.
+fn draw_dashboard(frame: &mut Frame, area: Rect, ui: &Ui) {
+    let [top, bottom] =
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
+    let [cpu, memory, io] = Layout::horizontal([
+        Constraint::Percentage(34),
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+    ])
+    .areas(top);
+    let [network, gpu, npu] = Layout::horizontal([
+        Constraint::Percentage(34),
+        Constraint::Percentage(33),
+        Constraint::Percentage(33),
+    ])
+    .areas(bottom);
+
+    let memory_percent = percent(ui.snap.used_mem_bytes, ui.snap.total_mem_bytes);
+    let disks = unique_disks(&ui.snap.disks);
+    let disk_read: u64 = disks.iter().map(|disk| disk.read_bps).sum();
+    let disk_write: u64 = disks.iter().map(|disk| disk.write_bps).sum();
+    let gpu_usage = ui
+        .snap
+        .gpu
+        .devices
+        .iter()
+        .filter_map(|device| device.usage_percent)
+        .max_by(|left, right| left.total_cmp(right));
+    let npu_usage = ui
+        .snap
+        .npu
+        .devices
+        .iter()
+        .filter_map(|device| device.utilization_percent)
+        .max_by(|left, right| left.total_cmp(right));
+
+    let has_gpu = !ui.snap.gpu.devices.is_empty();
+    let has_npu = !ui.snap.npu.devices.is_empty();
+
+    draw_metric_card(
+        frame,
+        cpu,
+        "CPU",
+        Some(ui.snap.overall_percent),
+        true,
+        &format!("load {:.1}", ui.snap.load_avg[0]),
+        ui,
+    );
+    draw_metric_card(
+        frame,
+        memory,
+        "MEMORY",
+        memory_percent,
+        true,
+        &format!(
+            "{} / {}",
+            short_bytes(ui.snap.used_mem_bytes),
+            short_bytes(ui.snap.total_mem_bytes)
+        ),
+        ui,
+    );
+    draw_rate_card(
+        frame,
+        io,
+        "DISK I/O",
+        [("read", disk_read), ("write", disk_write)],
+        ui,
+    );
+    draw_rate_card(
+        frame,
+        network,
+        "NETWORK",
+        [
+            ("down", ui.snap.net.totals.rx_bps),
+            ("up", ui.snap.net.totals.tx_bps),
+        ],
+        ui,
+    );
+    draw_metric_card(frame, gpu, "GPU", gpu_usage, has_gpu, "aggregate usage", ui);
+    draw_metric_card(frame, npu, "NPU", npu_usage, has_npu, "aggregate usage", ui);
+}
+
+fn metric_card_display(value: Option<f32>, detected: bool) -> String {
+    match (value, detected) {
+        (Some(percent), _) => format!("{:>3.0}%  {}", percent, bar(percent, 12)),
+        (None, true) => "--% (sampling)".into(),
+        (None, false) => "not detected".into(),
+    }
+}
+
+fn draw_metric_card(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    value: Option<f32>,
+    detected: bool,
+    detail: &str,
+    ui: &Ui,
+) {
+    let display = metric_card_display(value, detected);
+    draw_summary(
+        frame,
+        area,
+        title,
+        vec![
+            Line::from(Span::styled(display, Style::default().fg(ui.theme.accent))),
+            Line::from(Span::styled(
+                detail.to_string(),
+                Style::default().fg(ui.theme.muted),
+            )),
+        ],
+        &ui.theme,
+    );
+}
+
+fn draw_rate_card(frame: &mut Frame, area: Rect, title: &str, rates: [(&str, u64); 2], ui: &Ui) {
+    draw_summary(
+        frame,
+        area,
+        title,
+        vec![
+            Line::from(format!(
+                "{:<5} {:>7}/s",
+                rates[0].0,
+                short_bytes(rates[0].1)
+            )),
+            Line::from(format!(
+                "{:<5} {:>7}/s",
+                rates[1].0,
+                short_bytes(rates[1].1)
+            )),
+        ],
+        &ui.theme,
+    );
+}
+
+fn percent(used: u64, total: u64) -> Option<f32> {
+    (total > 0).then(|| used as f32 / total as f32 * 100.0)
+}
+
+/// Fullscreen CPU window: aggregate/per-core CPU plus CPU process attribution.
 fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
     let title = match ui.core_filter {
@@ -308,22 +422,12 @@ fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     let outer = block(&title, true, &ui.theme);
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
-    let [cpu_area, mid_area, proc_area] = Layout::vertical([
+    let [cpu_area, proc_area] = Layout::vertical([
         Constraint::Length(6 + core_lines as u16),
-        Constraint::Length(7),
         Constraint::Min(0),
     ])
     .areas(inner);
     draw_cpu(frame, cpu_area, ui, false);
-    let [mem_area, disk_area, gpu_area] = Layout::horizontal([
-        Constraint::Percentage(32),
-        Constraint::Percentage(43),
-        Constraint::Percentage(25),
-    ])
-    .areas(mid_area);
-    draw_mem(frame, mem_area, ui);
-    draw_disks(frame, disk_area, ui);
-    super::detail::draw_gpu_summary(frame, gpu_area, ui);
     draw_processes(frame, proc_area, ui, false);
 }
 
@@ -331,48 +435,6 @@ fn draw_summary(frame: &mut Frame, area: Rect, title: &str, lines: Vec<Line>, th
     let panel = block(title, false, theme);
     frame.render_widget(panel.clone(), area);
     frame.render_widget(Paragraph::new(lines), panel.inner(area));
-}
-
-fn draw_io_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let disks = unique_disks(&ui.snap.disks);
-    let read: u64 = disks.iter().map(|d| d.read_bps).sum();
-    let write: u64 = disks.iter().map(|d| d.write_bps).sum();
-    let lines = vec![
-        Line::from(format!("read  {:>8}/s", short_bytes(read))),
-        Line::from(format!("write {:>8}/s", short_bytes(write))),
-        Line::from(format!(
-            "pressure {:.1}  busy {:.0}%",
-            ui.snap.io_pressure_some[0],
-            disks.iter().map(|d| d.io.busy_pct).sum::<f32>()
-        )),
-        Line::from(format!("disks {}", disks.len())),
-    ];
-    draw_summary(frame, area, "2:IO", lines, &ui.theme);
-}
-
-fn draw_net_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    super::net_summary::draw(frame, area, ui);
-}
-
-fn draw_process_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let lines: Vec<Line> = ui
-        .rows
-        .iter()
-        .take(area.height.saturating_sub(1) as usize)
-        .map(|row| {
-            Line::from(format!(
-                "{:>6} {:>4.1}% {}",
-                row.process.pid,
-                row.process.cpu_percent,
-                truncate_with_scroll(
-                    &row.process.cmd,
-                    ui.cmd_scroll,
-                    area.width.saturating_sub(15) as usize
-                )
-            ))
-        })
-        .collect();
-    draw_summary(frame, area, "1:PROCS", lines, &ui.theme);
 }
 
 pub(super) fn block(title: &str, focused: bool, theme: &Theme) -> Block<'static> {
@@ -418,15 +480,7 @@ fn draw_cpu(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
         Some(t) => format!("    cpu {t:.0}\u{00B0}C"),
         None => String::new(),
     };
-    let mem = format!(
-        "load {:.2} {:.2} {:.2}    mem {}/{}    iowait {:.1}%",
-        la[0],
-        la[1],
-        la[2],
-        human_bytes(ui.snap.used_mem_bytes),
-        human_bytes(ui.snap.total_mem_bytes),
-        ui.snap.iowait_percent
-    );
+    let load = format!("load {:.2} {:.2} {:.2}", la[0], la[1], la[2]);
     let legend = Line::from(vec![
         Span::styled("P ", Style::default().fg(ui.theme.accent)),
         Span::styled("performance   ", Style::default().fg(ui.theme.muted)),
@@ -445,7 +499,7 @@ fn draw_cpu(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
                     Style::default().fg(cpu_color(ui.snap.overall_percent, &ui.theme)),
                 ),
             ]),
-            Line::from(Span::raw(format!("{mem}{temp}"))),
+            Line::from(Span::raw(format!("{load}{temp}"))),
             legend,
         ]),
         overall_area,
@@ -529,161 +583,6 @@ fn draw_cores(frame: &mut Frame, area: Rect, ui: &Ui) {
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines), area);
-}
-
-fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let focused = ui.pane == Pane::Cpu;
-    frame.render_widget(block("4:MEM", focused, &ui.theme), area);
-    let inner = block("4:MEM", focused, &ui.theme).inner(area);
-    let m = &ui.snap.mem;
-    let w = inner.width as usize;
-    let bar_w = w.saturating_sub(8);
-    let frac = |x: u64| (x as f64 / m.total.max(1) as f64 * bar_w as f64) as usize;
-
-    let used_w = frac(m.used);
-    let cache_w = frac(m.cache);
-    let buf_w = frac(m.buffers);
-    let free_w = bar_w.saturating_sub(used_w + cache_w + buf_w);
-    let pct = m.used as f32 / m.total.max(1) as f32 * 100.0;
-
-    let bar_line = Line::from(vec![
-        Span::styled(
-            bar_glyph(pct).to_string().repeat(used_w),
-            Style::default().fg(ui.theme.green),
-        ),
-        Span::styled(
-            bar_glyph(m.cache as f32 / m.total.max(1) as f32 * 100.0)
-                .to_string()
-                .repeat(cache_w),
-            Style::default().fg(ui.theme.yellow),
-        ),
-        Span::styled(
-            bar_glyph(m.buffers as f32 / m.total.max(1) as f32 * 100.0)
-                .to_string()
-                .repeat(buf_w),
-            Style::default().fg(ui.theme.accent),
-        ),
-        Span::styled("·".repeat(free_w), Style::default().fg(ui.theme.muted)),
-        Span::styled(
-            format!(" {:>4.0}%", pct),
-            Style::default()
-                .add_modifier(Modifier::BOLD)
-                .fg(ui.theme.fg),
-        ),
-    ]);
-
-    let detail = format!(
-        "used {}  cache {}  buf {}  free {}",
-        short_bytes(m.used),
-        short_bytes(m.cache),
-        short_bytes(m.buffers),
-        short_bytes(m.free)
-    );
-
-    let swap_line = if m.swap_total > 0 {
-        let swap_used_w = (m.swap_used as f64 / m.swap_total as f64 * bar_w as f64) as usize;
-        let swap_pct = m.swap_used as f32 / m.swap_total as f32 * 100.0;
-        Line::from(vec![
-            Span::styled("swap ", Style::default().fg(ui.theme.muted)),
-            Span::styled(
-                bar_glyph(swap_pct).to_string().repeat(swap_used_w),
-                Style::default().fg(ui.theme.yellow),
-            ),
-            Span::styled(
-                "·".repeat(bar_w.saturating_sub(swap_used_w)),
-                Style::default().fg(ui.theme.muted),
-            ),
-            Span::styled(
-                format!(
-                    " {:>4.0}% {}/{}",
-                    swap_pct,
-                    short_bytes(m.swap_used),
-                    short_bytes(m.swap_total)
-                ),
-                Style::default().fg(ui.theme.muted),
-            ),
-        ])
-    } else {
-        Line::from(Span::styled(
-            "swap: off",
-            Style::default().fg(ui.theme.muted),
-        ))
-    };
-
-    let psi_color = if m.psi_some_10 > 10.0 {
-        ui.theme.red
-    } else if m.psi_some_10 > 5.0 {
-        ui.theme.yellow
-    } else {
-        ui.theme.green
-    };
-    let psi_line = Line::from(vec![
-        Span::styled("psi ", Style::default().fg(ui.theme.muted)),
-        Span::styled(
-            format!(
-                "{:.1} {:.1} {:.1}%",
-                m.psi_some_10, m.psi_some_60, m.psi_some_300
-            ),
-            Style::default().fg(psi_color),
-        ),
-    ]);
-
-    frame.render_widget(
-        Paragraph::new(vec![
-            bar_line,
-            Line::from(Span::raw(detail)),
-            swap_line,
-            psi_line,
-        ]),
-        inner,
-    );
-}
-
-fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
-    frame.render_widget(block("5:DISKS", false, &ui.theme), area);
-    let inner = block("5:DISKS", false, &ui.theme).inner(area);
-    let mut lines: Vec<Line> = Vec::new();
-    let w = inner.width as usize;
-    // name(12) + 1 + bar + pct(18) + 2 + mount(12)
-    let bar_w = w.saturating_sub(45);
-    for d in unique_disks(&ui.snap.disks) {
-        let color = if d.percent >= DISK_HOT_PCT {
-            ui.theme.red
-        } else if d.percent >= DISK_WARN_PCT {
-            ui.theme.yellow
-        } else {
-            ui.theme.green
-        };
-        let filled = ((d.percent.clamp(0.0, 100.0) / 100.0) * bar_w as f32).round() as usize;
-        let filled = filled.min(bar_w);
-        let name = d.name.rsplit('/').next().unwrap_or(&d.name);
-        let mount = truncate(&d.mount, 12);
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("{:<11} ", truncate(name, 11)),
-                Style::default().fg(ui.theme.muted),
-            ),
-            Span::styled(
-                bar_glyph(d.percent).to_string().repeat(filled),
-                Style::default().fg(color),
-            ),
-            Span::styled(
-                "·".repeat(bar_w - filled),
-                Style::default().fg(ui.theme.muted),
-            ),
-            Span::styled(
-                format!(
-                    " {:>3.0}% {:>5}/{}",
-                    d.percent,
-                    short_bytes(d.used_bytes),
-                    short_bytes(d.total_bytes)
-                ),
-                Style::default().fg(ui.theme.muted),
-            ),
-            Span::styled(format!("  {mount}"), Style::default().fg(ui.theme.fg)),
-        ]));
-    }
-    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Full-pane disk I/O view (menu 2 -> IO): PSI pressure, per-disk iostat-style
@@ -1469,5 +1368,12 @@ mod tests {
         assert_eq!(temp_color(Some(60.0), &t), t.yellow);
         assert_eq!(temp_color(Some(80.0), &t), t.red);
         assert_eq!(temp_color(None, &t), t.green);
+    }
+
+    #[test]
+    fn metric_card_display_formats_values_and_distinguishes_sampling_from_missing() {
+        assert_eq!(metric_card_display(Some(50.0), true), " 50%  ++++++······");
+        assert_eq!(metric_card_display(None, true), "--% (sampling)");
+        assert_eq!(metric_card_display(None, false), "not detected");
     }
 }
