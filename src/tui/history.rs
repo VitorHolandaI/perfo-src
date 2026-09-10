@@ -13,7 +13,7 @@ use ratatui::{
 use serde::{Deserialize, Serialize};
 
 use super::cpu::{self, Pane, Ui};
-use crate::data::cpu::CpuSnapshot;
+use crate::data::cpu::{CpuSnapshot, RecordingMask};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum HistoryMetric {
@@ -149,6 +149,9 @@ pub struct HistoryState {
     pub is_session_recording: bool,
     pub session_record_buffer: Vec<HistorySample>,
     pub target_record_seconds: usize,
+    pub recording_mask: RecordingMask,
+    pub record_modal: bool,
+    pub record_modal_idx: usize,
 
     // Saved replay playback
     pub loaded_session_id: Option<String>,
@@ -175,6 +178,9 @@ impl Default for HistoryState {
             is_session_recording: false,
             session_record_buffer: Vec::new(),
             target_record_seconds: 120,
+            recording_mask: RecordingMask::ALL,
+            record_modal: false,
+            record_modal_idx: 0,
             loaded_session_id: None,
             loaded_session_title: None,
             loaded_samples: Vec::new(),
@@ -318,7 +324,50 @@ impl HistoryState {
         };
 
         if self.is_session_recording {
-            self.session_record_buffer.push(sample.clone());
+            let mut rec_sample = sample.clone();
+            if !self.recording_mask.cpu {
+                rec_sample.cpu = 0.0;
+            }
+            if !self.recording_mask.mem {
+                rec_sample.mem = 0.0;
+            }
+            if !self.recording_mask.io {
+                rec_sample.io_mb = 0.0;
+                rec_sample.read_bps = 0;
+                rec_sample.write_bps = 0;
+            }
+            if !self.recording_mask.net {
+                rec_sample.net_rx_bps = 0;
+                rec_sample.net_tx_bps = 0;
+            }
+            if !self.recording_mask.gpu {
+                rec_sample.gpu = 0.0;
+            }
+            for p in &mut rec_sample.top_procs {
+                if !self.recording_mask.cpu {
+                    p.cpu_percent = 0.0;
+                }
+                if !self.recording_mask.mem {
+                    p.mem_bytes = 0;
+                }
+                if !self.recording_mask.io {
+                    p.read_bps = 0;
+                    p.write_bps = 0;
+                }
+                if !self.recording_mask.net {
+                    p.net_rx_bps = 0;
+                    p.net_tx_bps = 0;
+                    p.net_rx_bytes = 0;
+                    p.net_tx_bytes = 0;
+                    p.tcp_est = 0;
+                    p.udp = 0;
+                }
+                if !self.recording_mask.gpu {
+                    p.gpu_percent = 0.0;
+                    p.vram_bytes = 0;
+                }
+            }
+            self.session_record_buffer.push(rec_sample);
             if self.session_record_buffer.len() >= self.target_record_seconds {
                 self.stop_and_save_session();
             }
@@ -455,7 +504,8 @@ impl HistoryState {
         let dur = self.session_record_buffer.len() as u64;
         let val = serde_json::to_value(&self.session_record_buffer)
             .unwrap_or(serde_json::Value::Array(Vec::new()));
-        match crate::recordings::save_session_data(val, dur, "ALL") {
+        let focus = self.recording_mask.summary();
+        match crate::recordings::save_session_data(val, dur, &focus) {
             Ok(meta) => {
                 let rec_id = meta.id.clone();
                 let dur_str = meta.duration.clone();
@@ -464,7 +514,7 @@ impl HistoryState {
                     self.scrub_index = Some(self.loaded_samples.len() - 1);
                 }
                 self.export_status = Some((
-                    format!("Saved session: {} ({})", rec_id, dur_str),
+                    format!("Saved session: {} ({}) [{}]", rec_id, dur_str, focus),
                     Instant::now(),
                 ));
             }
@@ -475,13 +525,59 @@ impl HistoryState {
         self.session_record_buffer.clear();
     }
 
+    pub fn open_record_modal(&mut self) {
+        self.record_modal = true;
+        self.record_modal_idx = 0;
+    }
+
+    pub fn close_record_modal(&mut self) {
+        self.record_modal = false;
+    }
+
+    pub fn record_modal_next(&mut self) {
+        self.record_modal_idx = (self.record_modal_idx + 1) % 8;
+    }
+
+    pub fn record_modal_prev(&mut self) {
+        self.record_modal_idx = if self.record_modal_idx == 0 {
+            7
+        } else {
+            self.record_modal_idx - 1
+        };
+    }
+
+    pub fn toggle_record_mask_item(&mut self, idx: usize) {
+        let count = self.recording_mask.count();
+        let target = match idx {
+            0 => &mut self.recording_mask.cpu,
+            1 => &mut self.recording_mask.mem,
+            2 => &mut self.recording_mask.io,
+            3 => &mut self.recording_mask.net,
+            4 => &mut self.recording_mask.gpu,
+            5 => &mut self.recording_mask.npu,
+            _ => return,
+        };
+        if !*target || count > 1 {
+            *target = !*target;
+        }
+    }
+
+    pub fn start_session_recording(&mut self) {
+        self.record_modal = false;
+        self.is_session_recording = true;
+        self.session_record_buffer.clear();
+        let summary = self.recording_mask.summary();
+        self.export_status = Some((
+            format!("Recording session [{}] started...", summary),
+            Instant::now(),
+        ));
+    }
+
     pub fn toggle_session_recording(&mut self) {
         if self.is_session_recording {
             self.stop_and_save_session();
         } else {
-            self.is_session_recording = true;
-            self.session_record_buffer.clear();
-            self.export_status = Some(("Recording session started...".to_string(), Instant::now()));
+            self.open_record_modal();
         }
     }
 
@@ -892,6 +988,8 @@ pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState
 
     if state.sessions_modal {
         draw_sessions_modal(frame, area, ui, state);
+    } else if state.record_modal {
+        draw_record_modal(frame, area, ui, state);
     }
 }
 
@@ -903,8 +1001,17 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         let c_s = cur % 60;
         let t_m = tot / 60;
         let t_s = tot % 60;
+        let summary = state.recording_mask.summary();
+        let tag_text = if summary == "ALL" {
+            format!("● REC {:02}:{:02}/{:02}:{:02}", c_m, c_s, t_m, t_s)
+        } else {
+            format!(
+                "● REC {:02}:{:02}/{:02}:{:02} [{}]",
+                c_m, c_s, t_m, t_s, summary
+            )
+        };
         Span::styled(
-            format!("● REC {:02}:{:02}/{:02}:{:02}", c_m, c_s, t_m, t_s),
+            tag_text,
             Style::default()
                 .fg(ui.theme.red)
                 .add_modifier(Modifier::BOLD),
@@ -1709,6 +1816,159 @@ fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistorySt
     frame.render_widget(Paragraph::new(help_line), help_area);
 }
 
+fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let bg = match ui.theme.bg {
+        Color::Reset => Color::Black,
+        c => c,
+    };
+
+    let w = 58u16.min(area.width.saturating_sub(4));
+    let h = 13u16.min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 2;
+    let modal_area = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+
+    frame.render_widget(Clear, modal_area);
+
+    let title = " RECORDING SUBSYSTEMS ";
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ui.theme.accent))
+        .style(Style::default().bg(bg))
+        .title(title);
+    frame.render_widget(block.clone(), modal_area);
+    let inner = block.inner(modal_area);
+
+    if inner.height < 6 || inner.width < 24 {
+        return;
+    }
+
+    let items = [
+        (
+            0,
+            "1",
+            "CPU",
+            "Usage, Cores, Threads, CPU Procs",
+            state.recording_mask.cpu,
+        ),
+        (
+            1,
+            "2",
+            "Memory",
+            "RAM, Swap, Process Memory",
+            state.recording_mask.mem,
+        ),
+        (
+            2,
+            "3",
+            "Disk I/O",
+            "Read/Write Rates, IO Procs",
+            state.recording_mask.io,
+        ),
+        (
+            3,
+            "4",
+            "Network",
+            "Bandwidth, Sockets, Net Procs",
+            state.recording_mask.net,
+        ),
+        (
+            4,
+            "5",
+            "GPU",
+            "Usage, VRAM, GPU Procs",
+            state.recording_mask.gpu,
+        ),
+        (
+            5,
+            "6",
+            "NPU",
+            "Neural Acceleration Engine",
+            state.recording_mask.npu,
+        ),
+    ];
+
+    let mut lines = Vec::new();
+    for (idx, num, name, desc, checked) in items {
+        let is_selected = state.record_modal_idx == idx;
+        let prefix = if is_selected { "> " } else { "  " };
+        let box_str = if checked { "[x] " } else { "[ ] " };
+        let box_style = if checked {
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(ui.theme.muted)
+        };
+        let label_style = if is_selected {
+            Style::default()
+                .fg(ui.theme.fg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(ui.theme.fg)
+        };
+        let desc_style = Style::default().fg(ui.theme.muted);
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                prefix,
+                if is_selected {
+                    Style::default().fg(ui.theme.accent)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(box_str, box_style),
+            Span::styled(format!("{}. {:<8}", num, name), label_style),
+            Span::styled(format!(" {}", desc), desc_style),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    let btn_start_selected = state.record_modal_idx == 6;
+    let btn_cancel_selected = state.record_modal_idx == 7;
+
+    let start_style = if btn_start_selected {
+        Style::default()
+            .bg(ui.theme.accent)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(ui.theme.accent)
+            .add_modifier(Modifier::BOLD)
+    };
+    let cancel_style = if btn_cancel_selected {
+        Style::default()
+            .bg(ui.theme.muted)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ui.theme.muted)
+    };
+
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("[ Start Recording (r / Enter) ]", start_style),
+        Span::raw("   "),
+        Span::styled("[ Cancel (Esc) ]", cancel_style),
+    ]));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "  Space/Enter: Toggle  1-6: Direct Toggle  Esc: Cancel",
+        Style::default().fg(ui.theme.muted),
+    )]));
+
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 fn clean_process_name(name: &str, cmd: &str, pid: u32) -> String {
     let raw = if !name.is_empty() {
         name
@@ -1840,5 +2100,79 @@ mod tests {
             "python3"
         );
         assert_eq!(clean_process_name("", "", 42), "42");
+    }
+
+    #[test]
+    fn record_modal_navigation_and_toggle() {
+        let mut state = HistoryState::default();
+        assert!(!state.record_modal);
+        assert_eq!(state.record_modal_idx, 0);
+
+        state.open_record_modal();
+        assert!(state.record_modal);
+
+        state.record_modal_next();
+        assert_eq!(state.record_modal_idx, 1);
+        state.record_modal_prev();
+        assert_eq!(state.record_modal_idx, 0);
+        state.record_modal_prev();
+        assert_eq!(state.record_modal_idx, 7);
+        state.record_modal_next();
+        assert_eq!(state.record_modal_idx, 0);
+
+        // Toggle CPU (idx 0) off
+        assert!(state.recording_mask.cpu);
+        state.toggle_record_mask_item(0);
+        assert!(!state.recording_mask.cpu);
+
+        // Toggle CPU back on
+        state.toggle_record_mask_item(0);
+        assert!(state.recording_mask.cpu);
+
+        // Guard: Cannot uncheck the last remaining item
+        state.recording_mask = RecordingMask {
+            cpu: true,
+            mem: false,
+            io: false,
+            net: false,
+            gpu: false,
+            npu: false,
+        };
+        state.toggle_record_mask_item(0);
+        assert!(state.recording_mask.cpu); // Remains true
+
+        state.close_record_modal();
+        assert!(!state.record_modal);
+    }
+
+    #[test]
+    fn selective_recording_masks_samples() {
+        let mut state = HistoryState {
+            recording_mask: RecordingMask {
+                cpu: true,
+                mem: false,
+                io: false,
+                net: false,
+                gpu: false,
+                npu: false,
+            },
+            ..Default::default()
+        };
+        state.start_session_recording();
+        assert!(state.is_session_recording);
+
+        let mut monitor = crate::data::cpu::CpuMonitor::new();
+        let snap = monitor.snapshot();
+        state.record_snapshot(&snap);
+
+        assert_eq!(state.session_record_buffer.len(), 1);
+        let rec = &state.session_record_buffer[0];
+        assert_eq!(rec.mem, 0.0);
+        assert_eq!(rec.io_mb, 0.0);
+        assert_eq!(rec.read_bps, 0);
+        assert_eq!(rec.write_bps, 0);
+        assert_eq!(rec.gpu, 0.0);
+        assert_eq!(rec.net_rx_bps, 0);
+        assert_eq!(rec.net_tx_bps, 0);
     }
 }

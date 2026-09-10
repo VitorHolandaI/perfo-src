@@ -57,7 +57,11 @@ fn visible_profile(state: &State) -> CollectionProfile {
 }
 
 fn collection_plan(state: &State) -> CollectionPlan {
-    CollectionPlan::new(visible_profile(state), state.history.is_session_recording)
+    CollectionPlan::with_recording_mask(
+        visible_profile(state),
+        state.history.is_session_recording,
+        state.history.recording_mask,
+    )
 }
 
 /// UI language for help text.
@@ -413,6 +417,10 @@ fn handle_key(
         handle_sessions_modal_key(state, code);
         return false;
     }
+    if state.pane == Pane::History && state.history.record_modal {
+        handle_record_modal_key(state, code);
+        return false;
+    }
     if state.tracing {
         handle_tracing_key(state, code);
         return false;
@@ -453,6 +461,56 @@ fn handle_sessions_modal_key(state: &mut State, code: KeyCode) {
         KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
             state.history.modal_delete_selected();
         }
+        _ => {}
+    }
+}
+
+fn handle_record_modal_key(state: &mut State, code: KeyCode) {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+            state.history.close_record_modal();
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            state.history.start_session_recording();
+        }
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
+            state.history.record_modal_prev();
+        }
+        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
+            state.history.record_modal_next();
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if state.history.record_modal_idx == 7 {
+                state.history.record_modal_idx = 6;
+            }
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            if state.history.record_modal_idx == 6 {
+                state.history.record_modal_idx = 7;
+            }
+        }
+        KeyCode::Char('1') => state.history.toggle_record_mask_item(0),
+        KeyCode::Char('2') => state.history.toggle_record_mask_item(1),
+        KeyCode::Char('3') => state.history.toggle_record_mask_item(2),
+        KeyCode::Char('4') => state.history.toggle_record_mask_item(3),
+        KeyCode::Char('5') => state.history.toggle_record_mask_item(4),
+        KeyCode::Char('6') => state.history.toggle_record_mask_item(5),
+        KeyCode::Char(' ') => match state.history.record_modal_idx {
+            0..=5 => state
+                .history
+                .toggle_record_mask_item(state.history.record_modal_idx),
+            6 => state.history.start_session_recording(),
+            7 => state.history.close_record_modal(),
+            _ => {}
+        },
+        KeyCode::Enter => match state.history.record_modal_idx {
+            0..=5 => state
+                .history
+                .toggle_record_mask_item(state.history.record_modal_idx),
+            6 => state.history.start_session_recording(),
+            7 => state.history.close_record_modal(),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -1451,6 +1509,73 @@ mod tests {
             CollectionPlan::new(CollectionProfile::Cpu, true)
         );
         assert_eq!(visible_profile(&state), CollectionProfile::Cpu);
+    }
+
+    #[test]
+    fn history_r_opens_record_modal_and_handles_keys() {
+        let mut state = State {
+            fullscreen: true,
+            pane: Pane::History,
+            ..Default::default()
+        };
+        assert!(!state.history.record_modal);
+
+        // Press 'r' to open modal
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('r'),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(state.history.record_modal);
+        assert_eq!(state.history.record_modal_idx, 0);
+
+        // Direct toggle '2' toggles MEM (idx 1)
+        assert!(state.history.recording_mask.mem);
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('2'),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(!state.history.recording_mask.mem);
+
+        // Press Down to move to item 1
+        handle_key(&mut state, &[], KeyCode::Down, KeyModifiers::empty(), None);
+        assert_eq!(state.history.record_modal_idx, 1);
+
+        // Press Space to toggle MEM back on
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char(' '),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(state.history.recording_mask.mem);
+
+        // Press 'r' in modal to start recording
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('r'),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(!state.history.record_modal);
+        assert!(state.history.is_session_recording);
+
+        // Press 'r' again while recording stops and saves
+        handle_key(
+            &mut state,
+            &[],
+            KeyCode::Char('r'),
+            KeyModifiers::empty(),
+            None,
+        );
+        assert!(!state.history.is_session_recording);
     }
 
     #[test]

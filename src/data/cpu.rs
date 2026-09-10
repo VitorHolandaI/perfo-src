@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sysinfo::{
     Components, CpuRefreshKind, MemoryRefreshKind, ProcessRefreshKind, ProcessesToUpdate,
     RefreshKind, System, UpdateKind,
@@ -311,15 +311,122 @@ impl CollectionProfile {
                 process_cpu: true,
                 process_memory: true,
                 process_tasks: true,
+                process_affinity: true,
                 process_io: true,
                 disks: true,
                 network: true,
                 network_processes: true,
                 gpu: true,
                 gpu_processes: true,
+                npu: true,
                 ..CollectionNeeds::default()
             },
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordingMask {
+    pub cpu: bool,
+    pub mem: bool,
+    pub io: bool,
+    pub net: bool,
+    pub gpu: bool,
+    pub npu: bool,
+}
+
+impl RecordingMask {
+    pub const ALL: Self = Self {
+        cpu: true,
+        mem: true,
+        io: true,
+        net: true,
+        gpu: true,
+        npu: true,
+    };
+
+    pub const fn is_empty(&self) -> bool {
+        !self.cpu && !self.mem && !self.io && !self.net && !self.gpu && !self.npu
+    }
+
+    pub const fn count(&self) -> usize {
+        let mut n = 0;
+        if self.cpu {
+            n += 1;
+        }
+        if self.mem {
+            n += 1;
+        }
+        if self.io {
+            n += 1;
+        }
+        if self.net {
+            n += 1;
+        }
+        if self.gpu {
+            n += 1;
+        }
+        if self.npu {
+            n += 1;
+        }
+        n
+    }
+
+    pub fn summary(&self) -> String {
+        if self.count() == 6 {
+            return "ALL".to_string();
+        }
+        let mut parts = Vec::new();
+        if self.cpu {
+            parts.push("CPU");
+        }
+        if self.mem {
+            parts.push("MEM");
+        }
+        if self.io {
+            parts.push("IO");
+        }
+        if self.net {
+            parts.push("NET");
+        }
+        if self.gpu {
+            parts.push("GPU");
+        }
+        if self.npu {
+            parts.push("NPU");
+        }
+        if parts.is_empty() {
+            "NONE".to_string()
+        } else {
+            parts.join(",")
+        }
+    }
+
+    fn to_needs(self) -> CollectionNeeds {
+        CollectionNeeds {
+            cpu: self.cpu,
+            cpu_details: self.cpu,
+            processes: self.cpu || self.mem || self.io || self.net || self.gpu,
+            process_cpu: self.cpu,
+            process_tasks: self.cpu,
+            process_affinity: self.cpu,
+            memory: self.mem,
+            process_memory: self.mem,
+            disks: self.io,
+            process_io: self.io,
+            network: self.net,
+            network_processes: self.net,
+            gpu: self.gpu,
+            gpu_processes: self.gpu,
+            npu: self.npu,
+            ..CollectionNeeds::default()
+        }
+    }
+}
+
+impl Default for RecordingMask {
+    fn default() -> Self {
+        Self::ALL
     }
 }
 
@@ -327,26 +434,47 @@ impl CollectionProfile {
 pub struct CollectionPlan {
     pub visible: CollectionProfile,
     pub recording: bool,
+    pub recording_mask: RecordingMask,
 }
 
 impl CollectionPlan {
     pub const fn new(visible: CollectionProfile, recording: bool) -> Self {
-        Self { visible, recording }
+        Self {
+            visible,
+            recording,
+            recording_mask: RecordingMask::ALL,
+        }
+    }
+
+    pub const fn with_recording_mask(
+        visible: CollectionProfile,
+        recording: bool,
+        recording_mask: RecordingMask,
+    ) -> Self {
+        Self {
+            visible,
+            recording,
+            recording_mask,
+        }
     }
 
     pub const fn for_profile(visible: CollectionProfile) -> Self {
         Self {
             visible,
             recording: false,
+            recording_mask: RecordingMask::ALL,
         }
     }
 
     fn needs(self) -> CollectionNeeds {
-        let visible_needs = self.visible.needs();
         if self.recording {
-            visible_needs.union(CollectionProfile::History.needs())
+            let base_needs = match self.visible {
+                CollectionProfile::History => CollectionNeeds::default(),
+                other => other.needs(),
+            };
+            base_needs.union(self.recording_mask.to_needs())
         } else {
-            visible_needs
+            self.visible.needs()
         }
     }
 }
@@ -1251,6 +1379,41 @@ mod tests {
         assert!(non_rec_needs.cpu_details);
         assert!(!non_rec_needs.disks);
         assert!(!non_rec_needs.network);
+    }
+
+    #[test]
+    fn collection_plan_respects_selective_recording_mask() {
+        let mask = RecordingMask {
+            cpu: true,
+            mem: true,
+            io: false,
+            net: false,
+            gpu: false,
+            npu: false,
+        };
+        assert_eq!(mask.count(), 2);
+        assert_eq!(mask.summary(), "CPU,MEM");
+
+        let plan = CollectionPlan::with_recording_mask(CollectionProfile::Cpu, true, mask);
+        let needs = plan.needs();
+        assert!(needs.cpu);
+        assert!(needs.cpu_details);
+        assert!(needs.memory);
+        assert!(!needs.disks);
+        assert!(!needs.process_io);
+        assert!(!needs.network);
+        assert!(!needs.network_processes);
+        assert!(!needs.gpu);
+
+        let hist_plan = CollectionPlan::with_recording_mask(CollectionProfile::History, true, mask);
+        let hist_needs = hist_plan.needs();
+        assert!(hist_needs.cpu);
+        assert!(hist_needs.memory);
+        assert!(!hist_needs.disks);
+        assert!(!hist_needs.process_io);
+        assert!(!hist_needs.network);
+        assert!(!hist_needs.network_processes);
+        assert!(!hist_needs.gpu);
     }
 
     #[test]

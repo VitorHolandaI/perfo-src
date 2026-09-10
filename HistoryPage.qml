@@ -42,6 +42,11 @@ Column {
   property bool isSessionRecording: false
   property var sessionRecordBuffer: []
   property int targetRecordSeconds: 120
+  property bool recordCpu: true
+  property bool recordMem: true
+  property bool recordIo: true
+  property bool recordNet: true
+  property bool recordGpu: true
 
   signal toggleRecordingRequested()
   signal requestCapacity(int samples)
@@ -85,8 +90,45 @@ Column {
 
   onLiveSampleChanged: {
     if (isSessionRecording && liveSample) {
+      var s = Object.assign({}, liveSample)
+      if (!recordCpu) s.cpu = 0.0
+      if (!recordMem) s.mem = 0.0
+      if (!recordIo) {
+        s.io_mb = 0.0
+        s.read_bps = 0
+        s.write_bps = 0
+      }
+      if (!recordNet) {
+        s.net_rx_bps = 0
+        s.net_tx_bps = 0
+      }
+      if (!recordGpu) s.gpu = 0.0
+      if (s.top_procs && Array.isArray(s.top_procs)) {
+        s.top_procs = s.top_procs.map(function(p) {
+          var cp = Object.assign({}, p)
+          if (!recordCpu) cp.cpu_percent = 0.0
+          if (!recordMem) cp.mem_bytes = 0
+          if (!recordIo) {
+            cp.read_bps = 0
+            cp.write_bps = 0
+          }
+          if (!recordNet) {
+            cp.net_rx_bps = 0
+            cp.net_tx_bps = 0
+            cp.net_rx_bytes = 0
+            cp.net_tx_bytes = 0
+            cp.tcp_est = 0
+            cp.udp = 0
+          }
+          if (!recordGpu) {
+            cp.gpu_percent = 0.0
+            cp.vram_bytes = 0
+          }
+          return cp
+        })
+      }
       var nextBuf = sessionRecordBuffer.slice()
-      nextBuf.push(liveSample)
+      nextBuf.push(s)
       sessionRecordBuffer = nextBuf
       if (sessionRecordBuffer.length >= targetRecordSeconds) {
         historyPage.stopAndSaveSession()
@@ -624,6 +666,60 @@ Column {
         }
       }
 
+      // Selective recording subsystem pills
+      Row {
+        spacing: Style.space(2)
+        anchors.verticalCenter: parent.verticalCenter
+        opacity: historyPage.isSessionRecording ? 0.85 : 1.0
+
+        Repeater {
+          model: [
+            { id: "cpu", label: "CPU", prop: "recordCpu" },
+            { id: "mem", label: "MEM", prop: "recordMem" },
+            { id: "io",  label: "IO",  prop: "recordIo" },
+            { id: "net", label: "NET", prop: "recordNet" },
+            { id: "gpu", label: "GPU", prop: "recordGpu" }
+          ]
+          delegate: Rectangle {
+            id: recPillBox
+            readonly property bool isChecked: historyPage[modelData.prop]
+            width: recPillText.implicitWidth + Style.space(8)
+            height: Style.space(18)
+            radius: Style.cornerRadius
+            color: isChecked ? (historyPage.isSessionRecording ? Color.urgent : Color.accent) : "transparent"
+            border.color: isChecked ? (historyPage.isSessionRecording ? Color.urgent : Color.accent) : historyPage.foreground
+            border.width: 1
+            opacity: isChecked ? 1.0 : 0.45
+
+            PlainText {
+              id: recPillText
+              anchors.centerIn: parent
+              text: (isChecked ? "✓ " : "") + modelData.label
+              color: isChecked ? (historyPage.isSessionRecording ? "#ffffff" : "#000000") : historyPage.foreground
+              font.family: historyPage.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: isChecked
+            }
+
+            MouseArea {
+              anchors.fill: parent
+              enabled: !historyPage.isSessionRecording
+              onClicked: {
+                var activeCount = (historyPage.recordCpu ? 1 : 0) +
+                                  (historyPage.recordMem ? 1 : 0) +
+                                  (historyPage.recordIo ? 1 : 0) +
+                                  (historyPage.recordNet ? 1 : 0) +
+                                  (historyPage.recordGpu ? 1 : 0)
+                if (isChecked && activeCount <= 1) {
+                  return
+                }
+                historyPage[modelData.prop] = !isChecked
+              }
+            }
+          }
+        }
+      }
+
       // PLAY REC / PAUSE button
       Rectangle {
         width: playButtonText.implicitWidth + Style.space(10)
@@ -1149,7 +1245,7 @@ Column {
 
               PlainText {
                 anchors.verticalCenter: parent.verticalCenter
-                text: modelData.duration + " (" + modelData.sample_count + "s)"
+                text: modelData.duration + " (" + modelData.sample_count + "s)" + (modelData.metric_focus && modelData.metric_focus !== "ALL" ? (" [" + modelData.metric_focus + "]") : "")
                 color: historyPage.foreground
                 opacity: 0.6
                 font.family: historyPage.fontFamily
@@ -2074,13 +2170,25 @@ Column {
     stopAndSaveSession()
   }
 
+  function recordingFocusSummary() {
+    var parts = []
+    if (recordCpu) parts.push("CPU")
+    if (recordMem) parts.push("MEM")
+    if (recordIo) parts.push("IO")
+    if (recordNet) parts.push("NET")
+    if (recordGpu) parts.push("GPU")
+    if (parts.length === 5) return "ALL"
+    if (parts.length === 0) return "NONE"
+    return parts.join(",")
+  }
+
   function saveSessionData(buf, targetSecs) {
     if (!buf || buf.length === 0) return
     var actualDur = buf.length
     var payload = {
       samples: buf,
       duration_seconds: actualDur,
-      metric_focus: "ALL"
+      metric_focus: recordingFocusSummary()
     }
     var jsonStr = JSON.stringify(payload)
     if (saveRecordingProc.running) {
