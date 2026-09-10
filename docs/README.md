@@ -12,6 +12,7 @@ implementation decisions used by `perfo`.
 - [Process metrics](runtime/processes.md)
 - [UI pages and formulas](ui-pages.md)
 - [Implementation decisions](architecture.md)
+- [Performance and memory architecture](performance-and-memory-architecture.md)
 
 ## Scope
 
