@@ -227,19 +227,82 @@ fn fmt_args(pid: i32, regs: &user_regs_struct, name: &str) -> String {
 
 /// Core ptrace loop: emits one complete line per traced syscall via `emit`.
 /// Stops (and detaches) when INTERRUPTED is set or the tracee exits.
+/// Closes off a call whose name was already printed but whose return never
+/// arrived, which is what every non-exit stop leaves behind.
+fn flush_interrupted(pending: &mut Option<String>, emit: &mut dyn FnMut(String)) {
+    if pending.take().is_some() {
+        emit(" = <interrupted>".into());
+    }
+}
+
+/// The tracee's closing line, if this wait status says it is gone.
+fn exit_report(status: c_int) -> Option<String> {
+    if wifexited(status) {
+        return Some(format!("+++ exited with {} +++", status >> 8));
+    }
+    if wifsignaled(status) {
+        return Some(format!("+++ killed by signal {} +++", wtermsig(status)));
+    }
+    None
+}
+
+/// One syscall stop, entry or exit.
+///
+/// Stops strictly alternate, so the side only has to be classified once: the
+/// kernel parks -ENOSYS in rax at entry and leaves the syscall number in
+/// orig_rax, and every stop after that is the opposite of the last.
+fn handle_syscall_stop(
+    pid: i32,
+    filter: Option<&str>,
+    at_entry: &mut Option<bool>,
+    pending: &mut Option<String>,
+    emit: &mut dyn FnMut(String),
+) -> io::Result<()> {
+    let regs = get_regs(pid)?;
+    let entry = match *at_entry {
+        Some(previous) => !previous,
+        None => regs.rax as i64 == -ENOSYS,
+    };
+    *at_entry = Some(entry);
+
+    if !entry {
+        if let Some(name) = pending.take() {
+            emit(format!("{name} = {}", fmt_ret(regs.rax as i64)));
+        }
+        return Ok(());
+    }
+
+    let name = syscalls::name(regs.orig_rax as usize).unwrap_or("syscall?");
+    if filter.is_none_or(|f| name.contains(f)) {
+        flush_interrupted(pending, emit);
+        *pending = Some(format!("{name}({})", fmt_args(pid, &regs, name)));
+    }
+    Ok(())
+}
+
+/// Detaches, tolerating a tracee that has already gone.
+fn detach(pid: i32) -> io::Result<()> {
+    let result = ptrace_checked(
+        libc::PTRACE_DETACH as _,
+        pid,
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    );
+    match result {
+        // ESRCH here only means the process died first, which is not a failure
+        // of the trace.
+        Err(error) if error.raw_os_error() != Some(libc::ESRCH) => Err(error),
+        _ => Ok(()),
+    }
+}
+
 fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io::Result<()> {
     let mut pending: Option<String> = None;
     let mut status: c_int = 0;
-    // Syscall stops strictly alternate entry/exit. The kernel sets rax=-ENOSYS
-    // at entry and leaves orig_rax as the syscall number on modern kernels, so
-    // classify the first stop by rax and toggle afterwards.
     let mut at_entry: Option<bool> = None;
     let mut resume_signal: Option<c_int> = None;
 
-    loop {
-        if INTERRUPTED.load(Ordering::SeqCst) {
-            break;
-        }
+    while !INTERRUPTED.load(Ordering::SeqCst) {
         let signal = resume_signal
             .take()
             .map(|signal| signal as *mut libc::c_void)
@@ -249,18 +312,9 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
             break;
         }
 
-        if wifexited(status) {
-            if pending.take().is_some() {
-                emit(" = <interrupted>".into());
-            }
-            emit(format!("+++ exited with {} +++", status >> 8));
-            break;
-        }
-        if wifsignaled(status) {
-            if pending.take().is_some() {
-                emit(" = <interrupted>".into());
-            }
-            emit(format!("+++ killed by signal {} +++", wtermsig(status)));
+        if let Some(report) = exit_report(status) {
+            flush_interrupted(&mut pending, emit);
+            emit(report);
             break;
         }
         if !wifstopped(status) {
@@ -269,33 +323,10 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
 
         let sig = wstopsig(status);
         if sig == SYSCALL_STOP {
-            let regs = get_regs(pid)?;
-            let entry = match at_entry {
-                Some(e) => !e,
-                // The kernel parks -ENOSYS in rax on a syscall-entry stop, so
-                // its presence is what distinguishes entry from exit.
-                None => regs.rax as i64 == -ENOSYS,
-            };
-            at_entry = Some(entry);
-            if !entry {
-                // syscall exit stop
-                if let Some(name) = pending.take() {
-                    emit(format!("{name} = {}", fmt_ret(regs.rax as i64)));
-                }
-            } else {
-                let nr = regs.orig_rax as usize;
-                let name = syscalls::name(nr).unwrap_or("syscall?");
-                let shown = filter.is_none_or(|f| name.contains(f));
-                if shown {
-                    if pending.take().is_some() {
-                        emit(" = <interrupted>".into());
-                    }
-                    pending = Some(format!("{name}({})", fmt_args(pid, &regs, name)));
-                }
-            }
+            handle_syscall_stop(pid, filter, &mut at_entry, &mut pending, emit)?;
         } else {
-            // Signal stop: forward it on the next resume, after checking the
-            // stop status and avoiding a second ptrace resume in this cycle.
+            // Signal stop: forward it on the next resume rather than here, so
+            // this cycle does not issue a second ptrace resume.
             resume_signal = Some(sig);
         }
     }
@@ -303,17 +334,7 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
     if let Some(name) = pending.take() {
         emit(format!("{name} = <interrupted>"));
     }
-    if let Err(error) = ptrace_checked(
-        libc::PTRACE_DETACH as _,
-        pid,
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-    ) {
-        if error.raw_os_error() != Some(libc::ESRCH) {
-            return Err(error);
-        }
-    }
-    Ok(())
+    detach(pid)
 }
 
 fn attach_preamble(pid: i32) -> io::Result<()> {

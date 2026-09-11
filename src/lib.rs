@@ -143,6 +143,126 @@ USAGE:
     );
 }
 
+/// Maps a command's outcome onto an exit code, naming the subcommand in the
+/// failure line so `perfo record: ...` and `perfo trace: ...` stay
+/// distinguishable in a shell history.
+fn report(context: &str, result: std::io::Result<()>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("{context}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// qual:allow(test_quality, untested) reason: "prints one CpuMonitor snapshot; the monitor and its serialisation are tested"
+fn run_cpu_json() -> ExitCode {
+    let mut monitor = data::cpu::CpuMonitor::new();
+    // A single sample carries no deltas, so the first interval is the price of
+    // reporting a CPU percentage at all.
+    data::cpu::wait_sample_interval();
+    monitor.refresh();
+    match serde_json::to_string_pretty(&monitor.snapshot()) {
+        Ok(json) => {
+            println!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("perfo: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Emits one snapshot per sample interval until a refresh or a write fails.
+///
+/// Control lines arriving on stdin narrow what each refresh collects, so a
+/// client showing one pane does not pay for the panes it is hiding.
+// qual:allow(test_quality, untested) reason: "the streaming loop itself; apply_control and refresh_json, which it drives, are tested"
+fn run_stream(summary: bool) -> ExitCode {
+    let mut monitor = JsonStreamMonitor::new(summary);
+    let control = spawn_stream_control();
+    loop {
+        data::cpu::wait_sample_interval();
+        while let Ok(line) = control.try_recv() {
+            monitor.apply_control(&line);
+        }
+        let json = match monitor.refresh_json() {
+            Ok(json) => json,
+            Err(e) => {
+                eprintln!("perfo stream: {e}");
+                return ExitCode::FAILURE;
+            }
+        };
+        println!("{json}");
+        // An unflushed stream leaves the widget showing stale numbers, and a
+        // closed pipe is how this loop learns the client is gone.
+        if let Err(e) = std::io::Write::flush(&mut std::io::stdout()) {
+            eprintln!("perfo stream: {e}");
+            return ExitCode::FAILURE;
+        }
+    }
+}
+
+// qual:allow(test_quality, untested) reason: "prints the result of export_from_stdin, which consumes the process's real stdin"
+fn run_export(basename: &str) -> ExitCode {
+    match recordings::export_from_stdin(basename) {
+        Ok((txt, json)) => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "exported",
+                    "txt": txt,
+                    "json": json,
+                })
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("perfo export: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// qual:allow(test_quality, untested) reason: "needs ptrace against a live process; the tracer loop is covered by the trace tests"
+fn run_trace(pid: i32, filter: Option<&str>, cmd: Option<&[String]>) -> ExitCode {
+    let result = match cmd {
+        Some(argv) => trace::spawn(argv, filter),
+        None => trace::attach(pid, filter),
+    };
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("perfo trace: {e}");
+            // Under the default yama ptrace_scope=1 this is a permission
+            // refusal, not a bug, and the two ways out are worth spelling out.
+            eprintln!(
+                "hint: tracing an existing process only works for your own children \
+                 (yama ptrace_scope=1); use `perfo trace -- <command>` to spawn it, \
+                 or `sudo sysctl kernel.yama.ptrace_scope=0`"
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+// qual:allow(test_quality, untested) reason: "times CpuMonitor::refresh in a wall-clock loop; there is nothing to assert but the clock"
+fn run_bench(secs: u64) -> ExitCode {
+    let mut monitor = data::cpu::CpuMonitor::new();
+    let start = std::time::Instant::now();
+    let mut n = 0u32;
+    while start.elapsed().as_secs() < secs {
+        monitor.refresh();
+        let _ = monitor.snapshot();
+        n += 1;
+    }
+    let ms = start.elapsed().as_millis() as f64 / n.max(1) as f64;
+    eprintln!("perfo bench: {n} full refreshes in {secs}s ({ms:.1} ms each)");
+    ExitCode::SUCCESS
+}
+
 /// Parse args and dispatch the requested command.
 // qual:allow(test_quality, untested) reason: "CLI entry point; parse() is tested and each command's logic has its own tests"
 pub fn run() -> ExitCode {
@@ -156,114 +276,16 @@ pub fn run() -> ExitCode {
             println!("perfo {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
-        Command::Tui => match tui::run() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("perfo: {e}");
-                ExitCode::FAILURE
-            }
-        },
-        Command::TuiHistory => match tui::run_with_pane(tui::cpu::Pane::History) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("perfo: {e}");
-                ExitCode::FAILURE
-            }
-        },
-        Command::CpuJson => {
-            let mut monitor = data::cpu::CpuMonitor::new();
-            data::cpu::wait_sample_interval();
-            monitor.refresh();
-            let snap = monitor.snapshot();
-            match serde_json::to_string_pretty(&snap) {
-                Ok(json) => {
-                    println!("{json}");
-                    ExitCode::SUCCESS
-                }
-                Err(e) => {
-                    eprintln!("perfo: {e}");
-                    ExitCode::FAILURE
-                }
-            }
+        Command::Tui => report("perfo", tui::run()),
+        Command::TuiHistory => report("perfo", tui::run_with_pane(tui::cpu::Pane::History)),
+        Command::CpuJson => run_cpu_json(),
+        Command::StreamJson { summary } => run_stream(summary),
+        Command::Record { subcmd, args } => {
+            report("perfo record", recordings::dispatch(&subcmd, &args))
         }
-        Command::StreamJson { summary } => {
-            let mut monitor = JsonStreamMonitor::new(summary);
-            let control = spawn_stream_control();
-            loop {
-                data::cpu::wait_sample_interval();
-                while let Ok(line) = control.try_recv() {
-                    monitor.apply_control(&line);
-                }
-                match monitor.refresh_json() {
-                    Ok(json) => {
-                        println!("{json}");
-                        if let Err(e) = std::io::Write::flush(&mut std::io::stdout()) {
-                            eprintln!("perfo stream: {e}");
-                            return ExitCode::FAILURE;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("perfo stream: {e}");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
-        }
-        Command::Record { subcmd, args } => match recordings::dispatch(&subcmd, &args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("perfo record: {e}");
-                ExitCode::FAILURE
-            }
-        },
-        Command::Export { basename } => match recordings::export_from_stdin(&basename) {
-            Ok((txt, json)) => {
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "status": "exported",
-                        "txt": txt,
-                        "json": json,
-                    })
-                );
-                ExitCode::SUCCESS
-            }
-            Err(e) => {
-                eprintln!("perfo export: {e}");
-                ExitCode::FAILURE
-            }
-        },
-        Command::Trace { pid, filter, cmd } => {
-            let result = match cmd {
-                Some(c) => trace::spawn(&c, filter.as_deref()),
-                None => trace::attach(pid, filter.as_deref()),
-            };
-            match result {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("perfo trace: {e}");
-                    eprintln!(
-                        "hint: tracing an existing process only works for your own children \
-                         (yama ptrace_scope=1); use `perfo trace -- <command>` to spawn it, \
-                         or `sudo sysctl kernel.yama.ptrace_scope=0`"
-                    );
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        Command::Bench { secs } => {
-            let mut monitor = data::cpu::CpuMonitor::new();
-            let start = std::time::Instant::now();
-            let mut n = 0u32;
-            while start.elapsed().as_secs() < secs {
-                monitor.refresh();
-                let _ = monitor.snapshot();
-                n += 1;
-            }
-            let ms = start.elapsed().as_millis() as f64 / n.max(1) as f64;
-            eprintln!("perfo bench: {n} full refreshes in {secs}s ({ms:.1} ms each)");
-            ExitCode::SUCCESS
-        }
+        Command::Export { basename } => run_export(&basename),
+        Command::Trace { pid, filter, cmd } => run_trace(pid, filter.as_deref(), cmd.as_deref()),
+        Command::Bench { secs } => run_bench(secs),
     }
 }
 

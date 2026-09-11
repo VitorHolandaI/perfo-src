@@ -195,6 +195,33 @@ impl CpuMonitor {
         processes
     }
 
+    /// Memory at the depth the plan asks for.
+    ///
+    /// The middle case matters: the two headline numbers come from sysinfo,
+    /// which is already refreshed, while the detailed view re-reads
+    /// /proc/meminfo. A pane showing only a memory bar should not pay for the
+    /// second.
+    fn mem_snapshot(&self, needs: CollectionNeeds) -> MemSnapshot {
+        if needs.memory_details {
+            return mem::snapshot();
+        }
+        if !needs.memory {
+            return MemSnapshot::default();
+        }
+        MemSnapshot {
+            total: self.sys.total_memory(),
+            used: self.sys.used_memory(),
+            ..MemSnapshot::default()
+        }
+    }
+
+    /// Projects the monitor's state onto a snapshot, one field per subsystem.
+    ///
+    /// Deliberately left as one run of `if needs.x { … } else { default }`
+    /// rather than split by subsystem: what a CpuSnapshot contains is the
+    /// thing worth reading here, and spreading the assembly over four
+    /// functions would hide it. See CLAUDE.md on not scattering a table.
+    // qual:allow(complexity, max_function_lines=95) reason: "field-by-field projection; splitting it would spread CpuSnapshot's assembly across several functions"
     fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
         let task_of = self.thread_owner_map(needs);
         let CpuFields {
@@ -209,18 +236,7 @@ impl CpuMonitor {
         } = self.cpu_fields(needs);
 
         let processes = self.process_list(needs, &task_of);
-
-        let mem = if needs.memory_details {
-            mem::snapshot()
-        } else if needs.memory {
-            MemSnapshot {
-                total: self.sys.total_memory(),
-                used: self.sys.used_memory(),
-                ..MemSnapshot::default()
-            }
-        } else {
-            MemSnapshot::default()
-        };
+        let mem = self.mem_snapshot(needs);
 
         CpuSnapshot {
             fans: if needs.fans {

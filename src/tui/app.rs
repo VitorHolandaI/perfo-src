@@ -58,6 +58,129 @@ fn collection_plan(state: &State) -> CollectionPlan {
     )
 }
 
+/// Refreshes the monitor and folds the new snapshot into history.
+///
+/// Process stats are the expensive half of a refresh, so `full_tick`
+/// alternates: the bars stay at 1s while the process table lags 2s.
+fn sample_tick(
+    monitor: &mut CpuMonitor,
+    state: &mut State,
+    plan: CollectionPlan,
+    full_tick: bool,
+) -> CpuSnapshot {
+    monitor.refresh_for(plan, full_tick);
+    let snap = monitor.snapshot_for(plan);
+    if plan.recording || plan.visible == CollectionProfile::History {
+        state.history.record_snapshot(&snap);
+        state.history.advance_playback();
+    }
+    snap
+}
+
+/// How long to block on input before the next sample falls due.
+///
+/// Paused with nothing forcing a refresh means no sample is coming at all, so
+/// the loop can wait a whole tick for a key. Otherwise it waits out whatever
+/// is left of the tick, which `saturating_sub` reports as zero once the
+/// deadline has already passed.
+fn next_poll_timeout(paused: bool, force_refresh: bool, last_tick: Instant) -> Duration {
+    if paused && !force_refresh {
+        TICK
+    } else {
+        TICK.saturating_sub(last_tick.elapsed())
+    }
+}
+
+/// Whether the key just read asked the loop to quit.
+fn quit_requested(
+    state: &mut State,
+    display_pids: &[u32],
+    system_theme: Option<Theme>,
+) -> std::io::Result<bool> {
+    let Event::Key(key) = event::read()? else {
+        return Ok(false);
+    };
+    if key.kind != KeyEventKind::Press {
+        return Ok(false);
+    }
+    Ok(handle_key(
+        state,
+        display_pids,
+        key.code,
+        key.modifiers,
+        system_theme,
+    ))
+}
+
+/// The tracer's output and whether a tracer thread is currently attached.
+///
+/// The two always travel together — the panel is shown when either the user
+/// asked for it or a thread is running — so they are passed as one.
+struct TraceView<'a> {
+    lines: &'a VecDeque<String>,
+    attached: bool,
+}
+
+/// Draws one frame and returns the pids it put on screen, which is what the
+/// next keypress resolves a selection against.
+// qual:allow(srp, max_parameters=6) reason: "each argument is a distinct input to the frame, and system_theme is hoisted out of the loop on purpose; bundling them further would add a type that exists only to satisfy a counter"
+fn draw_frame(
+    terminal: &mut ratatui::DefaultTerminal,
+    snap: &CpuSnapshot,
+    state: &mut State,
+    plan: CollectionPlan,
+    system_theme: Option<Theme>,
+    trace: TraceView<'_>,
+) -> std::io::Result<Vec<u32>> {
+    // Only the two panes with a process table pay for building one.
+    let (rows, pids, selected) =
+        if plan.visible == CollectionProfile::Cpu || plan.visible == CollectionProfile::Dashboard {
+            prepare(snap, state)
+        } else {
+            (Vec::new(), Vec::new(), None)
+        };
+
+    let term_width = terminal.size().map(|s| s.width as usize).unwrap_or(0);
+    let status = status_line_for_width(state, term_width);
+    let theme = if state.use_system_theme {
+        system_theme.unwrap_or(Theme::DEFAULT)
+    } else {
+        Theme::DEFAULT
+    };
+    let tracing = state.tracing || trace.attached;
+
+    let ui = Ui {
+        snap,
+        rows: &rows,
+        selected,
+        core_focus: state.core_focus,
+        core_filter: state.core_filter,
+        sort: state.sort,
+        invert: state.invert,
+        full_cmd: state.full_cmd,
+        tree: state.tree,
+        pane: state.pane,
+        fullscreen: state.fullscreen,
+        theme,
+        help: state.help,
+        help_page: state.help_page,
+        show_menu: state.show_menu,
+        cores_focused: state.cores_focused,
+        show_threads: state.show_threads,
+        lang: state.lang,
+        tracing,
+        trace_lines: tracing.then_some(trace.lines),
+        trace_pid: state.trace_start_pid,
+        history: Some(&state.history),
+        status: &status,
+        searching: state.searching,
+        kill_prompt: state.kill_prompt,
+        cmd_scroll: state.cmd_scroll,
+    };
+    terminal.draw(|frame| cpu::draw(frame, &ui))?;
+    Ok(pids)
+}
+
 fn run_loop(
     terminal: &mut ratatui::DefaultTerminal,
     monitor: &mut CpuMonitor,
@@ -77,41 +200,15 @@ fn run_loop(
 
     loop {
         if last_tick.elapsed() >= TICK && (!state.paused || force_refresh) {
-            // Process stats are the expensive part; refresh them every other
-            // tick so the bars stay at 1s while the table lags 2s.
-            monitor.refresh_for(active_plan, full_tick);
+            snap = Some(sample_tick(monitor, &mut state, active_plan, full_tick));
             full_tick = !full_tick;
-            let s = monitor.snapshot_for(active_plan);
-            if active_plan.recording || active_plan.visible == CollectionProfile::History {
-                state.history.record_snapshot(&s);
-                state.history.advance_playback();
-            }
-            snap = Some(s);
             last_tick = Instant::now();
             force_refresh = false;
         }
 
-        let wait = if state.paused && !force_refresh {
-            TICK
-        } else if last_tick.elapsed() >= TICK {
-            Duration::ZERO
-        } else {
-            TICK.saturating_sub(last_tick.elapsed())
-        };
-        if event::poll(wait)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press
-                    && handle_key(
-                        &mut state,
-                        &display_pids,
-                        key.code,
-                        key.modifiers,
-                        system_theme,
-                    )
-                {
-                    break;
-                }
-            }
+        let wait = next_poll_timeout(state.paused, force_refresh, last_tick);
+        if event::poll(wait)? && quit_requested(&mut state, &display_pids, system_theme)? {
+            break;
         }
 
         let requested_plan = collection_plan(&state);
@@ -132,54 +229,17 @@ fn run_loop(
         );
 
         if let Some(s) = &snap {
-            let (rows, pids, selected) = if active_plan.visible == CollectionProfile::Cpu
-                || active_plan.visible == CollectionProfile::Dashboard
-            {
-                prepare(s, &mut state)
-            } else {
-                (Vec::new(), Vec::new(), None)
-            };
-            display_pids = pids;
-            let term_width = terminal.size().map(|s| s.width as usize).unwrap_or(0);
-            let status = status_line_for_width(&state, term_width);
-            let theme = if state.use_system_theme {
-                system_theme.unwrap_or(Theme::DEFAULT)
-            } else {
-                Theme::DEFAULT
-            };
-            let ui = Ui {
-                snap: s,
-                rows: &rows,
-                selected,
-                core_focus: state.core_focus,
-                core_filter: state.core_filter,
-                sort: state.sort,
-                invert: state.invert,
-                full_cmd: state.full_cmd,
-                tree: state.tree,
-                pane: state.pane,
-                fullscreen: state.fullscreen,
-                theme,
-                help: state.help,
-                help_page: state.help_page,
-                show_menu: state.show_menu,
-                cores_focused: state.cores_focused,
-                show_threads: state.show_threads,
-                lang: state.lang,
-                tracing: state.tracing || trace_thread.is_some(),
-                trace_lines: if state.tracing || trace_thread.is_some() {
-                    Some(&trace_lines)
-                } else {
-                    None
+            display_pids = draw_frame(
+                terminal,
+                s,
+                &mut state,
+                active_plan,
+                system_theme,
+                TraceView {
+                    lines: &trace_lines,
+                    attached: trace_thread.is_some(),
                 },
-                trace_pid: state.trace_start_pid,
-                history: Some(&state.history),
-                status: &status,
-                searching: state.searching,
-                kill_prompt: state.kill_prompt,
-                cmd_scroll: state.cmd_scroll,
-            };
-            terminal.draw(|frame| cpu::draw(frame, &ui))?;
+            )?;
         }
     }
     if state.history.is_session_recording {
