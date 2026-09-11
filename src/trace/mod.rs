@@ -348,6 +348,7 @@ fn attach_preamble(pid: i32) -> io::Result<()> {
 }
 
 /// CLI: trace an existing process. Ctrl+C detaches and lets it continue.
+// qual:allow(test_quality, untested) reason: "needs ptrace against a live process; the tracer loop is covered by the trace tests"
 pub fn attach(pid: i32, filter: Option<&str>) -> io::Result<()> {
     install_sigint();
     INTERRUPTED.store(false, Ordering::SeqCst);

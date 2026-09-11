@@ -133,6 +133,26 @@ mod tests {
     }
 
     #[test]
+    fn resolve_reports_not_found_instead_of_handing_back_a_dead_path() {
+        let dir = std::env::temp_dir().join("perfo-resolve-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let err = resolve_recording_path("rec-missing", &dir).expect_err("nothing to resolve");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+
+        fs::write(dir.join("rec-1.json"), "{}").expect("write recording");
+        let path = resolve_recording_path("rec-1", &dir).expect("resolves an existing id");
+        assert_eq!(path, dir.join("rec-1.json"));
+
+        // A traversing id fails on the id itself, before any disk lookup.
+        let err = resolve_recording_path("../escape", &dir).expect_err("traversal refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn default_recordings_dir_follows_xdg_data_home() {
         // Absolute XDG_DATA_HOME wins; a relative one is ignored per the spec.
         assert!(default_recordings_dir().ends_with("perfo/recordings"));

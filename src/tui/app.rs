@@ -16,10 +16,12 @@ use super::keys::handle_key;
 use super::status::status_line_for_width;
 use super::{State, TICK, TRACE_LINES_MAX};
 
+// qual:allow(test_quality, untested) reason: "puts the terminal in raw mode and loops until quit"
 pub fn run() -> std::io::Result<()> {
     run_with_pane(Pane::Cpu)
 }
 
+// qual:allow(test_quality, untested) reason: "puts the terminal in raw mode and loops until quit"
 pub fn run_with_pane(pane: Pane) -> std::io::Result<()> {
     let mut terminal = init();
     let mut state = State::default();
