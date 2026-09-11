@@ -132,6 +132,68 @@ pub(super) fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &His
     frame.render_widget(par, area);
 }
 
+/// The NET metric gets its own table: RX, TX and connection counts instead of
+/// the generic primary/secondary columns.
+fn draw_net_processes_table(
+    frame: &mut Frame,
+    ui: &Ui,
+    procs: &[HistoryProcess],
+    inner: Rect,
+    max_rows: usize,
+) {
+    let header = TableRow::new(vec![
+        Span::styled("PID", Style::default().fg(ui.theme.muted)),
+        Span::styled("PROCESS", Style::default().fg(ui.theme.muted)),
+        Span::styled("IN (RX)", Style::default().fg(ui.theme.muted)),
+        Span::styled("OUT (TX)", Style::default().fg(ui.theme.muted)),
+        Span::styled("TOTAL / CONNS", Style::default().fg(ui.theme.muted)),
+        Span::styled("COMMAND", Style::default().fg(ui.theme.muted)),
+    ]);
+
+    let rows: Vec<TableRow> = procs
+        .iter()
+        .take(max_rows)
+        .map(|p| {
+            let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
+            let rx_str = format_proc_net_io(p.net_rx_bps, p.net_rx_bytes);
+            let tx_str = format_proc_net_io(p.net_tx_bps, p.net_tx_bytes);
+            let conns_str = format_proc_conns(p);
+            TableRow::new(vec![
+                Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
+                Span::styled(
+                    p_name,
+                    Style::default()
+                        .fg(ui.theme.fg)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(rx_str, Style::default().fg(ui.theme.accent)),
+                Span::styled(tx_str, Style::default().fg(ui.theme.accent)),
+                Span::styled(conns_str, Style::default().fg(ui.theme.fg)),
+                Span::styled(p.cmd.clone(), Style::default().fg(ui.theme.muted)),
+            ])
+        })
+        .collect();
+
+    if rows.is_empty() {
+        let p = Paragraph::new("No network socket activity recorded for this sample")
+            .style(Style::default().fg(ui.theme.muted));
+        frame.render_widget(p, inner);
+        return;
+    }
+
+    let widths = [
+        Constraint::Length(8),
+        Constraint::Length(16),
+        Constraint::Length(12),
+        Constraint::Length(12),
+        Constraint::Length(22),
+        Constraint::Min(0),
+    ];
+
+    let table = Table::new(rows, widths).header(header);
+    frame.render_widget(table, inner);
+}
+
 pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let eff = state.effective_index();
     let sample = state.get_sample(eff);
@@ -153,57 +215,7 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
     let max_rows = inner.height.saturating_sub(1) as usize;
 
     if state.metric == HistoryMetric::Net {
-        let header = TableRow::new(vec![
-            Span::styled("PID", Style::default().fg(ui.theme.muted)),
-            Span::styled("PROCESS", Style::default().fg(ui.theme.muted)),
-            Span::styled("IN (RX)", Style::default().fg(ui.theme.muted)),
-            Span::styled("OUT (TX)", Style::default().fg(ui.theme.muted)),
-            Span::styled("TOTAL / CONNS", Style::default().fg(ui.theme.muted)),
-            Span::styled("COMMAND", Style::default().fg(ui.theme.muted)),
-        ]);
-
-        let rows: Vec<TableRow> = procs
-            .iter()
-            .take(max_rows)
-            .map(|p| {
-                let p_name = clean_process_name(&p.name, &p.cmd, p.pid);
-                let rx_str = format_proc_net_io(p.net_rx_bps, p.net_rx_bytes);
-                let tx_str = format_proc_net_io(p.net_tx_bps, p.net_tx_bytes);
-                let conns_str = format_proc_conns(p);
-                TableRow::new(vec![
-                    Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
-                    Span::styled(
-                        p_name,
-                        Style::default()
-                            .fg(ui.theme.fg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(rx_str, Style::default().fg(ui.theme.accent)),
-                    Span::styled(tx_str, Style::default().fg(ui.theme.accent)),
-                    Span::styled(conns_str, Style::default().fg(ui.theme.fg)),
-                    Span::styled(p.cmd.clone(), Style::default().fg(ui.theme.muted)),
-                ])
-            })
-            .collect();
-
-        if rows.is_empty() {
-            let p = Paragraph::new("No network socket activity recorded for this sample")
-                .style(Style::default().fg(ui.theme.muted));
-            frame.render_widget(p, inner);
-            return;
-        }
-
-        let widths = [
-            Constraint::Length(8),
-            Constraint::Length(16),
-            Constraint::Length(12),
-            Constraint::Length(12),
-            Constraint::Length(22),
-            Constraint::Min(0),
-        ];
-
-        let table = Table::new(rows, widths).header(header);
-        frame.render_widget(table, inner);
+        draw_net_processes_table(frame, ui, &procs, inner, max_rows);
         return;
     }
 

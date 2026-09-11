@@ -114,39 +114,12 @@ pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state:
     frame.render_widget(Paragraph::new(help_line), help_area);
 }
 
-pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
-    let bg = match ui.theme.bg {
-        Color::Reset => Color::Black,
-        c => c,
-    };
-
-    let w = 58u16.min(area.width.saturating_sub(4));
-    let h = 13u16.min(area.height.saturating_sub(2));
-    let x = (area.width.saturating_sub(w)) / 2;
-    let y = (area.height.saturating_sub(h)) / 2;
-    let modal_area = Rect {
-        x,
-        y,
-        width: w,
-        height: h,
-    };
-
-    frame.render_widget(Clear, modal_area);
-
-    let title = " RECORDING SUBSYSTEMS ";
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ui.theme.accent))
-        .style(Style::default().bg(bg))
-        .title(title);
-    frame.render_widget(block.clone(), modal_area);
-    let inner = block.inner(modal_area);
-
-    if inner.height < 6 || inner.width < 24 {
-        return;
-    }
-
-    let items = [
+/// The subsystems a recording can include, in the order the picker shows
+/// them: index, hotkey, label, what it costs, and whether it is on.
+fn record_modal_items(
+    state: &HistoryState,
+) -> [(usize, &'static str, &'static str, &'static str, bool); 6] {
+    [
         (
             0,
             "1",
@@ -189,9 +162,12 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
             "Neural Acceleration Engine",
             state.recording_mask.npu,
         ),
-    ];
+    ]
+}
 
-    let mut lines = Vec::new();
+/// One checkbox row per subsystem.
+fn subsystem_rows(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
+    let items = record_modal_items(state);
     for (idx, num, name, desc, checked) in items {
         let is_selected = state.record_modal_idx == idx;
         let prefix = if is_selected { "> " } else { "  " };
@@ -226,9 +202,10 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
             Span::styled(format!(" {}", desc), desc_style),
         ]));
     }
+}
 
-    lines.push(Line::from(""));
-
+/// The START / CANCEL buttons at the foot of the picker.
+fn record_modal_buttons(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
     let btn_start_selected = state.record_modal_idx == 6;
     let btn_cancel_selected = state.record_modal_idx == 7;
 
@@ -263,6 +240,42 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
         "  Space/Enter: Toggle  1-6: Direct Toggle  Esc: Cancel",
         Style::default().fg(ui.theme.muted),
     )]));
+}
 
+pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let bg = match ui.theme.bg {
+        Color::Reset => Color::Black,
+        c => c,
+    };
+
+    let w = 58u16.min(area.width.saturating_sub(4));
+    let h = 13u16.min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(w)) / 2;
+    let y = (area.height.saturating_sub(h)) / 2;
+    let modal_area = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
+
+    frame.render_widget(Clear, modal_area);
+
+    let title = " RECORDING SUBSYSTEMS ";
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ui.theme.accent))
+        .style(Style::default().bg(bg))
+        .title(title);
+    frame.render_widget(block.clone(), modal_area);
+    let inner = block.inner(modal_area);
+
+    if inner.height < 6 || inner.width < 24 {
+        return;
+    }
+
+    let mut lines = Vec::new();
+    subsystem_rows(state, ui, &mut lines);
+    record_modal_buttons(state, ui, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
 }
