@@ -34,20 +34,26 @@ jobs:
         run: |
           cargo install rustqual --version 1.8.2 --locked
           cargo install rust-doctor --version 0.6.0 --locked
-      - name: rustqual — gate de regressao vs baseline (findings + score)
+      # The gate is the tool's own baseline comparison, which fails on a drop in
+      # quality_score. The hand-rolled version this replaces also required the
+      # raw finding count never to grow, and that failed run 34634790826 on a
+      # release where the score had more than doubled: the crate had grown 1.85x
+      # while findings grew 1.72x. Raw count tracks codebase size, and
+      # `.summary.total` counts trivial findings the tool's own comparison
+      # excludes (637 vs 223 at v0.1.3), so it was never the number to gate on.
+      - name: rustqual — gate de regressao vs baseline (score)
         run: |
-          rustqual . --json --no-fail > current.json
-          cur_total=$(jq -r '.summary.total' current.json)
-          cur_score=$(jq -r '.summary.quality_score' current.json)
-          base_total=$(jq -r '.total' "$RUSTQUAL_BASELINE")
-          base_score=$(jq -r '.quality_score' "$RUSTQUAL_BASELINE")
-          echo "findings: $base_total -> $cur_total | score: $base_score -> $cur_score"
-          jq -e \
-            --argjson ct "$cur_total" --argjson cs "$cur_score" \
-            --argjson bt "$base_total" --argjson bs "$base_score" \
-            '($ct <= $bt) and ($cs >= $bs - 0.001)' \
-            <<< '{}' >/dev/null
+          rustqual . --no-fail --compare "$RUSTQUAL_BASELINE" --fail-on-regression
           rustqual . --format github --no-fail
+      - name: rustqual — supressoes orfas e ratio
+        run: |
+          # A qual:allow marker whose finding is gone, or a metric pin sitting
+          # far above the value it covers, must not rot in the tree unnoticed.
+          rustqual . --json --no-fail > current.json
+          orphans=$(jq -r '.summary.orphan_suppressions' current.json)
+          ratio=$(jq -r '.summary.suppression_ratio_exceeded' current.json)
+          echo "orphan suppressions: $orphans | ratio exceeded: $ratio"
+          test "$orphans" -eq 0 && test "$ratio" = "false"
       - name: rustqual — SARIF (code scanning)
         run: rustqual . --format sarif --no-fail > rustqual.sarif
       - name: Store rustqual SARIF
