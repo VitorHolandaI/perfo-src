@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::format::{block, human_bytes, short_bytes, sparkline, truncate};
+use super::format::{block, human_bytes, pipe, short_bytes, sparkline, truncate};
 use super::{Pane, Ui};
 
 /// Full-pane network view (menu 3 -> NET): per-interface rx/tx rates and
@@ -23,21 +23,20 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
     let totals = &ui.snap.net.totals;
-    let pipe = |s: &str| Span::styled(s.to_string(), Style::default().fg(ui.theme.muted));
 
     let mut lines = vec![Line::from(vec![
-        pipe(&format!(" {:<9}", "NET")),
-        pipe("│"),
+        pipe(&format!(" {:<9}", "NET"), &ui.theme),
+        pipe("│", &ui.theme),
         Span::styled(
             format!("{:>20}", format!("rx {}/s", short_bytes(totals.rx_bps))),
             Style::default().fg(ui.theme.accent),
         ),
-        pipe("│"),
+        pipe("│", &ui.theme),
         Span::styled(
             format!("{:>20}", format!("tx {}/s", short_bytes(totals.tx_bps))),
             Style::default().fg(ui.theme.yellow),
         ),
-        pipe("│"),
+        pipe("│", &ui.theme),
         Span::styled(
             format!("{:>17}", format!("tcp retrans {}/s", totals.tcp_retrans_s)),
             Style::default().fg(if totals.tcp_retrans_s > 0 {
@@ -46,12 +45,12 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
                 ui.theme.fg
             }),
         ),
-        pipe("│"),
+        pipe("│", &ui.theme),
         Span::styled(
             format!("{:>13}", format!("{} connections", totals.tcp_established)),
             Style::default().fg(ui.theme.fg),
         ),
-        pipe("│"),
+        pipe("│", &ui.theme),
         Span::styled(" last refresh", Style::default().fg(ui.theme.muted)),
     ])];
     lines.push(Line::from(vec![
@@ -68,17 +67,17 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
         Span::styled("  since monitor start", Style::default().fg(ui.theme.muted)),
     ]));
     lines.push(Line::from(vec![
-        pipe(&format!(" {:<9}", "IFACE")),
-        pipe("│"),
-        pipe(&format!("{:>20}", "RX/s")),
-        pipe("│"),
-        pipe(&format!("{:>20}", "TX/s")),
-        pipe("│"),
-        pipe(&format!("{:>17}", "rx pps / tx pps")),
-        pipe("│"),
-        pipe(&format!("{:>13}", "err / drop")),
-        pipe("│"),
-        pipe(&format!("{:>14}", "LINK")),
+        pipe(&format!(" {:<9}", "IFACE"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>20}", "RX/s"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>20}", "TX/s"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>17}", "rx pps / tx pps"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>13}", "err / drop"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>14}", "LINK"), &ui.theme),
     ]));
     for i in &ui.snap.net.ifaces {
         let link = match (i.link_mbps, i.link_up) {
@@ -99,7 +98,7 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
                 format!(" {:<9}", truncate(&i.name, 9)),
                 Style::default().fg(ui.theme.muted),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
@@ -108,7 +107,7 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
                 ),
                 Style::default().fg(ui.theme.accent),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
@@ -117,17 +116,17 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
                 ),
                 Style::default().fg(ui.theme.yellow),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!("{:>17}", format!("rx {} tx {}", i.rx_pps, i.tx_pps)),
                 Style::default().fg(ui.theme.fg),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!("{:>13}", format!("{} err {} drop", errs, drops)),
                 Style::default().fg(bad_color),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(format!("{:>14}", link), Style::default().fg(ui.theme.fg)),
         ]));
     }

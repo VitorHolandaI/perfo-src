@@ -11,49 +11,20 @@ use ratatui::{
 use super::{HistoryMetric, HistoryState};
 use crate::tui::cpu::Ui;
 
-pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ui.theme.muted))
-        .title(format!(" TIMELINE GRAPH ({}) ", state.metric.label()));
-    frame.render_widget(block.clone(), area);
-    let inner = block.inner(area);
+/// Where the chart's columns land: how many there are, which samples they
+/// cover, and which one carries the cursor.
+struct ChartGeometry {
+    w: usize,
+    start_idx: usize,
+    total: usize,
+    step: f64,
+    cursor_pos: usize,
+}
 
-    if inner.width < 10 || inner.height < 2 {
-        return;
-    }
-
-    let total = state.sample_count();
-    let span_secs = state.span.seconds(total);
-    let start_idx = total.saturating_sub(span_secs);
-    let visible_count = total.saturating_sub(start_idx);
-
-    if visible_count == 0 {
-        let msg = Paragraph::new("Collecting history samples...")
-            .style(Style::default().fg(ui.theme.muted));
-        frame.render_widget(msg, inner);
-        return;
-    }
-
-    let w = inner.width as usize;
-    let eff = state.effective_index();
-
-    let mut cursor_chars = vec![' '; w];
-    let mut bar_spans = Vec::with_capacity(w);
-
-    let step = (visible_count as f64) / (w as f64);
-    let cursor_pos = if eff >= start_idx && visible_count > 0 {
-        let rel = eff - start_idx;
-        ((rel as f64 / visible_count as f64) * (w as f64 - 1.0)).round() as usize
-    } else {
-        w.saturating_sub(1)
-    };
-
-    if cursor_pos < w {
-        cursor_chars[cursor_pos] = '▼';
-    }
-
-    let max_metric_val = match state.metric {
+/// The value the tallest bar represents. Percentages are fixed at 100; the
+/// rate metrics scale to the busiest sample in view.
+fn metric_ceiling(state: &HistoryState, total: usize) -> f32 {
+    match state.metric {
         HistoryMetric::Cpu | HistoryMetric::Mem | HistoryMetric::Gpu => 100.0f32,
         HistoryMetric::Io => {
             let mut m = 10.0f32;
@@ -78,8 +49,25 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
             }
             m
         }
-    };
+    }
+}
 
+/// One block glyph per terminal column, each column covering `step` samples
+/// and showing that window's peak.
+fn bar_column_spans(
+    state: &HistoryState,
+    ui: &Ui,
+    geom: &ChartGeometry,
+    max_metric_val: f32,
+) -> Vec<Span<'static>> {
+    let ChartGeometry {
+        w,
+        start_idx,
+        total,
+        step,
+        cursor_pos,
+    } = *geom;
+    let mut bar_spans = Vec::with_capacity(w);
     const GLYPHS: [char; 8] = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
     for col in 0..w {
@@ -129,6 +117,81 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
 
         bar_spans.push(Span::styled(ch.to_string(), style));
     }
+    bar_spans
+}
+
+/// Tick marks under the bars, one per column.
+fn ruler_column_spans(ui: &Ui, w: usize, cursor_pos: usize) -> Vec<Span<'static>> {
+    let mut ruler_spans: Vec<Span<'static>> = Vec::with_capacity(w);
+    for col in 0..w {
+        if col == cursor_pos {
+            ruler_spans.push(Span::styled(
+                "▲",
+                Style::default()
+                    .fg(ui.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else if col == 0 || col == w.saturating_sub(1) {
+            ruler_spans.push(Span::styled("|", Style::default().fg(ui.theme.fg)));
+        } else if col == w / 4 || col == w / 2 || col == (3 * w) / 4 {
+            ruler_spans.push(Span::styled("+", Style::default().fg(ui.theme.muted)));
+        } else {
+            ruler_spans.push(Span::styled("-", Style::default().fg(ui.theme.muted)));
+        }
+    }
+    ruler_spans
+}
+
+pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ui.theme.muted))
+        .title(format!(" TIMELINE GRAPH ({}) ", state.metric.label()));
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    if inner.width < 10 || inner.height < 2 {
+        return;
+    }
+
+    let total = state.sample_count();
+    let span_secs = state.span.seconds(total);
+    let start_idx = total.saturating_sub(span_secs);
+    let visible_count = total.saturating_sub(start_idx);
+
+    if visible_count == 0 {
+        let msg = Paragraph::new("Collecting history samples...")
+            .style(Style::default().fg(ui.theme.muted));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let w = inner.width as usize;
+    let eff = state.effective_index();
+
+    let mut cursor_chars = vec![' '; w];
+
+    let step = (visible_count as f64) / (w as f64);
+    let cursor_pos = if eff >= start_idx && visible_count > 0 {
+        let rel = eff - start_idx;
+        ((rel as f64 / visible_count as f64) * (w as f64 - 1.0)).round() as usize
+    } else {
+        w.saturating_sub(1)
+    };
+
+    if cursor_pos < w {
+        cursor_chars[cursor_pos] = '▼';
+    }
+    let max_metric_val = metric_ceiling(state, total);
+    let geom = ChartGeometry {
+        w,
+        start_idx,
+        total,
+        step,
+        cursor_pos,
+    };
+    let bar_spans = bar_column_spans(state, ui, &geom, max_metric_val);
+    let ruler_spans = ruler_column_spans(ui, w, cursor_pos);
 
     let cursor_line = Line::from(Span::styled(
         cursor_chars.into_iter().collect::<String>(),
@@ -151,23 +214,6 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
 
-    let mut ruler_spans = Vec::with_capacity(w);
-    for col in 0..w {
-        if col == cursor_pos {
-            ruler_spans.push(Span::styled(
-                "▲",
-                Style::default()
-                    .fg(ui.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        } else if col == 0 || col == w.saturating_sub(1) {
-            ruler_spans.push(Span::styled("|", Style::default().fg(ui.theme.fg)));
-        } else if col == w / 4 || col == w / 2 || col == (3 * w) / 4 {
-            ruler_spans.push(Span::styled("+", Style::default().fg(ui.theme.muted)));
-        } else {
-            ruler_spans.push(Span::styled("-", Style::default().fg(ui.theme.muted)));
-        }
-    }
     let ruler_line = Line::from(ruler_spans);
 
     let total_span = span_secs.min(total).max(1);

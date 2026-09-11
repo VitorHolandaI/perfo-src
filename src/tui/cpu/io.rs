@@ -12,83 +12,16 @@ use crate::data::cpu::ProcessInfo;
 
 use super::draw_summary;
 use super::format::{
-    await_color, block, busy_color, io_pressure_color, queue_color, short_bytes, sparkline,
+    await_color, block, busy_color, io_pressure_color, pipe, queue_color, short_bytes, sparkline,
     temp_color, truncate, unique_disks,
 };
 use super::{Pane, Ui};
 
 /// Full-pane disk I/O view (menu 2 -> IO): PSI pressure, per-disk iostat-style
 /// columns, then the top processes actually moving data.
-pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let focused = ui.pane == Pane::Io;
-    let block = block("2:IO", focused, &ui.theme);
-    frame.render_widget(block.clone(), area);
-    let inner = block.inner(area);
+/// One row per block device: rates, queue depth, latency and its sparkline.
+fn disk_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
     let disks = unique_disks(&ui.snap.disks);
-    let total_r: u64 = disks.iter().map(|d| d.read_bps).sum();
-    let total_w: u64 = disks.iter().map(|d| d.write_bps).sum();
-    let total_d: u64 = disks.iter().map(|d| d.io.d_s).sum();
-    let total_fl: u64 = disks.iter().map(|d| d.io.flush_s).sum();
-
-    let pipe = |s: &str| Span::styled(s.to_string(), Style::default().fg(ui.theme.muted));
-    let mut lines = vec![Line::from(vec![
-        pipe("│"),
-        Span::styled(
-            format!(
-                " io pressure {:>4.1} {:>4.1} {:>4.1}%",
-                ui.snap.io_pressure_some[0],
-                ui.snap.io_pressure_some[1],
-                ui.snap.io_pressure_some[2]
-            ),
-            Style::default().fg(io_pressure_color(ui.snap.io_pressure_some[0], &ui.theme)),
-        ),
-        pipe("│"),
-        Span::styled(
-            format!("{:>15}", format!("read {}/s", short_bytes(total_r))),
-            Style::default().fg(ui.theme.accent),
-        ),
-        pipe("│"),
-        Span::styled(
-            format!("{:>15}", format!("write {}/s", short_bytes(total_w))),
-            Style::default().fg(ui.theme.accent),
-        ),
-        pipe("│"),
-        Span::styled(
-            format!("{:>12}", format!("trim {}/s", short_bytes(total_d))),
-            Style::default().fg(ui.theme.muted),
-        ),
-        pipe("│"),
-        Span::styled(
-            format!("{:>8}", format!("flush {}/s", total_fl)),
-            Style::default().fg(ui.theme.muted),
-        ),
-        pipe("│"),
-        Span::styled(" last refresh", Style::default().fg(ui.theme.muted)),
-    ])];
-
-    lines.push(Line::from(vec![
-        pipe(&format!(" {:<9}", "DISK")),
-        pipe("│"),
-        pipe(&io_header("r/s", 7)),
-        pipe("│"),
-        pipe(&io_header("r_awt ms", 8)),
-        pipe("│"),
-        pipe(&io_header("w/s", 7)),
-        pipe("│"),
-        pipe(&io_header("w_awt ms", 8)),
-        pipe("│"),
-        pipe(&io_header("queue", 6)),
-        pipe("│"),
-        pipe(&io_header("busy", 6)),
-        pipe("│"),
-        pipe(&io_header("temp", 5)),
-        pipe("│"),
-        pipe(&format!("{:>20}", "READ")),
-        pipe("│"),
-        pipe(&format!("{:>20}", "WRITE")),
-        pipe("│"),
-        pipe(&format!(" {:<8}", "MOUNT")),
-    ]));
     for d in disks {
         let mount = truncate(&d.mount, 8);
         let name = truncate(d.name.rsplit('/').next().unwrap_or(&d.name), 9);
@@ -101,44 +34,44 @@ pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
             .unwrap_or_default();
         lines.push(Line::from(vec![
             Span::styled(format!(" {name:<9}"), Style::default().fg(ui.theme.muted)),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>6}", d.io.r_s),
                 Style::default().fg(ui.theme.fg),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>7.1}", d.io.r_await_ms),
                 Style::default().fg(await_color(d.io.r_await_ms, &ui.theme)),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>6}", d.io.w_s),
                 Style::default().fg(ui.theme.fg),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>7.1}", d.io.w_await_ms),
                 Style::default().fg(await_color(d.io.w_await_ms, &ui.theme)),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>5.1}", d.io.queue_avg),
                 Style::default().fg(queue_color(d.io.queue_avg, &ui.theme)),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(" {:>4.0}%", d.io.busy_pct),
                 Style::default().fg(busy_color(d.io.busy_pct, &ui.theme)),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 d.temp_c
                     .map(|t| format!(" {:>3.0}°", t))
                     .unwrap_or_else(|| "    -".into()),
                 Style::default().fg(temp_color(d.temp_c, &ui.theme)),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(
                     " {:<10} {:>6}/s",
@@ -147,7 +80,7 @@ pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
                 ),
                 Style::default().fg(ui.theme.accent),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(
                 format!(
                     " {:<10} {:>6}/s",
@@ -156,11 +89,14 @@ pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
                 ),
                 Style::default().fg(ui.theme.yellow),
             ),
-            pipe("│"),
+            pipe("│", &ui.theme),
             Span::styled(format!(" {mount:<8}"), Style::default().fg(ui.theme.fg)),
         ]));
     }
+}
 
+/// The processes reading and writing right now, by this tick's rate.
+fn instant_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
     // Instant per-process I/O (this tick's read/write rates).
     let mut by_rate: Vec<&ProcessInfo> = ui
         .snap
@@ -196,7 +132,11 @@ pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
             ]));
         }
     }
+}
 
+/// The processes that moved the most bytes over the recent window, which is a
+/// different question from who is busy this tick.
+fn windowed_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
     // Top processes by storage I/O accumulated in the current window
     // (IO_WINDOW_SECS): "who hammered the disk lately", not just this tick.
     let mut by_io: Vec<&ProcessInfo> = ui
@@ -233,6 +173,79 @@ pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
             ]));
         }
     }
+}
+
+pub(super) fn draw_io(frame: &mut Frame, area: Rect, ui: &Ui) {
+    let focused = ui.pane == Pane::Io;
+    let block = block("2:IO", focused, &ui.theme);
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+    let disks = unique_disks(&ui.snap.disks);
+    let total_r: u64 = disks.iter().map(|d| d.read_bps).sum();
+    let total_w: u64 = disks.iter().map(|d| d.write_bps).sum();
+    let total_d: u64 = disks.iter().map(|d| d.io.d_s).sum();
+    let total_fl: u64 = disks.iter().map(|d| d.io.flush_s).sum();
+    let mut lines = vec![Line::from(vec![
+        pipe("│", &ui.theme),
+        Span::styled(
+            format!(
+                " io pressure {:>4.1} {:>4.1} {:>4.1}%",
+                ui.snap.io_pressure_some[0],
+                ui.snap.io_pressure_some[1],
+                ui.snap.io_pressure_some[2]
+            ),
+            Style::default().fg(io_pressure_color(ui.snap.io_pressure_some[0], &ui.theme)),
+        ),
+        pipe("│", &ui.theme),
+        Span::styled(
+            format!("{:>15}", format!("read {}/s", short_bytes(total_r))),
+            Style::default().fg(ui.theme.accent),
+        ),
+        pipe("│", &ui.theme),
+        Span::styled(
+            format!("{:>15}", format!("write {}/s", short_bytes(total_w))),
+            Style::default().fg(ui.theme.accent),
+        ),
+        pipe("│", &ui.theme),
+        Span::styled(
+            format!("{:>12}", format!("trim {}/s", short_bytes(total_d))),
+            Style::default().fg(ui.theme.muted),
+        ),
+        pipe("│", &ui.theme),
+        Span::styled(
+            format!("{:>8}", format!("flush {}/s", total_fl)),
+            Style::default().fg(ui.theme.muted),
+        ),
+        pipe("│", &ui.theme),
+        Span::styled(" last refresh", Style::default().fg(ui.theme.muted)),
+    ])];
+
+    lines.push(Line::from(vec![
+        pipe(&format!(" {:<9}", "DISK"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("r/s", 7), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("r_awt ms", 8), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("w/s", 7), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("w_awt ms", 8), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("queue", 6), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("busy", 6), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&io_header("temp", 5), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>20}", "READ"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!("{:>20}", "WRITE"), &ui.theme),
+        pipe("│", &ui.theme),
+        pipe(&format!(" {:<8}", "MOUNT"), &ui.theme),
+    ]));
+    disk_rows(ui, &mut lines);
+    instant_process_rows(ui, inner, &mut lines);
+    windowed_process_rows(ui, inner, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

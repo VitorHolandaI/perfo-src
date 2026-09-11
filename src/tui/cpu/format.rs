@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use ratatui::{
     style::{Color, Style},
+    text::Span,
     widgets::{Block, Borders},
 };
 
@@ -243,4 +244,9 @@ pub(crate) fn block(title: &str, focused: bool, theme: &Theme) -> Block<'static>
         b = b.border_style(Style::default().fg(theme.accent));
     }
     b
+}
+
+/// The muted `|` that separates fields on a summary line.
+pub(crate) fn pipe(text: &str, theme: &Theme) -> Span<'static> {
+    Span::styled(text.to_string(), Style::default().fg(theme.muted))
 }
