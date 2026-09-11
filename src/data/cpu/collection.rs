@@ -11,6 +11,7 @@ pub enum CollectionProfile {
     Hidden,
     Dashboard,
     Cpu,
+    Fans,
     Io,
     Net,
     Mem,
@@ -28,6 +29,7 @@ impl std::str::FromStr for CollectionProfile {
             "hidden" | "none" => Ok(Self::Hidden),
             "dash" | "dashboard" => Ok(Self::Dashboard),
             "cpu" => Ok(Self::Cpu),
+            "fans" => Ok(Self::Fans),
             "io" => Ok(Self::Io),
             "net" => Ok(Self::Net),
             "mem" => Ok(Self::Mem),
@@ -56,6 +58,8 @@ impl CollectionProfile {
                 processes: true,
                 process_cpu: true,
                 process_memory: true,
+                // The dashboard strip shows cooler RPM.
+                fans: true,
                 ..CollectionNeeds::default()
             },
             Self::Cpu => CollectionNeeds {
@@ -67,6 +71,11 @@ impl CollectionProfile {
                 process_memory: true,
                 process_tasks: true,
                 process_affinity: true,
+                ..CollectionNeeds::default()
+            },
+            Self::Fans => CollectionNeeds {
+                cpu_temperatures: true,
+                fans: true,
                 ..CollectionNeeds::default()
             },
             Self::Io => CollectionNeeds {

@@ -123,7 +123,19 @@ mod tests {
         assert!(!needs.process_io);
         assert!(!needs.process_affinity);
         assert!(!needs.disk_temperatures);
-        assert!(!needs.fans);
+        // The dashboard strip shows cooler RPM.
+        assert!(needs.fans);
+    }
+
+    #[test]
+    fn fans_profile_reads_only_coolers_and_temperature() {
+        let needs = CollectionProfile::Fans.needs();
+        assert!(needs.fans);
+        assert!(needs.cpu_temperatures);
+        assert!(!needs.processes);
+        assert!(!needs.disks);
+        assert!(!needs.network);
+        assert!(!needs.gpu);
     }
 
     #[test]

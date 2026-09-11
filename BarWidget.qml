@@ -30,8 +30,8 @@ BarWidget {
 
   // The collector only gathers what the visible page renders. Page indices
   // follow Panel.qml's pageNames; FANS and HELP have no collection profile of
-  // their own and fall back to the dashboard set.
-  readonly property var pageProfiles: ["dash", "cpu", "io", "net", "mem", "disks", "dash", "gpu", "hist", "dash"]
+  // HELP has no collection profile of its own and falls back to the dashboard set.
+  readonly property var pageProfiles: ["dash", "cpu", "io", "net", "mem", "disks", "fans", "gpu", "hist", "dash"]
   readonly property string activeProfile: {
     // A closed panel renders nothing, so a recording still running behind it
     // should collect only what its subsystem mask asks for.
