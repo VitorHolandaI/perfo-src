@@ -16,6 +16,16 @@ use ratatui::{
 use crate::data::cpu::{CpuSnapshot, ProcessInfo};
 use crate::theme::Theme;
 
+/// Dashboard proportions. The CPU block grows with the core grid; the summary
+/// strip under it is fixed, and the remaining width is split between the two
+/// detail columns.
+const CPU_BLOCK_CHROME: u16 = 6;
+const SUMMARY_HEIGHT: u16 = 7;
+const LEFT_COLUMN_PCT: u16 = 55;
+const RIGHT_COLUMN_PCT: u16 = 45;
+const SUMMARY_THIRD_PCT: u16 = 30;
+const SUMMARY_MIDDLE_PCT: u16 = 40;
+
 pub(crate) use format::*;
 use io::{draw_io, draw_io_summary};
 use net::{draw_net, draw_net_summary};
@@ -100,25 +110,27 @@ pub fn draw(frame: &mut Frame, ui: &Ui) {
         // `m` or the number shortcuts open a detailed view.
         let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
         let [cpu_area, mid_area, lower_area, status_area] = Layout::vertical([
-            Constraint::Length(6 + core_lines as u16),
-            Constraint::Length(7),
+            Constraint::Length(CPU_BLOCK_CHROME + core_lines as u16),
+            Constraint::Length(SUMMARY_HEIGHT),
             Constraint::Min(0),
             Constraint::Length(1),
         ])
         .areas(frame.area());
         draw_cpu(frame, cpu_area, ui, true);
         let [mem_area, disk_area, io_area] = Layout::horizontal([
-            Constraint::Percentage(30),
-            Constraint::Percentage(40),
-            Constraint::Percentage(30),
+            Constraint::Percentage(SUMMARY_THIRD_PCT),
+            Constraint::Percentage(SUMMARY_MIDDLE_PCT),
+            Constraint::Percentage(SUMMARY_THIRD_PCT),
         ])
         .areas(mid_area);
         draw_mem(frame, mem_area, ui);
         draw_disks(frame, disk_area, ui);
         draw_io_summary(frame, io_area, ui);
-        let [net_area, proc_area] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(lower_area);
+        let [net_area, proc_area] = Layout::horizontal([
+            Constraint::Percentage(LEFT_COLUMN_PCT),
+            Constraint::Percentage(RIGHT_COLUMN_PCT),
+        ])
+        .areas(lower_area);
         draw_net_summary(frame, net_area, ui);
         draw_process_summary(frame, proc_area, ui);
         draw_status(frame, status_area, ui);
@@ -142,8 +154,8 @@ fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let [cpu_area, mid_area, proc_area] = Layout::vertical([
-        Constraint::Length(6 + core_lines as u16),
-        Constraint::Length(7),
+        Constraint::Length(CPU_BLOCK_CHROME + core_lines as u16),
+        Constraint::Length(SUMMARY_HEIGHT),
         Constraint::Min(0),
     ])
     .areas(inner);

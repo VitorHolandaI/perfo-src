@@ -11,14 +11,25 @@ use ratatui::{
 use super::HistoryState;
 use crate::tui::cpu::Ui;
 
+/// How the modals are sized: each caps at its preferred size, then shrinks to
+/// whatever the terminal leaves after a margin.
+const MODAL_MARGIN: u16 = 4;
+const SESSIONS_MODAL_WIDTH: u16 = 82;
+const SESSIONS_MODAL_HEIGHT: u16 = 16;
+const RECORD_MODAL_WIDTH: u16 = 58;
+const RECORD_MODAL_HEIGHT: u16 = 13;
+/// Below this the modal has no room for even one row, so it is not drawn.
+const MODAL_MIN_HEIGHT: u16 = 4;
+const MODAL_MIN_WIDTH: u16 = 20;
+
 pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let bg = match ui.theme.bg {
         Color::Reset => Color::Black,
         c => c,
     };
 
-    let w = 82u16.min(area.width.saturating_sub(4));
-    let h = 16u16.min(area.height.saturating_sub(4));
+    let w = SESSIONS_MODAL_WIDTH.min(area.width.saturating_sub(MODAL_MARGIN));
+    let h = SESSIONS_MODAL_HEIGHT.min(area.height.saturating_sub(MODAL_MARGIN));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let modal_area = Rect {
@@ -39,7 +50,7 @@ pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state:
     frame.render_widget(block.clone(), modal_area);
     let inner = block.inner(modal_area);
 
-    if inner.height < 4 || inner.width < 20 {
+    if inner.height < MODAL_MIN_HEIGHT || inner.width < MODAL_MIN_WIDTH {
         return;
     }
 
@@ -248,8 +259,8 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
         c => c,
     };
 
-    let w = 58u16.min(area.width.saturating_sub(4));
-    let h = 13u16.min(area.height.saturating_sub(2));
+    let w = RECORD_MODAL_WIDTH.min(area.width.saturating_sub(MODAL_MARGIN));
+    let h = RECORD_MODAL_HEIGHT.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let modal_area = Rect {
