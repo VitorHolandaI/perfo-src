@@ -3,10 +3,11 @@
 mod collection;
 mod monitor;
 mod process;
+mod refresh;
 mod topology;
 
 pub use collection::{CollectionNeeds, CollectionPlan, CollectionProfile, RecordingMask};
-pub use monitor::{wait_sample_interval, CpuMonitor};
+pub use monitor::wait_sample_interval;
 pub use process::ProcessInfo;
 pub use topology::CoreType;
 
@@ -14,12 +15,59 @@ use std::collections::{HashMap, VecDeque};
 
 use serde::Serialize;
 
-use crate::data::disk::DiskInfo;
+use std::time::Instant;
+
+use sysinfo::{Components, System};
+
+use crate::data::disk::{DiskInfo, DiskMonitor};
+use crate::data::fan::FanMonitor;
+use crate::data::gpu::GpuMonitor;
+use crate::data::net::NetMonitor;
+use crate::data::npu::NpuMonitor;
+
 use crate::data::fan::FanSnapshot;
 use crate::data::gpu::GpuSnapshot;
 use crate::data::mem::MemSnapshot;
 use crate::data::net::NetSnapshot;
 use crate::data::npu::NpuSnapshot;
+
+/// Samples CPU + process data via sysinfo.
+///
+/// CPU usage is a delta over the time between two refreshes, so callers must
+/// space `refresh()` calls about 1s apart (see `wait_sample_interval`). The
+/// first `refresh()` after construction seeds the deltas and should be ignored.
+pub struct CpuMonitor {
+    sys: System,
+    components: Components,
+    disks: DiskMonitor,
+    fans: FanMonitor,
+    gpu: GpuMonitor,
+    npu: NpuMonitor,
+    net: NetMonitor,
+    users_cache: HashMap<u32, String>,
+    /// pid -> last-run CPU, refreshed only on full process refreshes.
+    last_cpu: HashMap<u32, u32>,
+    /// pid -> (read_bytes, write_bytes) from the previous full refresh.
+    io_prev: HashMap<u32, (u64, u64)>,
+    /// pid -> bytes/second, computed on full refreshes.
+    io_rates: HashMap<u32, (u64, u64)>,
+    /// pid -> bytes accumulated since the window started (see IO_WINDOW_SECS).
+    io_window: HashMap<u32, (u64, u64)>,
+    /// When the current I/O window started.
+    io_window_start: Instant,
+    /// (iowait, total) counters from the previous /proc/stat read.
+    stat_prev: (u64, u64),
+    /// When the last full refresh happened (drives I/O rate conversion).
+    last_full: Option<Instant>,
+    /// I/O wait percentage between the last two /proc/stat samples.
+    iowait_percent: f32,
+    /// P/E/L classification, probed once via CPUID 0x1A (pinned threads).
+    core_types: Vec<CoreType>,
+    /// Per-core maximum frequencies, stable until CPU topology changes.
+    max_freq_mhz: Vec<u64>,
+    /// Overall CPU usage ring (newest last) for the history graph.
+    history: VecDeque<f32>,
+}
 
 #[derive(Serialize)]
 pub struct CpuSnapshot {

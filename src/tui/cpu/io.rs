@@ -11,7 +11,10 @@ use ratatui::{
 use crate::data::cpu::ProcessInfo;
 
 use super::draw_summary;
-use super::format::*;
+use super::format::{
+    await_color, block, busy_color, io_pressure_color, queue_color, short_bytes, sparkline,
+    temp_color, truncate, unique_disks,
+};
 use super::{Pane, Ui};
 
 /// Full-pane disk I/O view (menu 2 -> IO): PSI pressure, per-disk iostat-style

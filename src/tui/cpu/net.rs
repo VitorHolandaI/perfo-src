@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::format::*;
+use super::format::{block, human_bytes, short_bytes, sparkline, truncate};
 use super::{Pane, Ui};
 
 /// Full-pane network view (menu 3 -> NET): per-interface rx/tx rates and

@@ -17,10 +17,10 @@ use crate::data::cpu::{CpuSnapshot, ProcessInfo};
 use crate::theme::Theme;
 
 pub(crate) use format::*;
-use io::*;
-use net::*;
-use overlay::*;
-use panes::*;
+use io::{draw_io, draw_io_summary};
+use net::{draw_net, draw_net_summary};
+use overlay::{draw_help, draw_menu, draw_status};
+use panes::{draw_cpu, draw_disks, draw_mem, draw_process_summary, draw_processes};
 
 /// Cap on rendered core rows (defensive against huge machines).
 pub(super) const MAX_CORE_ROWS: usize = 64;
@@ -183,6 +183,7 @@ fn metric_card_display(value: Option<f32>, detected: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::io::io_header;
     use super::*;
     use std::collections::VecDeque;
 

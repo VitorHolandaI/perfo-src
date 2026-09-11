@@ -11,8 +11,11 @@ use crate::theme::Theme;
 use super::cpu::Pane;
 use super::{Lang, State, PAGE_STEP};
 
-use modal::*;
-use normal::*;
+use modal::{
+    handle_help_key, handle_kill_key, handle_record_modal_key, handle_searching_key,
+    handle_sessions_modal_key, handle_tracing_key,
+};
+use normal::{handle_menu_key, handle_normal_key};
 
 pub(crate) fn handle_key(
     state: &mut State,

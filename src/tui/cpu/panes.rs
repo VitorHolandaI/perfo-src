@@ -10,7 +10,10 @@ use ratatui::{
 
 use crate::data::cpu::CoreType;
 
-use super::format::*;
+use super::format::{
+    bar, bar_glyph, block, cpu_color, freq_color, ghz, human_bytes, short_bytes, sparkline,
+    truncate, truncate_with_scroll, unique_disks, DISK_HOT_PCT, DISK_WARN_PCT,
+};
 use super::{Pane, SortKey, Ui};
 
 use super::overlay::draw_trace;

@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::format::*;
+use super::format::{block, truncate};
 use super::{Pane, Ui};
 
 pub(super) fn draw_trace(frame: &mut Frame, area: Rect, ui: &Ui) {
