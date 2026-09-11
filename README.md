@@ -55,23 +55,37 @@ and `cargo deny check` without duplicating that work.
 
 ### Standalone Linux (Non-Omarchy)
 
-To install the pre-compiled `perfo` binary into `~/.local/bin` without needing Rust or Omarchy:
+Each release publishes a static `x86_64` binary, its SHA-256, and a build
+provenance attestation. Install it without Rust or Omarchy:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | bash
+VERSION=0.1.3
+curl -fLO "https://github.com/VitorHolandaI/perfo/releases/download/v${VERSION}/perfo-linux-x86_64.tar.gz"
+curl -fLO "https://github.com/VitorHolandaI/perfo/releases/download/v${VERSION}/perfo-linux-x86_64.sha256"
+sha256sum --check perfo-linux-x86_64.sha256
+tar -xzf perfo-linux-x86_64.tar.gz
+install -m 0755 perfo ~/.local/bin/perfo
 ```
 
-Custom installation directory (default is `~/.local/bin`):
+Verify the binary was built by this repository's release workflow, not just
+that it downloaded intact:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | PERFO_INSTALL_DIR=/usr/local/bin bash
+gh attestation verify perfo --repo VitorHolandaI/perfo-src
 ```
 
-Or build and install locally from source using the installer script:
+`install.sh` automates the same steps, including the checksum check:
 
 ```bash
-./install.sh --build
+./install.sh                              # installs the pinned version
+PERFO_VERSION=0.1.3 ./install.sh          # a specific release
+PERFO_INSTALL_DIR=/usr/local/bin ./install.sh
+./install.sh --build                      # build from this checkout instead
 ```
+
+Download and read it before running it. It is deliberately not documented as a
+pipe into a shell: that pattern asks you to execute whatever the URL happens to
+serve at that moment, and offers no way to check it first.
 
 ### Omarchy Plugin
 
@@ -307,6 +321,17 @@ cargo build --release
 ```
 
 The output is `target/release/perfo`.
+
+Releases ship a statically linked musl build so the binary carries no glibc
+version floor. To reproduce what a release publishes:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --locked --target x86_64-unknown-linux-musl
+```
+
+The output is `target/x86_64-unknown-linux-musl/release/perfo`, and its SHA-256
+should match the one `bundle.json` records for that release.
 
 ## License
 
