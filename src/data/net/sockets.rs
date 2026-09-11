@@ -96,105 +96,119 @@ fn nl_align(len: usize) -> usize {
     (len + 3) & !3
 }
 
-fn query_inet_diag(family: u8, out: &mut HashMap<u64, (u64, u64)>) {
-    unsafe {
-        let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, NETLINK_INET_DIAG);
-        if fd < 0 {
-            return;
+/// Opens a netlink socket and sends one SOCK_DIAG_BY_FAMILY dump request.
+///
+/// Returns the fd, already set to time out on receive, or None if the kernel
+/// refused either step.
+unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
+    let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW, NETLINK_INET_DIAG);
+    if fd < 0 {
+        return None;
+    }
+    let tv = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 100_000,
+    };
+    libc::setsockopt(
+        fd,
+        libc::SOL_SOCKET,
+        libc::SO_RCVTIMEO,
+        &tv as *const _ as *const libc::c_void,
+        std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+    );
+
+    let mut req = [0u8; INET_DIAG_REQ_LEN];
+    req[0..4].copy_from_slice(&(INET_DIAG_REQ_LEN as u32).to_ne_bytes());
+    req[4..6].copy_from_slice(&SOCK_DIAG_BY_FAMILY.to_ne_bytes());
+    req[6..8].copy_from_slice(&NLM_FLAGS_REQUEST_DUMP.to_ne_bytes());
+    req[8..12].copy_from_slice(&1u32.to_ne_bytes());
+    req[16] = family;
+    req[17] = 6; // IPPROTO_TCP
+    req[18] = INET_DIAG_INFO as u8;
+    req[20..24].copy_from_slice(&0xffff_ffffu32.to_ne_bytes());
+
+    let sent = libc::send(fd, req.as_ptr() as *const libc::c_void, req.len(), 0);
+    if sent < 0 {
+        libc::close(fd);
+        return None;
+    }
+    Some(fd)
+}
+
+/// Walks the netlink reply, pulling each socket's byte counters into `out`.
+unsafe fn read_inet_diag_reply(fd: libc::c_int, out: &mut HashMap<u64, (u64, u64)>) {
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
+        if n <= 0 {
+            break;
         }
-        let tv = libc::timeval {
-            tv_sec: 0,
-            tv_usec: 100_000,
-        };
-        libc::setsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_RCVTIMEO,
-            &tv as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        );
-
-        let mut req = [0u8; INET_DIAG_REQ_LEN];
-        req[0..4].copy_from_slice(&(INET_DIAG_REQ_LEN as u32).to_ne_bytes());
-        req[4..6].copy_from_slice(&SOCK_DIAG_BY_FAMILY.to_ne_bytes());
-        req[6..8].copy_from_slice(&NLM_FLAGS_REQUEST_DUMP.to_ne_bytes());
-        req[8..12].copy_from_slice(&1u32.to_ne_bytes());
-        req[16] = family;
-        req[17] = 6; // IPPROTO_TCP
-        req[18] = INET_DIAG_INFO as u8;
-        req[20..24].copy_from_slice(&0xffff_ffffu32.to_ne_bytes());
-
-        let sent = libc::send(fd, req.as_ptr() as *const libc::c_void, req.len(), 0);
-        if sent < 0 {
-            libc::close(fd);
-            return;
-        }
-
-        let mut buf = [0u8; 65536];
-        loop {
-            let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
-            if n <= 0 {
+        let n = n as usize;
+        let mut offset = 0;
+        let mut done = false;
+        while offset + NLMSG_HDRLEN <= n {
+            let nl_len =
+                u32::from_ne_bytes(buf[offset..offset + 4].try_into().unwrap_or_default()) as usize;
+            let nl_type =
+                u16::from_ne_bytes(buf[offset + 4..offset + 6].try_into().unwrap_or_default());
+            if nl_len < NLMSG_HDRLEN
+                || offset + nl_len > n
+                || nl_type == NLMSG_ERROR
+                || nl_type == NLMSG_DONE
+            {
+                done = true;
                 break;
             }
-            let n = n as usize;
-            let mut offset = 0;
-            let mut done = false;
-            while offset + NLMSG_HDRLEN <= n {
-                let nl_len =
-                    u32::from_ne_bytes(buf[offset..offset + 4].try_into().unwrap_or_default())
-                        as usize;
-                let nl_type =
-                    u16::from_ne_bytes(buf[offset + 4..offset + 6].try_into().unwrap_or_default());
-                if nl_len < NLMSG_HDRLEN
-                    || offset + nl_len > n
-                    || nl_type == NLMSG_ERROR
-                    || nl_type == NLMSG_DONE
-                {
-                    done = true;
-                    break;
-                }
-                let msg = &buf[offset + NLMSG_HDRLEN..offset + nl_len];
-                if msg.len() >= INET_DIAG_MSG_LEN {
-                    let inode =
-                        u32::from_ne_bytes(msg[IDIAG_INODE].try_into().unwrap_or_default()) as u64;
-                    let mut rta_offset = INET_DIAG_MSG_LEN;
-                    while rta_offset + RTATTR_HDRLEN <= msg.len() {
-                        let rta_len = u16::from_ne_bytes(
-                            msg[rta_offset..rta_offset + 2]
-                                .try_into()
-                                .unwrap_or_default(),
-                        ) as usize;
-                        let rta_type = u16::from_ne_bytes(
-                            msg[rta_offset + 2..rta_offset + 4]
-                                .try_into()
-                                .unwrap_or_default(),
-                        );
-                        if rta_len < RTATTR_HDRLEN || rta_offset + rta_len > msg.len() {
-                            break;
-                        }
-                        if rta_type == INET_DIAG_INFO {
-                            let info = &msg[rta_offset + RTATTR_HDRLEN..rta_offset + rta_len];
-                            if info.len() >= TCP_INFO_MIN_LEN {
-                                let rx = u64::from_ne_bytes(
-                                    info[TCPI_BYTES_RECEIVED].try_into().unwrap_or_default(),
-                                );
-                                let tx = u64::from_ne_bytes(
-                                    info[TCPI_BYTES_SENT].try_into().unwrap_or_default(),
-                                );
-                                if inode > 0 {
-                                    out.insert(inode, (rx, tx));
-                                }
+            let msg = &buf[offset + NLMSG_HDRLEN..offset + nl_len];
+            if msg.len() >= INET_DIAG_MSG_LEN {
+                let inode =
+                    u32::from_ne_bytes(msg[IDIAG_INODE].try_into().unwrap_or_default()) as u64;
+                let mut rta_offset = INET_DIAG_MSG_LEN;
+                while rta_offset + RTATTR_HDRLEN <= msg.len() {
+                    let rta_len = u16::from_ne_bytes(
+                        msg[rta_offset..rta_offset + 2]
+                            .try_into()
+                            .unwrap_or_default(),
+                    ) as usize;
+                    let rta_type = u16::from_ne_bytes(
+                        msg[rta_offset + 2..rta_offset + 4]
+                            .try_into()
+                            .unwrap_or_default(),
+                    );
+                    if rta_len < RTATTR_HDRLEN || rta_offset + rta_len > msg.len() {
+                        break;
+                    }
+                    if rta_type == INET_DIAG_INFO {
+                        let info = &msg[rta_offset + RTATTR_HDRLEN..rta_offset + rta_len];
+                        if info.len() >= TCP_INFO_MIN_LEN {
+                            let rx = u64::from_ne_bytes(
+                                info[TCPI_BYTES_RECEIVED].try_into().unwrap_or_default(),
+                            );
+                            let tx = u64::from_ne_bytes(
+                                info[TCPI_BYTES_SENT].try_into().unwrap_or_default(),
+                            );
+                            if inode > 0 {
+                                out.insert(inode, (rx, tx));
                             }
                         }
-                        rta_offset += nl_align(rta_len);
                     }
+                    rta_offset += nl_align(rta_len);
                 }
-                offset += nl_align(nl_len);
             }
-            if done {
-                break;
-            }
+            offset += nl_align(nl_len);
         }
+        if done {
+            break;
+        }
+    }
+}
+
+fn query_inet_diag(family: u8, out: &mut HashMap<u64, (u64, u64)>) {
+    unsafe {
+        let Some(fd) = open_inet_diag(family) else {
+            return;
+        };
+        read_inet_diag_reply(fd, out);
         libc::close(fd);
     }
 }
