@@ -15,19 +15,28 @@ use super::HistoryState;
 use super::{HistoryMetric, HistorySpan};
 use crate::tui::cpu::{Pane, Ui};
 
+/// Below this the history page has no room for a chart.
+const MIN_CHART_HEIGHT: u16 = 10;
+const MIN_CHART_WIDTH: u16 = 30;
+/// Fixed heights of the stats box and the control bar.
+const STATS_BOX_HEIGHT: u16 = 8;
+const CONTROL_BAR_HEIGHT: u16 = 3;
+/// How long an export confirmation stays on screen.
+const EXPORT_NOTICE_SECS: u64 = 4;
+
 pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let outer = crate::tui::cpu::block("7:HISTORY ANALYSIS", ui.pane == Pane::History, &ui.theme);
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
 
-    if inner.height < 10 || inner.width < 30 {
+    if inner.height < MIN_CHART_HEIGHT || inner.width < MIN_CHART_WIDTH {
         return;
     }
 
     let [controls_area, sparkline_area, stats_area, table_area] = Layout::vertical([
         Constraint::Length(2),
-        Constraint::Length(8),
-        Constraint::Length(3),
+        Constraint::Length(STATS_BOX_HEIGHT),
+        Constraint::Length(CONTROL_BAR_HEIGHT),
         Constraint::Min(0),
     ])
     .areas(inner);
@@ -49,10 +58,8 @@ fn recording_tag(state: &HistoryState, ui: &Ui) -> Span<'static> {
     if state.is_session_recording {
         let cur = state.session_record_buffer.len();
         let tot = state.target_record_seconds;
-        let c_m = cur / 60;
-        let c_s = cur % 60;
-        let t_m = tot / 60;
-        let t_s = tot % 60;
+        let (c_m, c_s) = crate::units::minutes_seconds(cur as u64);
+        let (t_m, t_s) = crate::units::minutes_seconds(tot as u64);
         let summary = state.recording_mask.summary();
         let tag_text = if summary == "ALL" {
             format!("● REC {:02}:{:02}/{:02}:{:02}", c_m, c_s, t_m, t_s)
@@ -207,7 +214,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     ]);
 
     let export_text = if let Some((msg, inst)) = &state.export_status {
-        if inst.elapsed().as_secs() < 4 {
+        if inst.elapsed().as_secs() < EXPORT_NOTICE_SECS {
             Span::styled(
                 format!("  [{msg}]"),
                 Style::default()

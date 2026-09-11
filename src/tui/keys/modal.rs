@@ -3,6 +3,11 @@
 
 use crossterm::event::KeyCode;
 
+/// The recording picker lists six subsystems, then the two buttons.
+const LAST_SUBSYSTEM_IDX: usize = 5;
+const START_BUTTON_IDX: usize = 6;
+const CANCEL_BUTTON_IDX: usize = 7;
+
 use super::super::{State, HELP_LAST_PAGE};
 use super::{send_signal, toggle_lang};
 
@@ -47,13 +52,13 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             state.history.record_modal_next();
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if state.history.record_modal_idx == 7 {
-                state.history.record_modal_idx = 6;
+            if state.history.record_modal_idx == CANCEL_BUTTON_IDX {
+                state.history.record_modal_idx = START_BUTTON_IDX;
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if state.history.record_modal_idx == 6 {
-                state.history.record_modal_idx = 7;
+            if state.history.record_modal_idx == START_BUTTON_IDX {
+                state.history.record_modal_idx = CANCEL_BUTTON_IDX;
             }
         }
         KeyCode::Char('1') => state.history.toggle_record_mask_item(0),
@@ -63,7 +68,7 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
         KeyCode::Char('5') => state.history.toggle_record_mask_item(4),
         KeyCode::Char('6') => state.history.toggle_record_mask_item(5),
         KeyCode::Char(' ') => match state.history.record_modal_idx {
-            0..=5 => state
+            0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
             6 => state.history.start_session_recording(),
@@ -71,7 +76,7 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             _ => {}
         },
         KeyCode::Enter => match state.history.record_modal_idx {
-            0..=5 => state
+            0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
             6 => state.history.start_session_recording(),
