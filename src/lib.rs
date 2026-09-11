@@ -290,8 +290,22 @@ fn spawn_stream_control() -> std::sync::mpsc::Receiver<String> {
     rx
 }
 
+/// Presentation choices a client can make about the stream it receives.
+#[derive(Clone, Copy)]
+struct StreamOptions {
+    /// List threads as their own rows. A client with no way to tell a thread
+    /// from a process should leave this off.
+    threads: bool,
+}
+
+impl Default for StreamOptions {
+    fn default() -> Self {
+        Self { threads: true }
+    }
+}
+
 enum JsonStreamMonitor {
-    Full(Box<data::cpu::CpuMonitor>, CollectionPlan),
+    Full(Box<data::cpu::CpuMonitor>, CollectionPlan, StreamOptions),
     Summary(Box<data::summary::WidgetSummaryMonitor>),
 }
 
@@ -300,24 +314,35 @@ impl JsonStreamMonitor {
         if summary {
             Self::Summary(Box::default())
         } else {
-            Self::Full(Box::default(), CollectionPlan::default())
+            Self::Full(
+                Box::default(),
+                CollectionPlan::default(),
+                StreamOptions::default(),
+            )
         }
     }
 
     /// Narrows collection to what the client says it is showing. Unknown names
     /// are ignored so an older widget keeps working.
     fn set_profile(&mut self, name: &str) {
-        if let Self::Full(_, plan) = self {
+        if let Self::Full(_, plan, _) = self {
             if let Ok(profile) = name.parse::<CollectionProfile>() {
                 plan.visible = profile;
             }
         }
     }
 
+    /// Whether individual threads appear alongside their process.
+    fn set_threads(&mut self, threads: bool) {
+        if let Self::Full(_, _, options) = self {
+            options.threads = threads;
+        }
+    }
+
     /// Narrows a recording to the subsystems the user ticked in the picker, so
     /// recording only CPU does not also walk every process's sockets.
     fn set_recording_mask(&mut self, subsystems: &str) {
-        if let Self::Full(_, plan) = self {
+        if let Self::Full(_, plan, _) = self {
             // Default is ALL, so start from nothing and turn on what the
             // client listed.
             let mut mask = data::cpu::RecordingMask {
@@ -348,7 +373,7 @@ impl JsonStreamMonitor {
     /// Turns background recording on or off, which unions the history needs
     /// into whatever the visible pane already asks for.
     fn set_recording(&mut self, recording: bool) {
-        if let Self::Full(_, plan) = self {
+        if let Self::Full(_, plan, _) = self {
             plan.recording = recording;
         }
     }
@@ -361,15 +386,24 @@ impl JsonStreamMonitor {
             Some(("recording", "on")) => self.set_recording(true),
             Some(("recording", "off")) => self.set_recording(false),
             Some(("mask", subsystems)) => self.set_recording_mask(subsystems),
+            Some(("threads", "on")) => self.set_threads(true),
+            Some(("threads", "off")) => self.set_threads(false),
             _ => {}
         }
     }
 
     fn refresh_json(&mut self) -> serde_json::Result<String> {
         match self {
-            Self::Full(monitor, plan) => {
+            Self::Full(monitor, plan, options) => {
                 monitor.refresh_for(*plan, true);
-                serde_json::to_string(&monitor.snapshot_for(*plan))
+                let mut snapshot = monitor.snapshot_for(*plan);
+                if !options.threads {
+                    // A thread's CPU time is already counted in its process, so
+                    // listing both double-counts the column and fills the table
+                    // with rows that are parts of entries already shown.
+                    snapshot.processes.retain(|p| p.owner.is_none());
+                }
+                serde_json::to_string(&snapshot)
             }
             Self::Summary(monitor) => {
                 monitor.refresh();

@@ -123,6 +123,9 @@ BarWidget {
   function sendCollectorState() {
     if (!detailCollector.running) return
     detailCollector.write("profile " + barWidgetRoot.activeProfile + "\n")
+    // The panel has no thread toggle and no column that tells one apart, so a
+    // thread row would just double-count its own process.
+    detailCollector.write("threads off\n")
     detailCollector.write("mask " + barWidgetRoot.recordingMask + "\n")
     detailCollector.write("recording " + (barWidgetRoot.isRecording ? "on" : "off") + "\n")
   }
