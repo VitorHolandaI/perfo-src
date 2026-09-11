@@ -44,8 +44,9 @@ pub fn draw_history(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState
     }
 }
 
-fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
-    let rec_tag = if state.is_session_recording {
+/// The `● REC` / `⏸` badge and its subsystem summary.
+fn recording_tag(state: &HistoryState, ui: &Ui) -> Span<'static> {
+    if state.is_session_recording {
         let cur = state.session_record_buffer.len();
         let tot = state.target_record_seconds;
         let c_m = cur / 60;
@@ -83,9 +84,12 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         )
     } else {
         Span::styled("⏸ PAUSED", Style::default().fg(ui.theme.muted))
-    };
+    }
+}
 
-    let play_tag = if state.playing {
+/// `[PLAYING]` while replaying, nothing while live.
+fn playback_tag(state: &HistoryState, ui: &Ui) -> Span<'static> {
+    if state.playing {
         Span::styled(
             " [PLAYING]",
             Style::default()
@@ -94,8 +98,11 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         )
     } else {
         Span::raw("")
-    };
+    }
+}
 
+/// Where the cursor sits: the timestamp or `LIVE`, and how far into the span.
+fn position_tags(state: &HistoryState, ui: &Ui) -> (Span<'static>, usize, usize) {
     let eff = state.effective_index();
     let is_live = state.is_live();
     let total = state.sample_count();
@@ -129,6 +136,13 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         )
     };
 
+    (time_mode, elapsed, total_span)
+}
+
+fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let rec_tag = recording_tag(state, ui);
+    let play_tag = playback_tag(state, ui);
+    let (time_mode, elapsed, total_span) = position_tags(state, ui);
     let metric_pill = |m: HistoryMetric| {
         let label = m.label();
         if state.metric == m {
