@@ -12,6 +12,15 @@ use super::format::clean_process_name;
 use super::{HistoryMetric, HistoryProcess, HistoryState};
 use crate::tui::cpu::Ui;
 
+/// Column widths of the process tables, in the order the header lists them.
+const COL_PID: u16 = 8;
+const COL_PROCESS: u16 = 16;
+const COL_PRIMARY: u16 = 12;
+const COL_SECONDARY: u16 = 12;
+const COL_TOTALS: u16 = 22;
+const COL_RX: u16 = 18;
+const COL_NARROW: u16 = 10;
+
 pub(super) fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let eff = state.effective_index();
     let sample = state.get_sample(eff);
@@ -182,11 +191,11 @@ fn draw_net_processes_table(
     }
 
     let widths = [
-        Constraint::Length(8),
-        Constraint::Length(16),
-        Constraint::Length(12),
-        Constraint::Length(12),
-        Constraint::Length(22),
+        Constraint::Length(COL_PID),
+        Constraint::Length(COL_PROCESS),
+        Constraint::Length(COL_PRIMARY),
+        Constraint::Length(COL_SECONDARY),
+        Constraint::Length(COL_TOTALS),
         Constraint::Min(0),
     ];
 
@@ -277,10 +286,10 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
     }
 
     let widths = [
-        Constraint::Length(8),
-        Constraint::Length(18),
-        Constraint::Length(10),
-        Constraint::Length(10),
+        Constraint::Length(COL_PID),
+        Constraint::Length(COL_RX),
+        Constraint::Length(COL_NARROW),
+        Constraint::Length(COL_NARROW),
         Constraint::Min(0),
     ];
 

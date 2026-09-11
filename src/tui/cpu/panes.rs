@@ -21,6 +21,13 @@ const MOUNT_WIDTH: usize = 12;
 /// Command column width, fullscreen and compact.
 const CMD_WIDTH_FULL: usize = 500;
 const CMD_WIDTH_COMPACT: usize = 120;
+
+/// Column widths of the disk table.
+const COL_DEVICE: u16 = 8;
+const COL_MOUNT: u16 = 12;
+const COL_FS: u16 = 8;
+const COL_SIZE: u16 = 9;
+const COL_BAR_MIN: u16 = 10;
 /// Below this width the core grid drops to one column.
 const TWO_CORES_PER_LINE_ABOVE: u16 = 60;
 /// Height of the block above the process table.
@@ -351,11 +358,11 @@ pub(super) fn draw_processes(frame: &mut Frame, area: Rect, ui: &Ui, framed: boo
     };
 
     let widths = [
-        Constraint::Length(8),
-        Constraint::Length(12),
-        Constraint::Length(8),
-        Constraint::Length(9),
-        Constraint::Min(10),
+        Constraint::Length(COL_DEVICE),
+        Constraint::Length(COL_MOUNT),
+        Constraint::Length(COL_FS),
+        Constraint::Length(COL_SIZE),
+        Constraint::Min(COL_BAR_MIN),
     ];
 
     let arrow = if ui.invert { "↓" } else { "↑" };

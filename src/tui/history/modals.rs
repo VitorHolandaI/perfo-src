@@ -28,6 +28,13 @@ const RECORD_MODAL_MIN_WIDTH: u16 = 24;
 const START_BUTTON_IDX: usize = 6;
 const CANCEL_BUTTON_IDX: usize = 7;
 
+/// Column widths of the saved-sessions list.
+const COL_SESSION_ID: u16 = 26;
+const COL_DURATION: u16 = 12;
+const COL_SAMPLES: u16 = 10;
+const COL_FOCUS: u16 = 10;
+const COL_SIZE: u16 = 8;
+
 pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let bg = match ui.theme.bg {
         Color::Reset => Color::Black,
@@ -107,11 +114,11 @@ pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state:
         frame.render_widget(empty_msg, table_area);
     } else {
         let widths = [
-            Constraint::Length(26),
-            Constraint::Length(12),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Length(8),
+            Constraint::Length(COL_SESSION_ID),
+            Constraint::Length(COL_DURATION),
+            Constraint::Length(COL_SAMPLES),
+            Constraint::Length(COL_FOCUS),
+            Constraint::Length(COL_SIZE),
             Constraint::Min(0),
         ];
         let table = Table::new(rows, widths).header(header);
