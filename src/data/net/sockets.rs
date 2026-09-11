@@ -2,6 +2,17 @@
 
 use std::collections::HashMap;
 
+/// Scores a process's socket activity: throughput dominates, and each
+/// established connection adds a small tiebreak.
+const RATE_WEIGHT: u64 = 1000;
+const CONNECTION_WEIGHT: u64 = 100;
+/// How many processes the socket list keeps.
+const MAX_SOCKET_PROCESSES: usize = 32;
+/// A /proc/net row shorter than this is truncated or a header.
+const MIN_SOCK_FIELDS: usize = 10;
+/// Ports are written in hex in /proc/net.
+const PORT_RADIX: u32 = 16;
+
 use crate::data::disk::rate;
 
 use super::{ListeningPort, ProcNet};
@@ -72,6 +83,9 @@ fn tcp_socket_bytes() -> HashMap<u64, (u64, u64)> {
 // spelled out here because the raw numbers cannot be checked without the
 // headers open next to the code.
 /// Column of the connection state in a /proc/net/{tcp,udp} row.
+/// Protocol byte of the inet_diag request.
+const IPPROTO_TCP: u8 = 6;
+
 const SOCK_STATE_FIELD: usize = 3;
 /// Column of the socket inode in that same row.
 const SOCK_INODE_FIELD: usize = 9;
@@ -136,7 +150,7 @@ unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
     req[6..8].copy_from_slice(&NLM_FLAGS_REQUEST_DUMP.to_ne_bytes());
     req[8..12].copy_from_slice(&1u32.to_ne_bytes());
     req[16] = family;
-    req[17] = 6; // IPPROTO_TCP
+    req[17] = IPPROTO_TCP;
     req[18] = INET_DIAG_INFO as u8;
     req[20..24].copy_from_slice(&IDIAG_ALL_STATES.to_ne_bytes());
 
@@ -289,13 +303,13 @@ pub(super) fn proc_sockets(
     let mut list: Vec<ProcNet> = per_pid.into_values().collect();
     list.sort_by_key(|p| {
         std::cmp::Reverse(
-            (p.rx_bps + p.tx_bps) * 1000
+            (p.rx_bps + p.tx_bps) * RATE_WEIGHT
                 + (p.rx_bytes + p.tx_bytes)
-                + (p.tcp_est as u64 * 100)
+                + (p.tcp_est as u64 * CONNECTION_WEIGHT)
                 + (p.tcp_listen + p.udp) as u64,
         )
     });
-    list.truncate(32);
+    list.truncate(MAX_SOCKET_PROCESSES);
     list
 }
 
@@ -311,7 +325,7 @@ fn listening_sockets() -> Vec<(u64, u16, String, u32)> {
         let raw = std::fs::read_to_string(path).unwrap_or_default();
         for line in raw.lines().skip(1) {
             let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() < 10 {
+            if fields.len() < MIN_SOCK_FIELDS {
                 continue;
             }
             let st = fields[3];
@@ -325,7 +339,7 @@ fn listening_sockets() -> Vec<(u64, u16, String, u32)> {
             }
             let local = fields[1];
             let port_hex = local.split(':').nth(1).unwrap_or("0");
-            let port = u16::from_str_radix(port_hex, 16).unwrap_or(0);
+            let port = u16::from_str_radix(port_hex, PORT_RADIX).unwrap_or(0);
             if port == 0 {
                 continue;
             }

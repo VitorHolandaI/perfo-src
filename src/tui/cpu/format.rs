@@ -2,6 +2,19 @@
 
 use std::collections::VecDeque;
 
+/// Thresholds that decide a cell's colour, each in the unit of what it grades.
+const TEMP_HOT_C: f32 = 70.0;
+const TEMP_WARN_C: f32 = 55.0;
+const AWAIT_HOT_MS: f32 = 10.0;
+const AWAIT_WARN_MS: f32 = 2.0;
+const QUEUE_HOT: f32 = 8.0;
+const QUEUE_WARN: f32 = 2.0;
+const BUSY_HOT_PCT: f32 = 90.0;
+const IO_PRESSURE_HOT: f64 = 10.0;
+const IO_PRESSURE_WARN: f64 = 5.0;
+/// Floor for an elapsed-seconds divisor, so a zero interval cannot divide.
+const MIN_ELAPSED_SECS: f32 = 0.001;
+
 use ratatui::{
     style::{Color, Style},
     text::Span,
@@ -182,7 +195,7 @@ pub(crate) fn sparkline(samples: &VecDeque<f32>, width: usize, fixed_max: Option
     }
     let scale = fixed_max
         .unwrap_or_else(|| vals.iter().copied().fold(0.0, f32::max))
-        .max(0.001);
+        .max(MIN_ELAPSED_SECS);
     let line: String = vals
         .iter()
         .map(|v| CHARS[((v / scale * 8.0) as usize).min(8)])
@@ -198,8 +211,8 @@ pub(crate) fn sparkline(samples: &VecDeque<f32>, width: usize, fixed_max: Option
 /// (drives throttle around 80°C).
 pub(crate) fn temp_color(temp_c: Option<f32>, t: &Theme) -> Color {
     match temp_c {
-        Some(c) if c >= 70.0 => t.red,
-        Some(c) if c >= 55.0 => t.yellow,
+        Some(c) if c >= TEMP_HOT_C => t.red,
+        Some(c) if c >= TEMP_WARN_C => t.yellow,
         _ => t.green,
     }
 }
@@ -207,9 +220,9 @@ pub(crate) fn temp_color(temp_c: Option<f32>, t: &Theme) -> Color {
 /// Latency color: green < 2ms, yellow < 10ms, red >= 10ms (NVMe health
 /// line sits below 1ms; 10ms+ means the queue is backing up).
 pub(crate) fn await_color(ms: f32, theme: &Theme) -> Color {
-    if ms >= 10.0 {
+    if ms >= AWAIT_HOT_MS {
         theme.red
-    } else if ms >= 2.0 {
+    } else if ms >= AWAIT_WARN_MS {
         theme.yellow
     } else {
         theme.green
@@ -218,9 +231,9 @@ pub(crate) fn await_color(ms: f32, theme: &Theme) -> Color {
 
 /// Queue depth: green < 2, yellow < 8, red >= 8.
 pub(crate) fn queue_color(q: f32, theme: &Theme) -> Color {
-    if q >= 8.0 {
+    if q >= QUEUE_HOT {
         theme.red
-    } else if q >= 2.0 {
+    } else if q >= QUEUE_WARN {
         theme.yellow
     } else {
         theme.green
@@ -229,7 +242,7 @@ pub(crate) fn queue_color(q: f32, theme: &Theme) -> Color {
 
 /// Busy%: red only past 90 (remember: on NVMe this is not saturation).
 pub(crate) fn busy_color(pct: f32, theme: &Theme) -> Color {
-    if pct >= 90.0 {
+    if pct >= BUSY_HOT_PCT {
         theme.yellow
     } else {
         theme.muted
@@ -237,9 +250,9 @@ pub(crate) fn busy_color(pct: f32, theme: &Theme) -> Color {
 }
 
 pub(crate) fn io_pressure_color(p10: f64, theme: &Theme) -> Color {
-    if p10 >= 10.0 {
+    if p10 >= IO_PRESSURE_HOT {
         theme.red
-    } else if p10 >= 5.0 {
+    } else if p10 >= IO_PRESSURE_WARN {
         theme.yellow
     } else {
         theme.green
