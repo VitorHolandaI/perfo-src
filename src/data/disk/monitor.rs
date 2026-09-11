@@ -38,7 +38,7 @@ impl DiskMonitor {
             prev_stats: HashMap::new(),
             io_stats: HashMap::new(),
             usage_rates: HashMap::new(),
-            io_pressure: [0.0; 3],
+            io_pressure: [0.0; crate::units::PSI_WINDOWS],
             dm_aliases: HashMap::new(),
             history: HashMap::new(),
         }
@@ -121,8 +121,16 @@ impl DiskMonitor {
                         .history
                         .entry(name.clone())
                         .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
-                    push_capped(rq, rb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
-                    push_capped(wq, wb as f32 / elapsed.max(0.001), HISTORY_SAMPLES);
+                    push_capped(
+                        rq,
+                        rb as f32 / elapsed.max(crate::units::MIN_ELAPSED_SECS),
+                        HISTORY_SAMPLES,
+                    );
+                    push_capped(
+                        wq,
+                        wb as f32 / elapsed.max(crate::units::MIN_ELAPSED_SECS),
+                        HISTORY_SAMPLES,
+                    );
                 }
             }
             self.history.retain(|name, _| cur.contains_key(name));
@@ -130,7 +138,7 @@ impl DiskMonitor {
             self.io_pressure = [p10, p60, p300];
         } else {
             self.history.clear();
-            self.io_pressure = [0.0; 3];
+            self.io_pressure = [0.0; crate::units::PSI_WINDOWS];
         }
         self.prev_stats = cur;
         self.last_refresh = Some(now);

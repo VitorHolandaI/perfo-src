@@ -2,6 +2,11 @@
 
 use serde::Serialize;
 
+/// A /proc/<pid>/io block shorter than this is truncated.
+const MIN_IO_FIELDS: usize = 5;
+/// Enough for any /proc/<pid>/stat prefix we read.
+const STAT_READ_BUF: usize = 256;
+
 /// /proc/<pid>/stat: field 39 (last processor) is the 36th whitespace token
 /// after the closing `)` of the comm field.
 pub(crate) const LAST_CPU_STAT_FIELD: usize = 36;
@@ -67,7 +72,7 @@ pub(crate) fn stat_iowait_from(raw: &str) -> (u64, u64) {
                 .split_whitespace()
                 .filter_map(|v| v.parse().ok())
                 .collect();
-            if nums.len() >= 5 {
+            if nums.len() >= MIN_IO_FIELDS {
                 // user nice system idle iowait irq ...
                 let total: u64 = nums.iter().sum();
                 return (nums[4], total);
@@ -109,7 +114,7 @@ pub(crate) fn last_cpu_of(pid: u32) -> Option<u32> {
 /// `users` crate (0.11) has RUSTSEC-2023-0059 (unsound) and is
 /// unmaintained: this drops that dependency entirely.
 pub(crate) fn user_name_of(uid: u32) -> String {
-    let mut buf = [0u8; 256];
+    let mut buf = [0u8; STAT_READ_BUF];
     let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
     let mut result: *mut libc::passwd = std::ptr::null_mut();
     // SAFETY: buf lives for the call, getpwuid_r fills passwd/buf and stores

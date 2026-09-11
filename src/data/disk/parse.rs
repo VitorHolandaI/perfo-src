@@ -148,7 +148,7 @@ pub(super) fn io_stats_from(
             let discards = d(prev.discards, cur.discards);
             if discards > 0 {
                 d(prev.discard_sectors, cur.discard_sectors) as f32 * BYTES_PER_SECTOR as f32
-                    / 1024.0
+                    / crate::units::BYTES_PER_KIB
                     / discards as f32
             } else {
                 0.0

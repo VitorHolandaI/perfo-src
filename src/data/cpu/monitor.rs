@@ -105,7 +105,7 @@ impl CpuMonitor {
             let load = sysinfo::System::load_average();
             [load.one, load.five, load.fifteen]
         } else {
-            [0.0; 3]
+            [0.0; crate::units::PSI_WINDOWS]
         };
         CpuFields {
             overall_percent,
@@ -270,7 +270,7 @@ impl CpuMonitor {
             io_pressure_some: if needs.disks {
                 self.disks.io_pressure()
             } else {
-                [0.0; 3]
+                [0.0; crate::units::PSI_WINDOWS]
             },
             io_history: if needs.disks {
                 self.disks.history().clone()

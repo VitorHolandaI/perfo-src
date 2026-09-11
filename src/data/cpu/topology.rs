@@ -3,6 +3,11 @@
 
 use std::collections::HashMap;
 
+/// CPUID leaf 0x1A reports hybrid core types; below that the CPU has none.
+const CPUID_HYBRID_LEAF: u32 = 0x1A;
+/// The core-type byte lives in the low 8 bits of eax.
+const CORE_TYPE_MASK: u32 = 0xFF;
+
 use sysinfo::Components;
 
 use serde::Serialize;
@@ -165,11 +170,11 @@ pub(crate) fn hybrid_core_type() -> Option<CoreType> {
         if ebx != *b"Genu" || edx != *b"ineI" || ecx != *b"ntel" {
             return None;
         }
-        if v.eax < 0x1A {
+        if v.eax < CPUID_HYBRID_LEAF {
             return None;
         }
-        let out = std::arch::x86_64::__cpuid_count(0x1A, 0);
-        match out.eax & 0xFF {
+        let out = std::arch::x86_64::__cpuid_count(CPUID_HYBRID_LEAF, 0);
+        match out.eax & CORE_TYPE_MASK {
             // Alder Lake: Atom = E-core.
             1 => Some(CoreType::E),
             // Alder Lake: Core = P-core (Arrow Lake: Atom = LPE).

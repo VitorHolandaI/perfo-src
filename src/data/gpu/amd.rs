@@ -42,7 +42,8 @@ impl AmdDevice {
             memory_used_bytes: read_u64(&self.path.join("mem_info_vram_used")),
             memory_total_bytes: read_u64(&self.path.join("mem_info_vram_total")),
             temperature_c: hwmon_temperature(&self.path),
-            power_w: read_u64(&self.path.join("power1_average")).map(|u| u as f32 / 1_000_000.0),
+            power_w: read_u64(&self.path.join("power1_average"))
+                .map(|u| u as f32 / crate::units::MICRO_PER_UNIT as f32),
             processes: Vec::new(),
         }
     }

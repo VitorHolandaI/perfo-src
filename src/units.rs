@@ -32,6 +32,15 @@ pub fn minutes_seconds(seconds: u64) -> (u64, u64) {
     (seconds / SECONDS_PER_MINUTE, seconds % SECONDS_PER_MINUTE)
 }
 
+/// PSI is reported over three windows: 10s, 60s and 300s.
+pub const PSI_WINDOWS: usize = 3;
+/// Floor for an elapsed-seconds divisor, so a zero interval cannot divide.
+pub const MIN_ELAPSED_SECS: f32 = 0.001;
+/// Divisor between adjacent binary size units.
+pub const BYTES_PER_KIB: f32 = 1024.0;
+/// Microwatts per watt, as amdgpu reports power.
+pub const MICRO_PER_UNIT: f64 = 1_000_000.0;
+
 pub const SECONDS_PER_MINUTE: u64 = 60;
 pub const SECONDS_PER_HOUR: u64 = 3600;
 
