@@ -14,6 +14,13 @@ use crate::data::cpu::CoreType;
 const OVERALL_LABEL_WIDTH: u16 = 26;
 const MEM_LABEL_WIDTH: usize = 8;
 const DISK_LABEL_WIDTH: u16 = 30;
+/// Width the GPU process row reserves before its command column.
+const GPU_ROW_LABEL_WIDTH: usize = 45;
+/// How far a mount point is truncated in the disk table.
+const MOUNT_WIDTH: usize = 12;
+/// Command column width, fullscreen and compact.
+const CMD_WIDTH_FULL: usize = 500;
+const CMD_WIDTH_COMPACT: usize = 120;
 /// Below this width the core grid drops to one column.
 const TWO_CORES_PER_LINE_ABOVE: u16 = 60;
 /// Height of the block above the process table.
@@ -283,7 +290,7 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
     let mut lines: Vec<Line> = Vec::new();
     let w = inner.width as usize;
     // name(12) + 1 + bar + pct(18) + 2 + mount(12)
-    let bar_w = w.saturating_sub(45);
+    let bar_w = w.saturating_sub(GPU_ROW_LABEL_WIDTH);
     for d in unique_disks(&ui.snap.disks) {
         let color = if d.percent >= DISK_HOT_PCT {
             ui.theme.red
@@ -295,7 +302,7 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
         let filled = crate::units::fill_width(d.percent, bar_w as u16) as usize;
         let filled = filled.min(bar_w);
         let name = d.name.rsplit('/').next().unwrap_or(&d.name);
-        let mount = truncate(&d.mount, 12);
+        let mount = truncate(&d.mount, MOUNT_WIDTH);
         lines.push(Line::from(vec![
             Span::styled(
                 format!("{:<11} ", truncate(name, 11)),
@@ -390,9 +397,9 @@ pub(super) fn draw_processes(frame: &mut Frame, area: Rect, ui: &Ui, framed: boo
                 String::new()
             };
             let cmd = if ui.full_cmd {
-                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, 500)
+                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, CMD_WIDTH_FULL)
             } else {
-                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, 120)
+                truncate_with_scroll(&r.process.cmd, ui.cmd_scroll, CMD_WIDTH_COMPACT)
             };
             TableRow::new(vec![
                 Cell::from(r.process.pid.to_string()),

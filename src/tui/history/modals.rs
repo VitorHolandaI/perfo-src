@@ -21,6 +21,12 @@ const RECORD_MODAL_HEIGHT: u16 = 13;
 /// Below this the modal has no room for even one row, so it is not drawn.
 const MODAL_MIN_HEIGHT: u16 = 4;
 const MODAL_MIN_WIDTH: u16 = 20;
+/// The record picker needs a little more room than the session list.
+const RECORD_MODAL_MIN_HEIGHT: u16 = 6;
+const RECORD_MODAL_MIN_WIDTH: u16 = 24;
+/// Index of each button in the picker.
+const START_BUTTON_IDX: usize = 6;
+const CANCEL_BUTTON_IDX: usize = 7;
 
 pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let bg = match ui.theme.bg {
@@ -217,8 +223,8 @@ fn subsystem_rows(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>)
 
 /// The START / CANCEL buttons at the foot of the picker.
 fn record_modal_buttons(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
-    let btn_start_selected = state.record_modal_idx == 6;
-    let btn_cancel_selected = state.record_modal_idx == 7;
+    let btn_start_selected = state.record_modal_idx == START_BUTTON_IDX;
+    let btn_cancel_selected = state.record_modal_idx == CANCEL_BUTTON_IDX;
 
     let start_style = if btn_start_selected {
         Style::default()
@@ -281,7 +287,7 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
     frame.render_widget(block.clone(), modal_area);
     let inner = block.inner(modal_area);
 
-    if inner.height < 6 || inner.width < 24 {
+    if inner.height < RECORD_MODAL_MIN_HEIGHT || inner.width < RECORD_MODAL_MIN_WIDTH {
         return;
     }
 

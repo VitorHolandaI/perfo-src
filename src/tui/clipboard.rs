@@ -1,9 +1,13 @@
 //! Copying a full command line out of the TUI.
 
+/// base64 turns three input bytes into four output characters.
+const B64_IN_CHUNK: usize = 3;
+const B64_OUT_CHUNK: usize = 4;
+
 pub(super) fn to_base64(data: &[u8]) -> String {
     const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
+    let mut result = String::with_capacity(data.len().div_ceil(B64_IN_CHUNK) * B64_OUT_CHUNK);
+    for chunk in data.chunks(B64_IN_CHUNK) {
         let b0 = chunk[0] as usize;
         let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
         let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
