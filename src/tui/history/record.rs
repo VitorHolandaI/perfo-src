@@ -42,9 +42,22 @@ impl HistoryState {
     /// The top processes for this sample, with their GPU and socket activity
     /// folded in.
     /// The heaviest processes by the snapshot's own ordering.
-    fn base_processes(snap: &CpuSnapshot, gpu_procs: &[(u32, f32, u64)]) -> Vec<HistoryProcess> {
+    /// `depth` is the picker's setting; `0` means every process the snapshot
+    /// carries. The GPU and socket merges below can still push the list past
+    /// it, because a process holding the GPU is worth keeping even when it is
+    /// not in the busiest N by CPU.
+    fn base_processes(
+        snap: &CpuSnapshot,
+        gpu_procs: &[(u32, f32, u64)],
+        depth: usize,
+    ) -> Vec<HistoryProcess> {
+        let limit = if depth == 0 {
+            snap.processes.len()
+        } else {
+            depth
+        };
         let mut procs = Vec::new();
-        for p in snap.processes.iter().take(30) {
+        for p in snap.processes.iter().take(limit) {
             let mut gp_pct = 0.0f32;
             let mut vram = 0u64;
             if let Some(gp) = gpu_procs.iter().find(|(pid, _, _)| *pid == p.pid) {
@@ -134,8 +147,12 @@ impl HistoryState {
 
     /// The top processes for this sample, with their GPU and socket activity
     /// folded in.
-    fn top_processes(snap: &CpuSnapshot, gpu_procs: &[(u32, f32, u64)]) -> Vec<HistoryProcess> {
-        let mut procs = Self::base_processes(snap, gpu_procs);
+    fn top_processes(
+        snap: &CpuSnapshot,
+        gpu_procs: &[(u32, f32, u64)],
+        depth: usize,
+    ) -> Vec<HistoryProcess> {
+        let mut procs = Self::base_processes(snap, gpu_procs, depth);
         Self::merge_gpu_processes(&mut procs, gpu_procs, snap);
         Self::merge_socket_counters(&mut procs, snap);
         procs
@@ -157,7 +174,7 @@ impl HistoryState {
         let (read_bps, write_bps) = Self::disk_rates(snap);
         let io_mb = (read_bps + write_bps) as f32 / 1_000_000.0;
         let (gpu_pct, gpu_procs) = Self::gpu_usage(snap);
-        let procs = Self::top_processes(snap, &gpu_procs);
+        let procs = Self::top_processes(snap, &gpu_procs, self.record_process_depth);
 
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
@@ -227,5 +244,49 @@ impl HistoryState {
         }
 
         self.samples.push_back(sample);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::HistoryState;
+    use crate::data::cpu::CpuSnapshot;
+    use crate::data::cpu::ProcessInfo;
+
+    /// A snapshot carrying `n` processes and nothing else, so a depth test is
+    /// not also a test of GPU or socket merging.
+    fn snapshot_with(n: u32) -> CpuSnapshot {
+        CpuSnapshot {
+            processes: (0..n)
+                .map(|pid| ProcessInfo {
+                    pid,
+                    name: format!("p{pid}"),
+                    ..ProcessInfo::default()
+                })
+                .collect(),
+            ..CpuSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn depth_caps_the_recorded_process_table() {
+        let snap = snapshot_with(200);
+        assert_eq!(HistoryState::top_processes(&snap, &[], 8).len(), 8);
+        assert_eq!(HistoryState::top_processes(&snap, &[], 30).len(), 30);
+        assert_eq!(HistoryState::top_processes(&snap, &[], 100).len(), 100);
+    }
+
+    /// Depth 0 is the "all" preset, and must not read as an empty table.
+    #[test]
+    fn depth_zero_keeps_every_process() {
+        let snap = snapshot_with(200);
+        assert_eq!(HistoryState::top_processes(&snap, &[], 0).len(), 200);
+    }
+
+    /// Asking for more than the machine has is not an error.
+    #[test]
+    fn a_depth_above_the_process_count_keeps_what_there_is() {
+        let snap = snapshot_with(12);
+        assert_eq!(HistoryState::top_processes(&snap, &[], 100).len(), 12);
     }
 }

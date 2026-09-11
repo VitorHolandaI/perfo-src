@@ -11,7 +11,7 @@ const STAT_READ_BUF: usize = 256;
 /// after the closing `)` of the comm field.
 pub(crate) const LAST_CPU_STAT_FIELD: usize = 36;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Default)]
 pub struct ProcessInfo {
     pub pid: u32,
     /// Kernel process name, independent of command-line arguments.

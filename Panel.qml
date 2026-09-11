@@ -21,6 +21,19 @@ Panel {
   property alias historyPageComp: historyPageComp
   readonly property bool isSessionRecording: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.isSessionRecording : false
 
+  // How many processes a saved recording carries per sample. Same knob and
+  // same env var as the TUI's recording picker (src/tui/history/session.rs,
+  // default_process_depth), so a widget recording and a TUI recording of the
+  // same machine replay at the same depth. 0 means every process the
+  // collector sends.
+  readonly property int recordProcessDepth: {
+    var override = parseInt(Quickshell.env("PERFO_RECORD_DEPTH"))
+    return (!isNaN(override) && override >= 0) ? override : 30
+  }
+  // The live buffer stays shallow: it only feeds this panel's sparklines and
+  // is kept for up to maxHistorySamples ticks.
+  readonly property int liveProcessDepth: 8
+
   onSnapshotChanged: root.recordHistorySample()
 
   onPageChanged: {
@@ -827,11 +840,11 @@ Panel {
     if (root.snapshot.processes) {
       var raw = root.snapshot.processes
       // A saved recording has to carry the same process depth the TUI's own
-      // recorder writes -- src/tui/history/record.rs takes 30 -- or replaying
-      // a widget recording in the TUI shows a table 8 rows deep and looks
-      // broken. The live buffer stays shallow because it only feeds this
-      // panel's sparklines and is kept for up to maxHistorySamples ticks.
-      var procLimit = root.isSessionRecording ? 30 : 8
+      // recorder writes, or replaying a widget recording in the TUI shows a
+      // table 8 rows deep and looks broken.
+      var procLimit = root.isSessionRecording ? root.recordProcessDepth : root.liveProcessDepth
+      if (procLimit === 0)
+        procLimit = raw.length
       for (var i = 0; i < Math.min(raw.length, procLimit); i++) {
         var p = raw[i]
         var gpuMatch = null

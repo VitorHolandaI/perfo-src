@@ -7,7 +7,7 @@ mod format;
 mod modals;
 mod nav;
 mod record;
-mod session;
+pub mod session;
 mod tables;
 
 pub(crate) use draw::draw_history;
@@ -156,6 +156,10 @@ pub struct HistoryState {
     pub recording_mask: RecordingMask,
     pub record_modal: bool,
     pub record_modal_idx: usize,
+    /// How many processes each recorded sample carries. The process table is
+    /// ~99% of a sample's bytes (measured: 905 B/process against a 139 B
+    /// remainder), so this is the one knob that decides a recording's size.
+    pub record_process_depth: usize,
 
     // Saved replay playback
     pub loaded_session_id: Option<String>,
@@ -185,6 +189,7 @@ impl Default for HistoryState {
             recording_mask: RecordingMask::ALL,
             record_modal: false,
             record_modal_idx: 0,
+            record_process_depth: session::default_process_depth(),
             loaded_session_id: None,
             loaded_session_title: None,
             loaded_samples: Vec::new(),
@@ -293,7 +298,7 @@ mod tests {
         state.record_modal_prev();
         assert_eq!(state.record_modal_idx, 0);
         state.record_modal_prev();
-        assert_eq!(state.record_modal_idx, 7);
+        assert_eq!(state.record_modal_idx, session::CANCEL_BUTTON_IDX);
         state.record_modal_next();
         assert_eq!(state.record_modal_idx, 0);
 
@@ -320,6 +325,54 @@ mod tests {
 
         state.close_record_modal();
         assert!(!state.record_modal);
+    }
+
+    /// The depth stepper wraps in both directions and lands on every preset.
+    #[test]
+    fn process_depth_cycles_through_every_preset() {
+        let mut state = HistoryState {
+            record_process_depth: session::PROCESS_DEPTHS[0],
+            ..HistoryState::default()
+        };
+
+        let mut seen = Vec::new();
+        for _ in 0..session::PROCESS_DEPTHS.len() {
+            seen.push(state.record_process_depth);
+            state.cycle_process_depth(true);
+        }
+        assert_eq!(seen, session::PROCESS_DEPTHS.to_vec());
+        // One more step past the end wraps to the first preset.
+        assert_eq!(state.record_process_depth, session::PROCESS_DEPTHS[0]);
+
+        state.cycle_process_depth(false);
+        assert_eq!(
+            state.record_process_depth,
+            *session::PROCESS_DEPTHS.last().unwrap()
+        );
+    }
+
+    /// A depth set through PERFO_RECORD_DEPTH need not be one of the presets;
+    /// stepping forward must not throw it away by wrapping to the first.
+    #[test]
+    fn an_off_preset_depth_enters_the_list_at_the_next_preset_above_it() {
+        let mut state = HistoryState {
+            record_process_depth: 42,
+            ..HistoryState::default()
+        };
+        state.cycle_process_depth(true);
+        assert_eq!(state.record_process_depth, 50);
+
+        // Above every finite preset, the only thing left is "all".
+        state.record_process_depth = 500;
+        state.cycle_process_depth(true);
+        assert_eq!(state.record_process_depth, session::PROCESS_DEPTHS[0]);
+    }
+
+    /// 0 is "every process", not "no processes".
+    #[test]
+    fn depth_zero_reads_as_all() {
+        assert_eq!(session::process_depth_label(0), "all");
+        assert_eq!(session::process_depth_label(30), "30");
     }
 
     #[test]

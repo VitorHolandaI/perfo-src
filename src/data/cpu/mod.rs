@@ -69,7 +69,7 @@ pub struct CpuMonitor {
     history: VecDeque<f32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct CpuSnapshot {
     pub fans: FanSnapshot,
     pub gpu: GpuSnapshot,

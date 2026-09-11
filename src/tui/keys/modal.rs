@@ -3,10 +3,10 @@
 
 use crossterm::event::KeyCode;
 
-/// The recording picker lists six subsystems, then the two buttons.
+/// The recording picker lists six subsystems, the depth stepper, then the
+/// two buttons.
 const LAST_SUBSYSTEM_IDX: usize = 5;
-const START_BUTTON_IDX: usize = 6;
-const CANCEL_BUTTON_IDX: usize = 7;
+use crate::tui::history::session::{CANCEL_BUTTON_IDX, DEPTH_ROW_IDX, START_BUTTON_IDX};
 
 use super::super::{State, HELP_LAST_PAGE};
 use super::{send_signal, toggle_lang};
@@ -52,14 +52,22 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             state.history.record_modal_next();
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if state.history.record_modal_idx == CANCEL_BUTTON_IDX {
+            if state.history.record_modal_idx == DEPTH_ROW_IDX {
+                state.history.cycle_process_depth(false);
+            } else if state.history.record_modal_idx == CANCEL_BUTTON_IDX {
                 state.history.record_modal_idx = START_BUTTON_IDX;
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if state.history.record_modal_idx == START_BUTTON_IDX {
+            if state.history.record_modal_idx == DEPTH_ROW_IDX {
+                state.history.cycle_process_depth(true);
+            } else if state.history.record_modal_idx == START_BUTTON_IDX {
                 state.history.record_modal_idx = CANCEL_BUTTON_IDX;
             }
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            state.history.record_modal_idx = DEPTH_ROW_IDX;
+            state.history.cycle_process_depth(true);
         }
         KeyCode::Char('1') => state.history.toggle_record_mask_item(0),
         KeyCode::Char('2') => state.history.toggle_record_mask_item(1),
@@ -71,16 +79,18 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
-            6 => state.history.start_session_recording(),
-            7 => state.history.close_record_modal(),
+            DEPTH_ROW_IDX => state.history.cycle_process_depth(true),
+            START_BUTTON_IDX => state.history.start_session_recording(),
+            CANCEL_BUTTON_IDX => state.history.close_record_modal(),
             _ => {}
         },
         KeyCode::Enter => match state.history.record_modal_idx {
             0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
-            6 => state.history.start_session_recording(),
-            7 => state.history.close_record_modal(),
+            DEPTH_ROW_IDX => state.history.cycle_process_depth(true),
+            START_BUTTON_IDX => state.history.start_session_recording(),
+            CANCEL_BUTTON_IDX => state.history.close_record_modal(),
             _ => {}
         },
         _ => {}
