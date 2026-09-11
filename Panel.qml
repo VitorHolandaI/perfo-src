@@ -11,9 +11,24 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  property var snapshot: null
+  property var snapshot: hostWidget ? hostWidget.detailSnapshot : null
   property int page: 0
-  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU"]
+  readonly property var pageNames: ["DASH", "CPU", "IO", "NET", "MEM", "DISKS", "FANS", "GPU", "HIST", "HELP"]
+  property var historyBuffer: []
+  property int maxHistorySamples: 36000
+  property bool historyRecording: true
+  property var currentLiveSample: null
+  property alias historyPageComp: historyPageComp
+  readonly property bool isSessionRecording: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.isSessionRecording : false
+
+  onSnapshotChanged: root.recordHistorySample()
+
+  onPageChanged: {
+    if (root.page === 8 && historyPageComp) {
+      historyPageComp.refreshRecordings()
+    }
+  }
+
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -29,20 +44,40 @@ Panel {
 
   function open() {
     root.controller.show()
+    if (historyPageComp) {
+      historyPageComp.refreshRecordings()
+    }
   }
 
   function close() {
     root.controller.hide()
   }
 
+  // `bar.run` hands the string to `bash -lc`, and
+  // omarchy-launch-floating-terminal-with-presentation then re-expands its
+  // arguments inside a second `bash -c`. Both levels have to be quoted or a
+  // space in $HOME splits the path in half.
+  function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+  }
+
   function openTerminal() {
     if (!root.bar) return
     root.close()
-    root.bar.run("omarchy-launch-floating-terminal-with-presentation perfo")
+    // A bare `perfo` resolves through $PATH, which a plain `omarchy plugin add`
+    // install never populates, so run the binary from the plugin tree instead.
+    var binary = root.hostWidget && root.hostWidget.binaryPath
+      ? root.shellQuote(root.shellQuote(root.hostWidget.binaryPath))
+      : "perfo"
+    root.bar.run("omarchy-launch-floating-terminal-with-presentation " + binary)
   }
 
   function movePage(delta) {
     root.page = (root.page + delta + root.pageNames.length) % root.pageNames.length
+  }
+
+  function toggleSessionsMenu() {
+    if (historyPageComp) historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu
   }
 
   function formatBytes(bytes) {
@@ -131,6 +166,11 @@ Panel {
       ? root.snapshot.gpu.devices : []
   }
 
+  function npus() {
+    return root.snapshot && root.snapshot.npu && root.snapshot.npu.devices
+      ? root.snapshot.npu.devices : []
+  }
+
   function processName(command, pid) {
     var executable = String(command || "").trim().split(/\s+/)[0]
     if (!executable) return String(pid)
@@ -167,17 +207,69 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(500))
+    contentWidth: panel.fittedContentWidth(Style.space(540))
     contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.inputActiveFocus : false
       onMoveRequested: function(dx, dy) {
         if (dx !== 0) root.switchPage(dx)
       }
-      onCloseRequested: root.close()
+      onCloseRequested: {
+        if (root.page === 8 && typeof historyPageComp !== "undefined" && historyPageComp) {
+          if (historyPageComp.showRecordMenu) {
+            historyPageComp.showRecordMenu = false
+            return
+          }
+          if (historyPageComp.showSessionsMenu) {
+            historyPageComp.showSessionsMenu = false
+            return
+          }
+        }
+        root.close()
+      }
       onTextKey: function(text) {
+        if (text === "?" || text === "/") {
+          root.page = (root.page === 9 ? 0 : 9)
+          return
+        }
+        if (root.page === 8 && typeof historyPageComp !== "undefined" && historyPageComp) {
+          if (text === "," || text === "<") { historyPageComp.stepTimeline(-1); return }
+          if (text === "." || text === ">") { historyPageComp.stepTimeline(1); return }
+          if (text === "[" || text === "{") { historyPageComp.jumpTimeline(-1); return }
+          if (text === "]" || text === "}") { historyPageComp.jumpTimeline(1); return }
+          if (text === " ") { historyPageComp.togglePlayback(); return }
+          if (text === "0") { historyPageComp.jumpToLive(); return }
+          if (historyPageComp.showRecordMenu) {
+            if (text === "1") { historyPageComp.toggleRecordSubsystem("cpu"); return }
+            if (text === "2") { historyPageComp.toggleRecordSubsystem("mem"); return }
+            if (text === "3") { historyPageComp.toggleRecordSubsystem("io"); return }
+            if (text === "4") { historyPageComp.toggleRecordSubsystem("net"); return }
+            if (text === "5") { historyPageComp.toggleRecordSubsystem("gpu"); return }
+            if (text === "a" || text === "A") { historyPageComp.toggleAllRecordSubsystems(); return }
+            if (text === "r" || text === "R" || text === "\r" || text === "\n") {
+              historyPageComp.showRecordMenu = false
+              historyPageComp.startSessionRecording()
+              return
+            }
+          }
+          if (text === "r" || text === "R") {
+            if (historyPageComp.isSessionRecording) {
+              historyPageComp.stopSessionRecording()
+            } else {
+              historyPageComp.showSessionsMenu = false
+              historyPageComp.showRecordMenu = !historyPageComp.showRecordMenu
+            }
+            return
+          }
+          if (text === "s" || text === "S") {
+            historyPageComp.showRecordMenu = false
+            historyPageComp.showSessionsMenu = !historyPageComp.showSessionsMenu
+            return
+          }
+        }
         if (text === "h" || text === "H") root.switchPage(-1)
         else if (text === "l" || text === "L") root.switchPage(1)
       }
@@ -193,36 +285,48 @@ Panel {
         height: Style.space(34)
 
         Column {
-          width: parent.width - Style.space(88)
+          width: parent.width - Style.space(118)
           anchors.verticalCenter: parent.verticalCenter
           PlainText { text: "PERFO"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
-          PlainText { text: root.pageNames[root.page] + " FOCUS"; color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+          PlainText { text: root.pageNames[root.page] + (root.page === 9 ? "" : " FOCUS"); color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
         }
 
         PlainText {
-          width: Style.space(30)
+          width: Style.space(26)
           text: "<"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          MouseArea { anchors.fill: parent; onClicked: root.switchPage(-1) }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.switchPage(-1) }
         }
 
         PlainText {
-          width: Style.space(30)
+          width: Style.space(26)
           text: ">"
           color: root.foreground
           font.family: root.fontFamily
           font.pixelSize: Style.font.title
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          MouseArea { anchors.fill: parent; onClicked: root.switchPage(1) }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.switchPage(1) }
         }
 
         PlainText {
-          width: Style.space(28)
+          width: Style.space(26)
+          text: "?"
+          color: root.page === 9 ? Color.accent : root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.title
+          font.bold: root.page === 9
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.page = (root.page === 9 ? 0 : 9) }
+        }
+
+        PlainText {
+          width: Style.space(34)
           text: (root.page + 1) + "/" + root.pageNames.length
           color: root.foreground
           opacity: 0.65
@@ -235,7 +339,9 @@ Panel {
 
       Item {
         width: parent.width
-        height: Style.space(260)
+        height: root.page === 8
+          ? ((typeof historyPageComp !== "undefined" && historyPageComp && (historyPageComp.showSessionsMenu || historyPageComp.showRecordMenu)) ? Style.space(480) : Style.space(360))
+          : (root.page === 7 && root.npus().length > 0 ? Style.space(320) : Style.space(260))
         clip: true
 
         Column {
@@ -266,6 +372,11 @@ Panel {
                 model: root.snapshot ? root.snapshot.cpu_history : []
                 delegate: Rectangle { width: Math.max(1, (parent.width / Math.max(1, dashboardHistoryRepeater.count)) - 1); height: Math.max(2, parent.height * root.percent(modelData) / 100); anchors.bottom: parent.bottom; color: Color.accent }
               }
+            }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.page = 8
             }
           }
            Row {
@@ -516,10 +627,101 @@ Panel {
           GpuPage {
             width: parent.width
             devices: root.gpus()
+            npuDevices: root.npus()
             processes: root.snapshot && root.snapshot.processes ? root.snapshot.processes : []
             totalMemoryBytes: root.snapshot ? root.snapshot.total_mem_bytes : 0
             foreground: root.foreground
             fontFamily: root.fontFamily
+          }
+        }
+
+        Column {
+          anchors.fill: parent
+          visible: root.page === 8
+          HistoryPage {
+            id: historyPageComp
+            width: parent.width
+            visible: parent.visible
+            history: root.historyBuffer
+            liveSample: root.currentLiveSample
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            isRecording: root.historyRecording
+            onToggleRecordingRequested: root.historyRecording = !root.historyRecording
+            onRequestCapacity: function(samples) { root.ensureHistoryCapacity(samples) }
+          }
+        }
+
+        Column {
+          id: helpPage
+          anchors.fill: parent
+          spacing: Style.space(8)
+          visible: root.page === 9
+
+          PlainText {
+            text: "PERFO HELP & SHORTCUTS"
+            color: root.foreground
+            opacity: 0.65
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(16)
+
+            Column {
+              width: (parent.width - Style.space(16)) / 2
+              spacing: Style.space(4)
+
+              PlainText {
+                text: "PANEL & WIDGET"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "< / > or h / l: Switch pages"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "? or F1: Open this help panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Left-click bar: Toggle panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Right-click bar: Open TUI"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Esc: Close popup panel"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+
+              Item { width: 1; height: Style.space(4) }
+
+              PlainText {
+                text: "TERMINAL TUI"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "1 - 7: Fullscreen pane / return"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "m: Menu / ? or h: Help modal"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "y or Enter: Copy command"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "<- ->: Scroll proc command"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            }
+
+            Column {
+              width: (parent.width - Style.space(16)) / 2
+              spacing: Style.space(4)
+
+              PlainText {
+                text: "HIST PAGE (REPLAY)"
+                color: Color.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+              PlainText { text: "Space: Play / Pause replay"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: ", / . or < / >: Step 1s back/fwd"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "[ / ]: Jump 10s back/fwd"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "0: Jump to LIVE (now)"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "r: Toggle flight recording"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "s: Saved sessions menu"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Zoom: 1m to 10h spans"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              PlainText { text: "Report: Export txt analysis"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            }
           }
         }
       }
@@ -561,5 +763,220 @@ Panel {
 
   function totalWrite() {
     return root.totalDeviceRate("write_bps")
+  }
+
+  function sampleFromSnapshot() {
+    if (!root.snapshot) return null
+    var now = new Date()
+    var timeStr = ("0" + now.getHours()).slice(-2) + ":" +
+                  ("0" + now.getMinutes()).slice(-2) + ":" +
+                  ("0" + now.getSeconds()).slice(-2)
+
+    var memPct = (root.snapshot.total_mem_bytes > 0)
+      ? root.percent(root.snapshot.used_mem_bytes * 100 / root.snapshot.total_mem_bytes)
+      : 0
+
+    var gpuPct = 0
+    var gpuProcs = []
+    if (root.snapshot.gpu && root.snapshot.gpu.devices && root.snapshot.gpu.devices.length > 0) {
+      if (root.snapshot.gpu.devices[0].usage_percent !== null) {
+        gpuPct = Number(root.snapshot.gpu.devices[0].usage_percent) || 0
+      }
+      for (var d = 0; d < root.snapshot.gpu.devices.length; d++) {
+        var dev = root.snapshot.gpu.devices[d]
+        if (dev.processes) {
+          for (var gp = 0; gp < dev.processes.length; gp++) {
+            var g = dev.processes[gp]
+            gpuProcs.push({
+              pid: g.pid,
+              gpu_percent: Number(g.gpu_percent) || 0,
+              vram_bytes: Number(g.memory_used_bytes) || 0
+            })
+          }
+        }
+      }
+    }
+
+    var netRx = (root.snapshot.net && root.snapshot.net.totals) ? (Number(root.snapshot.net.totals.rx_bps) || 0) : 0
+    var netTx = (root.snapshot.net && root.snapshot.net.totals) ? (Number(root.snapshot.net.totals.tx_bps) || 0) : 0
+    var netRate = netRx + netTx
+
+    var netProcs = []
+    if (root.snapshot.net && root.snapshot.net.proc_net) {
+      for (var np = 0; np < root.snapshot.net.proc_net.length; np++) {
+        var npItem = root.snapshot.net.proc_net[np]
+        netProcs.push({
+          pid: npItem.pid,
+          tcp_est: Number(npItem.tcp_est) || 0,
+          tcp_listen: Number(npItem.tcp_listen) || 0,
+          udp: Number(npItem.udp) || 0,
+          total_sockets: (Number(npItem.tcp_est) || 0) + (Number(npItem.tcp_listen) || 0) + (Number(npItem.udp) || 0),
+          rx_bytes: Number(npItem.rx_bytes) || 0,
+          tx_bytes: Number(npItem.tx_bytes) || 0,
+          rx_bps: Number(npItem.rx_bps) || 0,
+          tx_bps: Number(npItem.tx_bps) || 0
+        })
+      }
+    }
+
+    var readRate = root.totalRead()
+    var writeRate = root.totalWrite()
+    var ioMb = (readRate + writeRate) / 1048576
+
+    var procs = []
+    if (root.snapshot.processes) {
+      var raw = root.snapshot.processes
+      for (var i = 0; i < Math.min(raw.length, 8); i++) {
+        var p = raw[i]
+        var gpuMatch = null
+        for (var gi = 0; gi < gpuProcs.length; gi++) {
+          if (gpuProcs[gi].pid === p.pid) {
+            gpuMatch = gpuProcs[gi]
+            break
+          }
+        }
+        var netMatch = null
+        for (var ni = 0; ni < netProcs.length; ni++) {
+          if (netProcs[ni].pid === p.pid) {
+            netMatch = netProcs[ni]
+            break
+          }
+        }
+        var cmdStr = String(p.cmd || "")
+        if (cmdStr.length > 160) cmdStr = cmdStr.substring(0, 159) + "…"
+        procs.push({
+          pid: p.pid,
+          name: p.name || "",
+          cmd: cmdStr,
+          cpu_percent: Number(p.cpu_percent) || 0,
+          mem_bytes: Number(p.mem_bytes) || 0,
+          user: p.user || "",
+          read_bps: Number(p.read_bps) || 0,
+          write_bps: Number(p.write_bps) || 0,
+          gpu_percent: gpuMatch ? gpuMatch.gpu_percent : 0,
+          vram_bytes: gpuMatch ? gpuMatch.vram_bytes : 0,
+          tcp_est: netMatch ? netMatch.tcp_est : 0,
+          tcp_listen: netMatch ? netMatch.tcp_listen : 0,
+          udp: netMatch ? netMatch.udp : 0,
+          total_sockets: netMatch ? netMatch.total_sockets : 0,
+          net_rx_bps: netMatch ? netMatch.rx_bps : 0,
+          net_tx_bps: netMatch ? netMatch.tx_bps : 0,
+          net_rx_bytes: netMatch ? netMatch.rx_bytes : 0,
+          net_tx_bytes: netMatch ? netMatch.tx_bytes : 0
+        })
+      }
+    }
+
+    for (var g2 = 0; g2 < gpuProcs.length; g2++) {
+      var gpItem = gpuProcs[g2]
+      var alreadyIn = false
+      for (var pi = 0; pi < procs.length; pi++) {
+        if (procs[pi].pid === gpItem.pid) {
+          alreadyIn = true
+          break
+        }
+      }
+      if (!alreadyIn) {
+        procs.push({
+          pid: gpItem.pid,
+          name: "",
+          cmd: "",
+          cpu_percent: 0,
+          mem_bytes: 0,
+          user: "",
+          read_bps: 0,
+          write_bps: 0,
+          gpu_percent: gpItem.gpu_percent,
+          vram_bytes: gpItem.vram_bytes,
+          tcp_est: 0,
+          tcp_listen: 0,
+          udp: 0,
+          total_sockets: 0,
+          net_rx_bps: 0,
+          net_tx_bps: 0,
+          net_rx_bytes: 0,
+          net_tx_bytes: 0
+        })
+      }
+    }
+
+    for (var n2 = 0; n2 < netProcs.length; n2++) {
+      var npSock = netProcs[n2]
+      var netAlreadyIn = false
+      for (var pi2 = 0; pi2 < procs.length; pi2++) {
+        if (procs[pi2].pid === npSock.pid) {
+          netAlreadyIn = true
+          break
+        }
+      }
+      if (!netAlreadyIn) {
+        var matchedCmd = ""
+        if (root.snapshot.processes) {
+          for (var prIdx = 0; prIdx < root.snapshot.processes.length; prIdx++) {
+            if (root.snapshot.processes[prIdx].pid === npSock.pid) {
+              matchedCmd = root.snapshot.processes[prIdx].cmd || root.snapshot.processes[prIdx].name || ""
+              break
+            }
+          }
+        }
+        procs.push({
+          pid: npSock.pid,
+          name: matchedCmd,
+          cmd: matchedCmd,
+          cpu_percent: 0,
+          mem_bytes: 0,
+          user: "",
+          read_bps: 0,
+          write_bps: 0,
+          gpu_percent: 0,
+          vram_bytes: 0,
+          tcp_est: npSock.tcp_est,
+          tcp_listen: npSock.tcp_listen,
+          udp: npSock.udp,
+          total_sockets: npSock.total_sockets,
+          net_rx_bps: npSock.rx_bps,
+          net_tx_bps: npSock.tx_bps,
+          net_rx_bytes: npSock.rx_bytes,
+          net_tx_bytes: npSock.tx_bytes
+        })
+      }
+    }
+
+    return {
+      timestamp: timeStr,
+      cpu: Math.round(Number(root.snapshot.overall_percent) || 0),
+      mem: Math.round(memPct),
+      io_mb: ioMb,
+      gpu: Math.round(gpuPct),
+      read_bps: readRate,
+      write_bps: writeRate,
+      net_rx_bps: netRx,
+      net_tx_bps: netTx,
+      net_rate: netRate,
+      processes: procs
+    }
+  }
+
+  function recordHistorySample() {
+    var sample = root.sampleFromSnapshot()
+    if (!sample) return
+    if (root.historyRecording) {
+      var buf = root.historyBuffer
+      buf.push(sample)
+      if (buf.length > root.maxHistorySamples + 50) {
+        buf = buf.slice(buf.length - root.maxHistorySamples)
+      }
+      root.historyBuffer = buf
+    }
+    // liveSample changes after the in-place append so HistoryPage rebuilds
+    // against the latest buffer without copying the full history every tick.
+    root.currentLiveSample = sample
+  }
+
+  function ensureHistoryCapacity(needed) {
+    var minCapacity = Math.max(3600, Math.min(604800, Number(needed) || 36000))
+    if (minCapacity > root.maxHistorySamples) {
+      root.maxHistorySamples = minCapacity
+    }
   }
 }

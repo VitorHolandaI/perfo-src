@@ -20,6 +20,8 @@ as setas esquerda/direita ou `h`/`l`; o contador no topo usa a forma `pagina/tot
 
 ## 1. DASH
 
+![Page 1: DASH](images/widgetpage1.png)
+
 Objetivo: uma leitura rapida do estado geral da maquina.
 
 ### CPU
@@ -62,6 +64,8 @@ Objetivo: uma leitura rapida do estado geral da maquina.
 
 ## 2. CPU
 
+![Page 2: CPU](images/widgetpage2.png)
+
 Objetivo: mostrar tendencia de CPU e distribuicao por processador logico.
 
 ### CPU HISTORY
@@ -97,6 +101,8 @@ Objetivo: mostrar tendencia de CPU e distribuicao por processador logico.
   compacta com ate quatro processos para preservar o rodape.
 
 ## 3. IO
+
+![Page 3: IO](images/widgetpage3.png)
 
 Objetivo: responder se o armazenamento esta trabalhando e se existe fila.
 
@@ -140,6 +146,8 @@ Objetivo: responder se o armazenamento esta trabalhando e se existe fila.
 
 ## 4. NET
 
+![Page 4: NET](images/widgetpage4.png)
+
 Objetivo: distinguir trafego agregado de trafego por interface.
 
 ### Grafico
@@ -165,6 +173,8 @@ Objetivo: distinguir trafego agregado de trafego por interface.
   normalmente nao possuem velocidade ou conceito de carrier.
 
 ## 5. MEM
+
+![Page 5: MEM](images/widgetpage5.png)
 
 Objetivo: explicar onde a memoria esta sendo usada, nao apenas mostrar um
 percentual.
@@ -207,6 +217,8 @@ percentual.
 
 ## 6. DISKS
 
+![Page 6: DISKS](images/widgetpage6.png)
+
 Objetivo: mostrar capacidade dos filesystems montados.
 
 - A fonte e `sysinfo::Disks`, filtrada para filesystems reais como btrfs, ext4,
@@ -222,6 +234,8 @@ Objetivo: mostrar capacidade dos filesystems montados.
   device-mapper antes de procurar `temp1_input` no hwmon do controlador.
 
 ## 7. FANS
+
+![Page 7: FANS](images/widgetpage7.png)
 
 Objetivo: mostrar temperatura de CPU e RPM somente quando o kernel disponibiliza
 essa informacao.
@@ -262,17 +276,34 @@ coletor mantem apenas a fonte `acpi_fan` neste caso. Se a UI voltar a mostrar
 `FANS 0`, o primeiro diagnostico deve ser confirmar se o stream em execucao e a
 build atual, antes de concluir que o hardware nao tem fan legivel.
 
-## Dados ainda sem pagina propria
+## 8. GPU / NPU
 
-- `gpu.devices` agora aparece na pagina GPU do painel, com uso por dispositivo,
-  memoria quando fornecida pelo backend e processos associados por PID.
-- A tela `6:GPU` tambem exibe CPU%, RAM%, GPU%, VRAM por processo, usuario e
-  comando; em GPU integrada a VRAM por processo pode ser `--` por usar RAM
-  compartilhada.
-- `net.proc_net` e `net.listening` ja existem no JSON, mas ainda nao aparecem
-  na pagina NET.
-- Os detalhes avancados de disco e os metadados por core tambem estao no JSON
-  e aguardam uma apresentacao visual dedicada.
+![Page 8: GPU](images/widgetpage8.png)
+
+Objetivo: monitorar aceleracao grafica e neural, motores 3D/computacao, uso de memoria e consumo de energia quando disponivel.
+- Suporte Intel via DRM fdinfo engine times (`render`, `blt`, `video`).
+- Suporte NVIDIA via NVML carregado dinamicamente (utilizacao de GPU, memoria dedicada, temperatura e potencia em Watts).
+- Processos de GPU associados com metricas de computacao e memoria por PID.
+- NPU Intel via `intel_vpu`: uso calculado pelo delta de `npu_busy_time_us`, frequencia atual/maxima e memoria alocada, sem `sudo` ou ferramenta externa.
+- Potencia, temperatura e utilizacao NPU por processo nao sao fabricadas quando o sysfs sem privilegios nao fornece essas metricas.
+
+## 9. HIST (Flight Recorder & Replay)
+
+![Page 9: HIST](images/widgetpage9.png)
+
+Objetivo: analise historica de telemetria, gravacao de sessoes e reproducao interativa quadro a quadro.
+- **Linha do tempo (Timeline)**: exibe graficos com regua de tempo decorrido para CPU, MEM, IO, NET e GPU.
+- **Gravacao de sessoes (REC)**: permite gravar snapshots com duracao pre-configurada (30s, 2m, 5m, 15m, 30m, 1h) ou customizada em minutos.
+- **Modo Replay**: depuracao passo a passo, retroceder/avancar, pausa/play e retorno imediato ao fluxo ao vivo (`LIVE`).
+- **Modal de Sessoes**: listagem, carregamento de gravacoes anteriores e remocao de sessoes salvas em disco (`📁 SESSIONS`).
+- **Metricas de Rede por Processo**: rastreia throughput e bytes transferidos via Netlink TCP (`IN`, `OUT`, contagem de conexoes).
+- **Exportacao Analitica (EXPORT)**: exporta relatorios completos em texto formatado (`.txt`) e dados brutos (`.json`) para a pasta de usuario.
+
+## Recursos CLI e Depuracao: TRACE
+
+Objetivo: registrar chamadas de sistema (syscalls) em tempo real sem dependencias externas como `strace`.
+- Usa a interface `ptrace` do Linux para anexar a um PID existente ou lancar comandos (`perfo trace -- ...`).
+- Rastreia chamadas, argumentos basicos, codigos de retorno e nomes de erro (`errno`).
 
 ## Fontes tecnicas
 

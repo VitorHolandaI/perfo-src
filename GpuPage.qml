@@ -6,6 +6,7 @@ Column {
   id: gpuPage
 
   property var devices: []
+  property var npuDevices: []
   property var processes: []
   property real totalMemoryBytes: 0
   property color foreground: Color.foreground
@@ -13,7 +14,25 @@ Column {
 
   spacing: Style.space(8)
 
-  PlainText { text: "GRAPHICS"; color: gpuPage.foreground; opacity: 0.65; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.caption }
+  PlainText { text: "GRAPHICS / NEURAL ACCELERATORS"; color: gpuPage.foreground; opacity: 0.65; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.caption }
+  PlainText { visible: gpuPage.npuDevices.length > 0; text: gpuPage.npuDevices.length + " DETECTED INTEL NPU" + (gpuPage.npuDevices.length === 1 ? "" : "S"); color: gpuPage.foreground; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
+
+  Repeater {
+    model: gpuPage.npuDevices
+    delegate: Column {
+      width: gpuPage.width
+      spacing: Style.space(3)
+
+      Row {
+        width: parent.width
+        PlainText { width: parent.width - Style.space(90); text: modelData.name + " [" + modelData.pci_address + "]"; color: gpuPage.foreground; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
+        PlainText { width: Style.space(90); text: gpuPage.percentText(modelData.utilization_percent); color: Color.accent; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.bodySmall; horizontalAlignment: Text.AlignRight }
+      }
+      Rectangle { width: parent.width; height: Style.space(10); color: Qt.rgba(gpuPage.foreground.r, gpuPage.foreground.g, gpuPage.foreground.b, 0.15); Rectangle { width: parent.width * gpuPage.percent(modelData.utilization_percent) / 100; height: parent.height; color: Color.accent } }
+      PlainText { text: "FREQ " + gpuPage.frequencyText(modelData.current_frequency_mhz, modelData.max_frequency_mhz) + "   MEM " + gpuPage.formatBytes(modelData.memory_used_bytes) + "   PCI " + modelData.vendor_id + ":" + modelData.device_id; color: gpuPage.foreground; opacity: 0.7; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.bodySmall }
+    }
+  }
+
   PlainText { text: gpuPage.devices.length > 0 ? gpuPage.devices.length + " DETECTED GPU" + (gpuPage.devices.length === 1 ? "" : "S") : "NO READABLE GPUS"; color: gpuPage.foreground; font.family: gpuPage.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
 
   Repeater {
@@ -108,6 +127,14 @@ Column {
     if (value === null || value === undefined || value === "") return "--"
     var number = Number(value)
     return isFinite(number) ? number.toFixed(0) + "%" : "--"
+  }
+
+  function frequencyText(current, maximum) {
+    if (current === null || current === undefined || maximum === null || maximum === undefined) return "--"
+    var currentNumber = Number(current)
+    var maximumNumber = Number(maximum)
+    if (!isFinite(currentNumber) || !isFinite(maximumNumber)) return "--"
+    return Math.round(currentNumber) + "/" + Math.round(maximumNumber) + " MHz"
   }
 
   function ramPercent(bytes) {

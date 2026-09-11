@@ -17,12 +17,19 @@ the JSON commands remain usable.
 
 ## Features
 
-- Interactive CPU-focused TUI.
-- CPU, per-core usage, load, memory, swap, pressure, disk I/O and network data.
-- Process list with short process names and full command lines in the TUI.
+- Interactive CPU-focused TUI with 7 dedicated full-screen panes (CPU, IO, NET, MEM, Disks, GPU, History).
+- Omarchy Quickshell widget with 9 dynamic pages and status bar popout.
+- Historical flight recorder with real-time metric timeline graphs (CPU, MEM, IO, NET, GPU).
+- Session recording with custom duration presets (30s, 2m, 5m, 15m, 30m, 1h, custom minutes).
+- Interactive replay scrubber with step, jump, play/pause, and return to live stream.
+- Saved sessions manager modal to inspect, load, and delete recorded flight sessions.
+- Process-level network socket monitoring via Netlink TCP diagnostics (RX/TX bytes and transfer rates).
+- CPU, per-core usage, load, memory, swap, pressure (PSI), disk I/O and network throughput.
+- Process list with short process names, full command lines, tree view, and live sorting in the TUI.
 - Read-only fan RPM and temperature discovery through Linux hwmon.
-- Optional GPU data when the kernel exposes a supported interface.
-- JSON snapshots for scripts, bars and other widgets.
+- Optional GPU data (Intel DRM fdinfo, NVIDIA NVML, AMD sysfs) when available.
+- Native Intel NPU utilization, frequency, and allocated memory from `intel_vpu` sysfs; no `intel-npu-smi` or root access required.
+- High-performance JSON stream (`perfo stream --json`) and snapshot (`perfo cpu --json`) for external scripts.
 - Built-in syscall tracing with `ptrace`; no `strace` dependency.
 
 ## Release Scope
@@ -48,23 +55,37 @@ and `cargo deny check` without duplicating that work.
 
 ### Standalone Linux (Non-Omarchy)
 
-To install the pre-compiled `perfo` binary into `~/.local/bin` without needing Rust or Omarchy:
+Each release publishes a static `x86_64` binary, its SHA-256, and a build
+provenance attestation. Install it without Rust or Omarchy:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | bash
+VERSION=0.1.3
+curl -fLO "https://github.com/VitorHolandaI/perfo/releases/download/v${VERSION}/perfo-linux-x86_64.tar.gz"
+curl -fLO "https://github.com/VitorHolandaI/perfo/releases/download/v${VERSION}/perfo-linux-x86_64.sha256"
+sha256sum --check perfo-linux-x86_64.sha256
+tar -xzf perfo-linux-x86_64.tar.gz
+install -m 0755 perfo ~/.local/bin/perfo
 ```
 
-Custom installation directory (default is `~/.local/bin`):
+Verify the binary was built by this repository's release workflow, not just
+that it downloaded intact:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/VitorHolandaI/perfo-src/main/install.sh | PERFO_INSTALL_DIR=/usr/local/bin bash
+gh attestation verify perfo --repo VitorHolandaI/perfo-src
 ```
 
-Or build and install locally from source using the installer script:
+`install.sh` automates the same steps, including the checksum check:
 
 ```bash
-./install.sh --build
+./install.sh                              # installs the pinned version
+PERFO_VERSION=0.1.3 ./install.sh          # a specific release
+PERFO_INSTALL_DIR=/usr/local/bin ./install.sh
+./install.sh --build                      # build from this checkout instead
 ```
+
+Download and read it before running it. It is deliberately not documented as a
+pipe into a shell: that pattern asks you to execute whatever the URL happens to
+serve at that moment, and offers no way to check it first.
 
 ### Omarchy Plugin
 
@@ -181,6 +202,88 @@ For the marketplace, an optional root-level `preview.png` (also `jpg`, `jpeg`,
 be stored under `docs/images/` and linked from this README; they are not
 attached through the submission form.
 
+## Screenshots & Interface Gallery
+
+### Quickshell Widget (Desktop Views)
+
+The Omarchy widget integrates into the desktop shell with specialized views, real-time sparklines, and a compact status bar popout:
+
+| Page | View | Description |
+| :--- | :--- | :--- |
+| **1** | **[Dashboard](docs/images/widgetpage1.png)** | System overview: aggregate CPU, memory, load averages, per-core bars, and top processes |
+| **2** | **[Disk I/O](docs/images/widgetpage2.png)** | Real-time read and write throughput sparklines, active storage devices, and I/O processes |
+| **3** | **[Network](docs/images/widgetpage3.png)** | Interface throughput (RX/TX), active network interfaces, and socket activity |
+| **4** | **[Memory](docs/images/widgetpage4.png)** | Physical RAM usage, swap space, PSI memory pressure, and top memory consumers |
+| **5** | **[Filesystems](docs/images/widgetpage5.png)** | Mounted disk partitions, mount points, used/free space, and capacity warnings |
+| **6** | **[GPU / NPU](docs/images/widgetpage6.png)** | GPU engine utilization, VRAM, temperature, per-process GPU compute, and Intel NPU utilization, frequency, and memory |
+| **7** | **[Syscall Tracer](docs/images/widgetpage7.png)** | Real-time ptrace syscall event logger for any running PID or spawned command |
+| **8** | **[Hardware Fans](docs/images/widgetpage8.png)** | Cooling fan RPMs and CPU/chassis temperature sensors discovered via hwmon |
+| **9** | **[Flight Recorder](docs/images/widgetpage9.png)** | Historical metric timeline, session recording, replay scrubber, and sessions modal |
+
+#### Page 1: Dashboard (`Dash`)
+![Widget Dashboard](docs/images/widgetpage1.png)
+
+#### Page 2: Disk I/O (`IO`)
+![Widget Disk IO](docs/images/widgetpage2.png)
+
+#### Page 3: Network Throughput (`NET`)
+![Widget Network](docs/images/widgetpage3.png)
+
+#### Page 4: Memory & Swap (`MEM`)
+![Widget Memory](docs/images/widgetpage4.png)
+
+#### Page 5: Storage Filesystems (`Disks`)
+![Widget Filesystems](docs/images/widgetpage5.png)
+
+#### Page 6: GPU and NPU Acceleration (`GPU`)
+![Widget GPU](docs/images/widgetpage6.png)
+
+#### Page 7: Syscall Tracer (`Trace`)
+![Widget Syscall Tracer](docs/images/widgetpage7.png)
+
+#### Page 8: Hardware Fans & Thermals (`Fans`)
+![Widget Fans](docs/images/widgetpage8.png)
+
+#### Page 9: History & Flight Replay (`Hist`)
+![Widget History and Flight Replay](docs/images/widgetpage9.png)
+
+---
+
+### Terminal TUI (Console Views)
+
+The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency monitoring with hotkeys (`1-7`, `Tab`, `h/l`):
+
+| Pane | View | Description |
+| :--- | :--- | :--- |
+| **1** | **[CPU Dashboard](docs/images/terminalpage1.png)** | Per-core utilization bars, CPU frequency, load average, uptime, and process tree |
+| **2** | **[Disk I/O](docs/images/terminalpage2.png)** | Device throughput, read/write rates, and top disk I/O processes |
+| **3** | **[Network](docs/images/terminalpage3.png)** | Interface bandwidth, Netlink socket byte tracking, connections, and per-process RX/TX |
+| **4** | **[Memory](docs/images/terminalpage4.png)** | RAM breakdown (used, free, buffers, cached), swap, and memory consumers |
+| **5** | **[Storage Mounts](docs/images/terminalpage5.png)** | Partition sizes, available space, filesystem types, and mount points |
+| **6** | **[GPU / NPU Monitor](docs/images/terminalpage6.png)** | GPU load, memory, temperature, power, process compute, and Intel NPU utilization and frequency |
+| **7** | **[History Analysis](docs/images/terminalpage7.png)** | Timeline graphs, recording (`r`), sessions modal (`s`), stepping, and flight replay |
+
+#### Pane 1: CPU Dashboard (`1:CPU`)
+![Terminal CPU Dashboard](docs/images/terminalpage1.png)
+
+#### Pane 2: Disk I/O Activity (`2:IO`)
+![Terminal Disk IO](docs/images/terminalpage2.png)
+
+#### Pane 3: Network Bandwidth & Sockets (`3:NET`)
+![Terminal Network](docs/images/terminalpage3.png)
+
+#### Pane 4: Memory & Swap Hierarchy (`4:MEM`)
+![Terminal Memory](docs/images/terminalpage4.png)
+
+#### Pane 5: Filesystems & Mounts (`5:Disks`)
+![Terminal Storage Mounts](docs/images/terminalpage5.png)
+
+#### Pane 6: GPU and NPU Acceleration (`6:GPU / NPU`)
+![Terminal GPU](docs/images/terminalpage6.png)
+
+#### Pane 7: History Analysis & Replay Scrubber (`7:Hist`)
+![Terminal History Analysis](docs/images/terminalpage7.png)
+
 ## Data Sources
 
 Perfo reads standard Linux interfaces before using a syscall:
@@ -189,11 +292,12 @@ Perfo reads standard Linux interfaces before using a syscall:
   memory, network and process data.
 - `/sys/class/hwmon` for fan RPM and sensor values.
 - `/sys/class/drm` and driver sysfs files for supported GPU values.
+- `/sys/class/accel/accel*/device` for Intel NPU busy time, frequency, and allocated memory.
 - DRM fdinfo engine times for Intel i915 utilization.
 - dynamically loaded NVML for NVIDIA utilization, VRAM, temperature, and power.
 
 The monitor is read-only. It does not write PWM or EC files, load kernel
-modules, install daemons or require `lm_sensors`.
+modules, install daemons, require `lm_sensors`, or execute `intel-npu-smi`.
 
 Unavailable hardware values remain unavailable. A real stopped fan may report
 `0 RPM`; that is different from a sensor that does not exist or cannot be read.
@@ -217,6 +321,17 @@ cargo build --release
 ```
 
 The output is `target/release/perfo`.
+
+Releases ship a statically linked musl build so the binary carries no glibc
+version floor. To reproduce what a release publishes:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --locked --target x86_64-unknown-linux-musl
+```
+
+The output is `target/x86_64-unknown-linux-musl/release/perfo`, and its SHA-256
+should match the one `bundle.json` records for that release.
 
 ## License
 

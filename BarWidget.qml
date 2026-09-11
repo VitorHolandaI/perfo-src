@@ -5,10 +5,11 @@ import qs.Commons
 import qs.Ui
 
 BarWidget {
-  id: root
+  id: barWidgetRoot
   moduleName: "vitor.perfo"
   property var manifest: null
-  property var snapshot: null
+  property var summarySnapshot: null
+  property var detailSnapshot: null
 
   // The shell injects `manifest` for bar, service and panel kinds only, never
   // for bar-widget, so the binary is resolved relative to this file instead.
@@ -23,6 +24,37 @@ BarWidget {
     return Quickshell.env("HOME") + "/.local/bin/perfo"
   }
 
+  readonly property bool isRecording: panelLoader.item ? panelLoader.item.isSessionRecording : false
+  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  readonly property bool needsDetails: opened || isRecording
+
+  // The collector only gathers what the visible page renders. Page indices
+  // follow Panel.qml's pageNames; FANS and HELP have no collection profile of
+  // HELP has no collection profile of its own and falls back to the dashboard set.
+  readonly property var pageProfiles: ["dash", "cpu", "io", "net", "mem", "disks", "fans", "gpu", "hist", "dash"]
+  readonly property string activeProfile: {
+    // A closed panel renders nothing, so a recording still running behind it
+    // should collect only what its subsystem mask asks for.
+    if (!opened) return "hidden"
+    if (!panelLoader.item) return "dash"
+    var idx = panelLoader.item.page
+    return (idx >= 0 && idx < pageProfiles.length) ? pageProfiles[idx] : "dash"
+  }
+
+  // Subsystems the recording picker has ticked, as the collector expects them.
+  readonly property string recordingMask: {
+    var page = panelLoader.item ? panelLoader.item.historyPageComp : null
+    if (!page) return "cpu,mem,io,net,gpu,npu"
+    var on = []
+    if (page.recordCpu) on.push("cpu")
+    if (page.recordMem) on.push("mem")
+    if (page.recordIo) on.push("io")
+    if (page.recordNet) on.push("net")
+    if (page.recordGpu) on.push("gpu")
+    return on.length > 0 ? on.join(",") : "cpu,mem,io,net,gpu,npu"
+  }
+  readonly property var snapshot: needsDetails && detailSnapshot ? detailSnapshot : summarySnapshot
+
   readonly property string cpuLabel: snapshot ? "C " + Math.round(snapshot.overall_percent) + "%" : "C --"
   readonly property string memLabel: snapshot && snapshot.total_mem_bytes > 0
     ? "M " + Math.round(snapshot.used_mem_bytes * 100 / snapshot.total_mem_bytes) + "%"
@@ -30,24 +62,30 @@ BarWidget {
   readonly property string gpuLabel: snapshot && snapshot.gpu && snapshot.gpu.devices && snapshot.gpu.devices.length > 0 && snapshot.gpu.devices[0].usage_percent !== null
     ? "G " + Math.round(snapshot.gpu.devices[0].usage_percent) + "%"
     : ""
+  readonly property string npuLabel: npuUsageLabel()
   readonly property string label: {
     var parts = [cpuLabel, memLabel]
     if (gpuLabel) parts.push(gpuLabel)
+    if (npuLabel) parts.push(npuLabel)
     return parts.join("  ")
   }
-  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  readonly property string fullText: (isRecording ? "● REC  " : "") + label
+  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
 
-  implicitWidth: root.vertical ? root.barSize : button.implicitWidth
-  implicitHeight: root.barSize
+  onNeedsDetailsChanged: {
+    if (!needsDetails) detailSnapshot = null
+  }
+
+  implicitWidth: barWidgetRoot.vertical ? barWidgetRoot.barSize : button.implicitWidth
+  implicitHeight: barWidgetRoot.barSize
 
   function injectPanel() {
     var target = panelLoader.item
     if (!target) return
-    if ("bar" in target) target.bar = root.bar
-    if ("settings" in target) target.settings = root.settings
-    if ("anchorItem" in target) target.anchorItem = root
-    if ("hostWidget" in target) target.hostWidget = root
-    if ("snapshot" in target) target.snapshot = root.snapshot
+    if ("bar" in target) target.bar = barWidgetRoot.bar
+    if ("settings" in target) target.settings = barWidgetRoot.settings
+    if ("anchorItem" in target) target.anchorItem = button
+    if ("hostWidget" in target) target.hostWidget = barWidgetRoot
   }
 
   function open() {
@@ -58,24 +96,74 @@ BarWidget {
     if (panelLoader.item) panelLoader.item.close()
   }
 
-  function toggle() {
-    if (root.opened) root.close()
-    else root.open()
+  function closeForPopoutSwitch() {
+    if (panelLoader.item && panelLoader.item.closeForPopoutSwitch) panelLoader.item.closeForPopoutSwitch()
   }
 
-  onSnapshotChanged: injectPanel()
+  function toggle() {
+    if (barWidgetRoot.opened) barWidgetRoot.close()
+    else barWidgetRoot.open()
+  }
+
+  function npuUsageLabel() {
+    var devices = snapshot && snapshot.npu ? snapshot.npu.devices : null
+    if (!devices || devices.length === 0) return ""
+    var highest = null
+    for (var index = 0; index < devices.length; index++) {
+      var value = devices[index].utilization_percent
+      if (value === null || value === undefined || value === "") continue
+      var number = Number(value)
+      if (isFinite(number) && (highest === null || number > highest)) highest = number
+    }
+    return highest === null ? "N --" : "N " + Math.round(highest) + "%"
+  }
+
+  // Tells the collector which page is on screen and whether a recording is
+  // running, so it stops gathering what nothing is going to render.
+  function sendCollectorState() {
+    if (!detailCollector.running) return
+    detailCollector.write("profile " + barWidgetRoot.activeProfile + "\n")
+    // The panel has no thread toggle and no column that tells one apart, so a
+    // thread row would just double-count its own process.
+    detailCollector.write("threads off\n")
+    detailCollector.write("mask " + barWidgetRoot.recordingMask + "\n")
+    detailCollector.write("recording " + (barWidgetRoot.isRecording ? "on" : "off") + "\n")
+  }
+
+  onActiveProfileChanged: sendCollectorState()
+  onIsRecordingChanged: sendCollectorState()
+  onRecordingMaskChanged: sendCollectorState()
   onBarChanged: injectPanel()
 
   Process {
-    id: collector
-    command: [root.binaryPath, "stream", "--json"]
-    running: true
+    id: summaryCollector
+    command: [barWidgetRoot.binaryPath, "stream", "--json", "--summary"]
+    running: !barWidgetRoot.needsDetails
     stdout: SplitParser {
       onRead: function(line) {
+        if (barWidgetRoot.needsDetails) return
         try {
-          root.snapshot = JSON.parse(line)
+          barWidgetRoot.summarySnapshot = JSON.parse(line)
         } catch (error) {
-          console.warn("vitor.perfo: invalid JSON snapshot", error)
+          console.warn("vitor.perfo: invalid summary JSON snapshot", error)
+        }
+      }
+    }
+  }
+
+  Process {
+    id: detailCollector
+    command: [barWidgetRoot.binaryPath, "stream", "--json"]
+    running: barWidgetRoot.needsDetails
+    stdinEnabled: true
+    onStarted: barWidgetRoot.sendCollectorState()
+    stdout: SplitParser {
+      onRead: function(line) {
+        if (!barWidgetRoot.needsDetails) return
+        try {
+          barWidgetRoot.detailSnapshot = JSON.parse(line)
+        } catch (error) {
+          console.warn("vitor.perfo: invalid detail JSON snapshot", error)
         }
       }
     }
@@ -83,11 +171,27 @@ BarWidget {
 
   IpcHandler {
     target: "vitor.perfo"
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
+    function open() { barWidgetRoot.open() }
+    function close() { barWidgetRoot.close() }
+    function show() { barWidgetRoot.open() }
+    function hide() { barWidgetRoot.close() }
+    function toggle() { barWidgetRoot.toggle() }
+    function setPage(p: int) { if (panelLoader.item) panelLoader.item.page = p }
+    function page(): int { return panelLoader.item ? panelLoader.item.page : 0 }
+    function toggleRecording() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleSessionRecording() }
+    function toggleRecordMenu() { if (panelLoader.item && panelLoader.item.historyPageComp) { panelLoader.item.historyPageComp.showSessionsMenu = false; panelLoader.item.historyPageComp.showRecordMenu = !panelLoader.item.historyPageComp.showRecordMenu } }
+    function toggleRecordSubsystem(name: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.toggleRecordSubsystem(name) }
+    function isRecording(): bool { return (panelLoader.item && panelLoader.item.historyPageComp) ? panelLoader.item.historyPageComp.isSessionRecording : false }
+    function toggleSessionsMenu() { if (panelLoader.item) panelLoader.item.toggleSessionsMenu() }
+    function setMetric(m: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.metric = m }
+    function setZoom(z: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.zoomLabel = z }
+    function openCustomInput() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.customInputOpen = true }
+    function applyCustomMinutes(m: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.applyCustomMinutes(String(m)) }
+    function jumpToLive() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpToLive() }
+    function exportReport() { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.exportReport() }
+    function loadSession(p: string, id: string) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.loadSession(p, id, false, false) }
+    function jumpTimeline(dir: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.jumpTimeline(dir) }
+    function stepTimeline(delta: int) { if (panelLoader.item && panelLoader.item.historyPageComp) panelLoader.item.historyPageComp.stepTimeline(delta) }
   }
 
   Loader {
@@ -96,21 +200,71 @@ BarWidget {
     source: Qt.resolvedUrl("Panel.qml")
     visible: false
     onLoaded: {
-      root.injectPanel()
-      Qt.callLater(root.injectPanel)
+      barWidgetRoot.injectPanel()
+      Qt.callLater(barWidgetRoot.injectPanel)
     }
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
-    bar: root.bar
-    text: root.label
+    bar: barWidgetRoot.bar
+    text: barWidgetRoot.fullText
+    labelVisible: false
     horizontalMargin: 6
-    tooltipText: "Left click for metrics, right click for full TUI"
+    tooltipText: barWidgetRoot.isRecording ? "Session recording active - Left: metrics | Middle: timeline | Right: full TUI" : "Left: metrics | Middle: timeline & play | Right: full TUI"
+
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(4)
+      enabled: false
+
+      // Pulsing red indicator when session is actively recording
+      Row {
+        visible: barWidgetRoot.isRecording
+        spacing: Style.space(3)
+        anchors.verticalCenter: parent.verticalCenter
+
+        Rectangle {
+          width: Style.space(6)
+          height: Style.space(6)
+          radius: Style.space(3)
+          color: Color.urgent
+          anchors.verticalCenter: parent.verticalCenter
+
+          SequentialAnimation on opacity {
+            running: barWidgetRoot.isRecording
+            loops: Animation.Infinite
+            NumberAnimation { to: 0.25; duration: 600; easing.type: Easing.InOutQuad }
+            NumberAnimation { to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
+          }
+        }
+
+        PlainText {
+          text: "REC"
+          color: Color.urgent
+          font.family: button.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+          anchors.verticalCenter: parent.verticalCenter
+        }
+      }
+
+      PlainText {
+        text: barWidgetRoot.label
+        color: button.foreground
+        font.family: button.fontFamily
+        font.pixelSize: button.fontSize
+        anchors.verticalCenter: parent.verticalCenter
+      }
+    }
 
     onPressed: function(b) {
-      if (b === Qt.LeftButton) root.toggle()
+      if (b === Qt.LeftButton) barWidgetRoot.toggle()
+      else if (b === Qt.MiddleButton && panelLoader.item) {
+        panelLoader.item.page = 8
+        barWidgetRoot.open()
+      }
       else if (b === Qt.RightButton && panelLoader.item) panelLoader.item.openTerminal()
     }
   }

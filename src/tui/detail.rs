@@ -10,6 +10,20 @@ use crate::data::cpu::ProcessInfo;
 use crate::data::gpu::GpuInfo;
 use crate::theme::Theme;
 
+/// Detail-pane layout: the memory block on top, the device list below, and
+/// the width each column of the device table gets.
+const MEMORY_BLOCK_HEIGHT: u16 = 9;
+const DEVICE_BLOCK_HEIGHT: u16 = 10;
+const DEVICE_HEADER_HEIGHT: u16 = 5;
+const LEFT_PANE_PCT: u16 = 52;
+const RIGHT_PANE_PCT: u16 = 48;
+/// Label width before a bar starts.
+const BAR_LABEL_WIDTH: u16 = 14;
+/// How far device names, mounts and filesystem labels are truncated.
+const DEVICE_NAME_WIDTH: usize = 10;
+const MOUNT_WIDTH: usize = 12;
+const FS_WIDTH: usize = 8;
+
 use super::cpu::{self, Pane, Ui};
 
 const MEMORY_WARN_PCT: f64 = 5.0;
@@ -20,9 +34,13 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let [summary, processes] =
-        Layout::vertical([Constraint::Length(9), Constraint::Min(0)]).areas(inner);
-    let [ram, pressure] =
-        Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(summary);
+        Layout::vertical([Constraint::Length(MEMORY_BLOCK_HEIGHT), Constraint::Min(0)])
+            .areas(inner);
+    let [ram, pressure] = Layout::horizontal([
+        Constraint::Percentage(LEFT_PANE_PCT),
+        Constraint::Percentage(RIGHT_PANE_PCT),
+    ])
+    .areas(summary);
     draw_mem_summary(frame, ram, ui);
     draw_mem_pressure(frame, pressure, ui);
     draw_mem_processes(frame, processes, ui);
@@ -31,8 +49,8 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
 fn draw_mem_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
     let m = &ui.snap.mem;
     let total = m.total.max(1);
-    let used_pct = m.used as f64 / total as f64 * 100.0;
-    let bar_width = area.width.saturating_sub(14) as usize;
+    let used_pct = crate::units::percent_of(m.used, total) as f64;
+    let bar_width = area.width.saturating_sub(BAR_LABEL_WIDTH) as usize;
     let lines = vec![
         Line::from(vec![
             Span::styled("RAM ", Style::default().fg(ui.theme.muted)),
@@ -66,7 +84,7 @@ fn draw_mem_pressure(frame: &mut Frame, area: Rect, ui: &Ui) {
     let swap_pct = if m.swap_total == 0 {
         0.0
     } else {
-        m.swap_used as f64 / m.swap_total as f64 * 100.0
+        crate::units::percent_of(m.swap_used, m.swap_total) as f64
     };
     let psi = format!(
         "{:.1} / {:.1} / {:.1}%",
@@ -120,14 +138,18 @@ fn draw_mem_processes(frame: &mut Frame, area: Rect, ui: &Ui) {
         .iter()
         .take(area.height.saturating_sub(2) as usize)
     {
-        let pct = p.mem_bytes as f64 / ui.snap.mem.total.max(1) as f64 * 100.0;
+        let pct = crate::units::percent_of(p.mem_bytes, ui.snap.mem.total) as f64;
         lines.push(Line::from(format!(
             "{:>8} {:<12} {:>8} {:>6.1}% {}",
             p.pid,
             cpu::truncate(&p.user, 12),
             cpu::human_bytes(p.mem_bytes),
             pct,
-            cpu::truncate(&p.cmd, inner.width.saturating_sub(43) as usize)
+            cpu::truncate_with_scroll(
+                &p.cmd,
+                ui.cmd_scroll,
+                inner.width.saturating_sub(43) as usize
+            )
         )));
     }
     frame.render_widget(Paragraph::new(lines), inner);
@@ -138,50 +160,27 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let [usage, devices] =
-        Layout::vertical([Constraint::Length(10), Constraint::Min(0)]).areas(inner);
+        Layout::vertical([Constraint::Length(DEVICE_BLOCK_HEIGHT), Constraint::Min(0)])
+            .areas(inner);
     draw_disk_usage(frame, usage, ui);
     draw_disk_devices(frame, devices, ui);
 }
 
-pub(super) fn draw_gpu_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let panel = cpu::block("6:GPU", false, &ui.theme);
-    frame.render_widget(panel.clone(), area);
-    let inner = panel.inner(area);
-    let lines = ui
-        .snap
-        .gpu
-        .devices
-        .iter()
-        .take(inner.height.saturating_sub(1) as usize)
-        .map(|device| {
-            let vram = if device.vendor == "Intel" {
-                "shared".into()
-            } else {
-                gpu_memory(device)
-            };
-            Line::from(format!(
-                "{} {:>4} VRAM {}",
-                cpu::truncate(&device.name, 10),
-                gpu_metric(device.usage_percent, "%"),
-                vram
-            ))
-        })
-        .collect::<Vec<_>>();
-    let lines = if lines.is_empty() {
-        vec![Line::from("no readable GPUs")]
-    } else {
-        lines
-    };
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
 pub(super) fn draw_gpu(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let panel = cpu::block("6:GPU", ui.pane == Pane::Gpu, &ui.theme);
+    let panel = cpu::block("6:GPU / NPU", ui.pane == Pane::Gpu, &ui.theme);
     frame.render_widget(panel.clone(), area);
     let inner = panel.inner(area);
-    let [devices, processes] =
-        Layout::vertical([Constraint::Length(5), Constraint::Min(0)]).areas(inner);
+    let npu_height = super::npu::panel_height(&ui.snap.npu.devices);
+    let [devices, npus, processes] = Layout::vertical([
+        Constraint::Length(DEVICE_HEADER_HEIGHT),
+        Constraint::Length(npu_height),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
     draw_gpu_devices(frame, devices, ui);
+    if npu_height > 0 {
+        super::npu::draw(frame, npus, &ui.snap.npu.devices);
+    }
     draw_gpu_processes(frame, processes, ui);
 }
 
@@ -268,7 +267,7 @@ fn gpu_process_rows(ui: &Ui, width: usize) -> Vec<(f32, String)> {
                             .map(cpu::short_bytes)
                             .unwrap_or_else(|| "--".into()),
                         cpu::truncate(&device.name, 12),
-                        cpu::truncate(&process.cmd, command_width),
+                        cpu::truncate_with_scroll(&process.cmd, ui.cmd_scroll, command_width),
                     ),
                 ))
             })
@@ -325,9 +324,12 @@ fn draw_disk_usage(frame: &mut Frame, area: Rect, ui: &Ui) {
         .iter()
         .take(area.height.saturating_sub(2) as usize)
     {
-        let name = cpu::truncate(d.name.rsplit('/').next().unwrap_or(&d.name), 10);
-        let mount = cpu::truncate(&d.mount, 12);
-        let fs = cpu::truncate(&d.fs, 8);
+        let name = cpu::truncate(
+            d.name.rsplit('/').next().unwrap_or(&d.name),
+            DEVICE_NAME_WIDTH,
+        );
+        let mount = cpu::truncate(&d.mount, MOUNT_WIDTH);
+        let fs = cpu::truncate(&d.fs, FS_WIDTH);
         let color = disk_color(d.percent, &ui.theme);
         lines.push(Line::from(vec![
             Span::styled(
@@ -357,7 +359,10 @@ fn draw_disk_devices(frame: &mut Frame, area: Rect, ui: &Ui) {
         .into_iter()
         .take(inner.height.saturating_sub(2) as usize)
     {
-        let name = cpu::truncate(d.name.rsplit('/').next().unwrap_or(&d.name), 12);
+        let name = cpu::truncate(
+            d.name.rsplit('/').next().unwrap_or(&d.name),
+            DEVICE_NAME_WIDTH,
+        );
         let temp = d
             .temp_c
             .map(|t| format!("{t:>4.0}C"))

@@ -37,24 +37,36 @@ pub fn stop_current_trace() {
     }
 }
 
+/// Low byte of a wait status that reports a stop rather than an exit.
 const STOPPED: c_int = 0x7f;
 /// With PTRACE_O_TRACESYSGOOD, syscall stops arrive as SIGTRAP | 0x80.
 const SYSCALL_STOP: c_int = libc::SIGTRAP | 0x80;
+/// errno the kernel reports while a syscall is still on entry.
+const ENOSYS: i64 = 38;
+/// Bytes a traced string argument may contain before it is rejected.
+const PRINTABLE_ASCII: std::ops::Range<u8> = 0x20..0x7f;
+
+/// Layout of the wait status word, as the W* macros in <bits/waitstatus.h>
+/// decode it: the low seven bits carry the terminating signal, the next bit is
+/// the core flag, and the second byte carries the stop signal.
+const STATUS_SIGNAL_MASK: c_int = 0x7f;
+const STATUS_LOW_BYTE_MASK: c_int = 0xff;
+const STATUS_STOPSIG_SHIFT: c_int = 8;
 
 fn wifexited(s: c_int) -> bool {
-    s & 0x7f == 0
+    s & STATUS_SIGNAL_MASK == 0
 }
 fn wifsignaled(s: c_int) -> bool {
-    s & 0x7f != 0 && s & 0x7f != STOPPED
+    s & STATUS_SIGNAL_MASK != 0 && s & STATUS_SIGNAL_MASK != STOPPED
 }
 fn wifstopped(s: c_int) -> bool {
-    s & 0xff == STOPPED
+    s & STATUS_LOW_BYTE_MASK == STOPPED
 }
 fn wstopsig(s: c_int) -> c_int {
-    (s >> 8) & 0xff
+    (s >> STATUS_STOPSIG_SHIFT) & STATUS_LOW_BYTE_MASK
 }
 fn wtermsig(s: c_int) -> c_int {
-    s & 0x7f
+    s & STATUS_SIGNAL_MASK
 }
 
 /// Waits for a tracee stop. Returns true when interrupted by SIGINT while
@@ -96,15 +108,21 @@ fn get_regs(pid: i32) -> io::Result<user_regs_struct> {
     Ok(regs)
 }
 
+#[cfg(target_env = "musl")]
+type PtraceRequest = libc::c_int;
+
+#[cfg(not(target_env = "musl"))]
+type PtraceRequest = libc::c_uint;
+
 fn ptrace_checked(
-    request: libc::c_uint,
+    request: PtraceRequest,
     pid: libc::pid_t,
     addr: *mut libc::c_void,
     data: *mut libc::c_void,
 ) -> io::Result<()> {
     // SAFETY: ptrace owns the request-specific interpretation of these
     // pointers; callers pass valid buffers or null for requests without one.
-    let result = unsafe { libc::ptrace(request, pid, addr, data) };
+    let result = unsafe { libc::ptrace(request as _, pid, addr, data) };
     if result == -1 {
         Err(io::Error::last_os_error())
     } else {
@@ -138,7 +156,7 @@ fn read_cstr(pid: i32, addr: u64) -> Option<String> {
             if b == 0 {
                 return String::from_utf8(out).ok();
             }
-            if !(0x20..0x7f).contains(&b) {
+            if !PRINTABLE_ASCII.contains(&b) {
                 return None;
             }
             out.push(b);
@@ -226,7 +244,7 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
             .take()
             .map(|signal| signal as *mut libc::c_void)
             .unwrap_or(std::ptr::null_mut());
-        ptrace_checked(libc::PTRACE_SYSCALL, pid, std::ptr::null_mut(), signal)?;
+        ptrace_checked(libc::PTRACE_SYSCALL as _, pid, std::ptr::null_mut(), signal)?;
         if wait_tracee(pid, &mut status)? {
             break;
         }
@@ -254,7 +272,9 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
             let regs = get_regs(pid)?;
             let entry = match at_entry {
                 Some(e) => !e,
-                None => regs.rax as i64 == -38, // -ENOSYS placeholder on entry
+                // The kernel parks -ENOSYS in rax on a syscall-entry stop, so
+                // its presence is what distinguishes entry from exit.
+                None => regs.rax as i64 == -ENOSYS,
             };
             at_entry = Some(entry);
             if !entry {
@@ -284,7 +304,7 @@ fn run_loop(pid: i32, filter: Option<&str>, emit: &mut dyn FnMut(String)) -> io:
         emit(format!("{name} = <interrupted>"));
     }
     if let Err(error) = ptrace_checked(
-        libc::PTRACE_DETACH,
+        libc::PTRACE_DETACH as _,
         pid,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
@@ -301,7 +321,7 @@ fn attach_preamble(pid: i32) -> io::Result<()> {
         // SAFETY: PTRACE_SEIZE (no stop, non-blocking attach) on a live pid;
         // EPERM when the yama policy forbids tracing non-children.
         let r = libc::ptrace(
-            libc::PTRACE_SEIZE,
+            libc::PTRACE_SEIZE as _,
             pid,
             0,
             libc::PTRACE_O_TRACESYSGOOD as *mut libc::c_void,
@@ -311,7 +331,7 @@ fn attach_preamble(pid: i32) -> io::Result<()> {
         }
         // Get an initial stop so we can start issuing PTRACE_SYSCALL.
         ptrace_checked(
-            libc::PTRACE_INTERRUPT,
+            libc::PTRACE_INTERRUPT as _,
             pid,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
@@ -386,7 +406,7 @@ pub fn spawn(cmd: &[String], filter: Option<&str>) -> io::Result<()> {
     // TRACEME doesn't take options; enable TRACESYSGOOD now so syscall stops
     // arrive as SIGTRAP|0x80 instead of plain SIGTRAP.
     ptrace_checked(
-        libc::PTRACE_SETOPTIONS,
+        libc::PTRACE_SETOPTIONS as _,
         pid,
         std::ptr::null_mut(),
         libc::PTRACE_O_TRACESYSGOOD as *mut libc::c_void,

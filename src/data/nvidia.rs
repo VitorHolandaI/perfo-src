@@ -199,9 +199,9 @@ impl NvidiaBackend {
         (!devices.is_empty()).then_some(Self { api, devices })
     }
 
-    pub(crate) fn refresh(&mut self) {
+    pub(crate) fn refresh(&mut self, processes: bool) {
         for device in &mut self.devices {
-            refresh_device(&self.api, device);
+            refresh_device(&self.api, device, processes);
         }
     }
 
@@ -210,7 +210,7 @@ impl NvidiaBackend {
     }
 }
 
-fn refresh_device(api: &NvmlApi, device: &mut NvidiaDevice) {
+fn refresh_device(api: &NvmlApi, device: &mut NvidiaDevice, processes: bool) {
     let mut utilization = NvmlUtilization::default();
     device.usage_percent = nvml_percent(
         unsafe { (api.device_get_utilization_rates)(device.handle, &mut utilization) },
@@ -237,7 +237,11 @@ fn refresh_device(api: &NvmlApi, device: &mut NvidiaDevice) {
         let result = unsafe { get_power_usage(device.handle, &mut power_mw) };
         nvml_value(result, power_watts(power_mw))
     });
-    device.processes = process_snapshots(api, device);
+    device.processes = if processes {
+        process_snapshots(api, device)
+    } else {
+        Vec::new()
+    };
 }
 
 fn process_snapshots(api: &NvmlApi, device: &mut NvidiaDevice) -> Vec<GpuProcessInfo> {
@@ -384,7 +388,7 @@ fn nvml_value<T>(result: NvmlReturn, value: T) -> Option<T> {
 }
 
 fn nvml_percent(result: NvmlReturn, value: f32) -> Option<f32> {
-    nvml_value(result, value).map(|value| value.clamp(0.0, 100.0))
+    nvml_value(result, value).map(crate::units::clamp_percent)
 }
 
 fn power_watts(power_mw: c_uint) -> f32 {

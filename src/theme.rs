@@ -1,5 +1,10 @@
 use ratatui::style::Color;
 
+/// `#rrggbb`: six hex digits after the hash.
+const HEX_DIGITS: usize = 6;
+const HEX_RADIX: u32 = 16;
+const HEX_COLOR_LEN: usize = 7;
+
 #[derive(Clone, Copy)]
 pub struct Theme {
     pub name: &'static str,
@@ -29,12 +34,12 @@ impl Theme {
 
 fn hex_color(s: &str) -> Option<Color> {
     let hex = s.trim_start_matches('#');
-    if hex.len() != 6 {
+    if hex.len() != HEX_DIGITS {
         return None;
     }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    let r = u8::from_str_radix(&hex[0..2], HEX_RADIX).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], HEX_RADIX).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], HEX_RADIX).ok()?;
     Some(Color::Rgb(r, g, b))
 }
 
@@ -57,7 +62,7 @@ fn from_raw(raw: &str) -> Theme {
             continue;
         };
         let v = v.trim().trim_matches('"');
-        if !v.starts_with('#') || v.len() < 7 {
+        if !v.starts_with('#') || v.len() < HEX_COLOR_LEN {
             continue;
         }
         let Some(c) = hex_color(v) else { continue };

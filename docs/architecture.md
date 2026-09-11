@@ -17,21 +17,22 @@ when the metric has no file equivalent. Current examples are:
 - DRM sysfs for AMD GPU values.
 - DRM `/proc/<pid>/fdinfo` engine times for Intel i915 utilization.
 - dynamically loaded NVML for NVIDIA GPU values when the driver is available.
+- Intel `intel_vpu` sysfs counters for NPU utilization, frequency, and memory.
 
 This follows the project data map and the Linux interfaces documented in
 `docs/hardware/`.
 
 ## Honest absence
 
-Metrics are optional by hardware and driver. An unavailable GPU utilization,
+Metrics are optional by hardware and driver. An unavailable GPU/NPU utilization,
 temperature, fan, or power reading is `null` or absent from the relevant
 detail list. Zero is used only when the source actually reports zero, such as
 a stopped fan or an idle counter delta.
 
 ## Portability
 
-Never identify hardware by `hwmonN` or `cardN` alone. Resolve the device by
-chip name, DRM vendor/driver, or the relevant sysfs relation. Keep display
+Never identify hardware by `hwmonN`, `cardN`, or `accelN` alone. Resolve the device by
+chip name, PCI address, DRM/accelerator vendor and driver, or the relevant sysfs relation. Keep display
 labels bounded and sanitize kernel-provided strings before they reach QML.
 
 ## Process naming

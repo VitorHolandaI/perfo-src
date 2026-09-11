@@ -52,4 +52,4 @@ jobs:
             --type disable \
             --property disable \
             --unqualified disable \
-            BarWidget.qml Panel.qml ProcessGrid.qml GpuPage.qml
+            BarWidget.qml Panel.qml ProcessGrid.qml GpuPage.qml HistoryPage.qml
