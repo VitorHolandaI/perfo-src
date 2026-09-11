@@ -10,6 +10,15 @@ use ratatui::{
 
 use crate::theme::Theme;
 
+/// Divisor between adjacent binary size units (KiB, MiB, ...).
+pub(crate) const BYTES_PER_UNIT: f64 = 1024.0;
+/// Above this many MHz a frequency reads better in GHz.
+const MHZ_PER_GHZ: u64 = 1000;
+/// Values at or above this get one decimal instead of two.
+const ONE_DECIMAL_ABOVE: f32 = 10.0;
+/// A whole percent, for scaling a 0..=100 value onto a smaller range.
+const FULL_PERCENT: f32 = 100.0;
+
 /// Core/frequency color thresholds (percentages).
 pub(crate) const HOT_PCT: f32 = 80.0;
 
@@ -47,12 +56,13 @@ pub(crate) fn bar(value: f32, width: usize) -> String {
 
 pub(crate) fn bar_glyph(value: f32) -> char {
     const LEVELS: [char; 9] = ['.', ':', '-', '=', '+', '*', '#', '%', '@'];
-    let level = (value.clamp(0.0, 100.0) / 100.0 * (LEVELS.len() - 1) as f32).round() as usize;
+    let level = (crate::units::clamp_percent(value) / FULL_PERCENT * (LEVELS.len() - 1) as f32)
+        .round() as usize;
     LEVELS[level]
 }
 
 pub(crate) fn ghz(f: u64) -> String {
-    if f >= 1000 {
+    if f >= MHZ_PER_GHZ {
         format!("{:.1}G", f as f32 / 1000.0)
     } else {
         format!("{f}M")
@@ -79,8 +89,8 @@ pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= BYTES_PER_UNIT && unit < UNITS.len() - 1 {
+        value /= BYTES_PER_UNIT;
         unit += 1;
     }
     format!("{value:.1}{}", UNITS[unit])
@@ -91,11 +101,11 @@ pub(crate) fn short_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "K", "M", "G"];
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= BYTES_PER_UNIT && unit < UNITS.len() - 1 {
+        value /= BYTES_PER_UNIT;
         unit += 1;
     }
-    if value >= 10.0 {
+    if value >= ONE_DECIMAL_ABOVE as f64 {
         format!("{value:.0}{}", UNITS[unit])
     } else {
         format!("{value:.1}{}", UNITS[unit])

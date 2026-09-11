@@ -42,10 +42,10 @@ const UDP_UNCONNECTED: &str = "07";
 /// (inode, class) from one `/proc/net/tcp`/`udp` line, when parseable.
 pub(super) fn socket_line(line: &str, udp: bool) -> Option<(u64, Sock)> {
     let fields: Vec<&str> = line.split_whitespace().collect();
-    let st = *fields.get(3)?;
+    let st = *fields.get(SOCK_STATE_FIELD)?;
     // inode is field 9 (0-based) in both tcp and udp tables: sl local rem
     // st tx:rx tr retrnsmt uid timeout inode refs ptr.
-    let inode = fields.get(9)?.parse::<u64>().ok()?;
+    let inode = fields.get(SOCK_INODE_FIELD)?.parse::<u64>().ok()?;
     let class = if udp {
         Sock::Udp
     } else {
@@ -71,6 +71,19 @@ fn tcp_socket_bytes() -> HashMap<u64, (u64, u64)> {
 // from <linux/inet_diag.h>, <linux/netlink.h> and <linux/tcp.h>; they are
 // spelled out here because the raw numbers cannot be checked without the
 // headers open next to the code.
+/// Column of the connection state in a /proc/net/{tcp,udp} row.
+const SOCK_STATE_FIELD: usize = 3;
+/// Column of the socket inode in that same row.
+const SOCK_INODE_FIELD: usize = 9;
+/// How long to wait for the kernel's dump before giving up.
+const RECV_TIMEOUT_USEC: i64 = 100_000;
+/// Every idiag_states bit set: dump sockets in any state.
+const IDIAG_ALL_STATES: u32 = 0xffff_ffff;
+/// Receive buffer for one netlink datagram.
+const NL_RECV_BUF: usize = 65536;
+/// NLMSG_ALIGNTO: netlink rounds every length up to this boundary.
+const NL_ALIGN_TO: usize = 4;
+
 const NETLINK_INET_DIAG: libc::c_int = 4;
 const SOCK_DIAG_BY_FAMILY: u16 = 20;
 /// NLM_F_REQUEST | NLM_F_DUMP
@@ -93,7 +106,7 @@ const TCP_INFO_MIN_LEN: usize = TCPI_BYTES_SENT.end;
 const RTATTR_HDRLEN: usize = 4;
 /// NLMSG_ALIGN / RTA_ALIGN round up to a 4-byte boundary.
 fn nl_align(len: usize) -> usize {
-    (len + 3) & !3
+    (len + NL_ALIGN_TO - 1) & !(NL_ALIGN_TO - 1)
 }
 
 /// Opens a netlink socket and sends one SOCK_DIAG_BY_FAMILY dump request.
@@ -107,7 +120,7 @@ unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
     }
     let tv = libc::timeval {
         tv_sec: 0,
-        tv_usec: 100_000,
+        tv_usec: RECV_TIMEOUT_USEC,
     };
     libc::setsockopt(
         fd,
@@ -125,7 +138,7 @@ unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
     req[16] = family;
     req[17] = 6; // IPPROTO_TCP
     req[18] = INET_DIAG_INFO as u8;
-    req[20..24].copy_from_slice(&0xffff_ffffu32.to_ne_bytes());
+    req[20..24].copy_from_slice(&IDIAG_ALL_STATES.to_ne_bytes());
 
     let sent = libc::send(fd, req.as_ptr() as *const libc::c_void, req.len(), 0);
     if sent < 0 {
@@ -137,7 +150,7 @@ unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
 
 /// Walks the netlink reply, pulling each socket's byte counters into `out`.
 unsafe fn read_inet_diag_reply(fd: libc::c_int, out: &mut HashMap<u64, (u64, u64)>) {
-    let mut buf = [0u8; 65536];
+    let mut buf = [0u8; NL_RECV_BUF];
     loop {
         let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
         if n <= 0 {
