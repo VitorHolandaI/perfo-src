@@ -43,13 +43,11 @@ impl HistoryState {
         }
     }
 
-    fn generate_export_text(&self, date_str: &str) -> String {
+    /// The banner and the recording's identity at the top of the report.
+    fn export_header(&self, date_str: &str) -> Vec<String> {
         let mut lines = Vec::new();
         let border =
             "================================================================================";
-        let sub_border =
-            "--------------------------------------------------------------------------------";
-
         lines.push(border.to_string());
         lines.push("                   PERFO - SYSTEM HISTORY & ANALYSIS REPORT".to_string());
         lines.push(border.to_string());
@@ -71,6 +69,16 @@ impl HistoryState {
         ));
         lines.push(String::new());
 
+        lines
+    }
+
+    /// The sample the cursor sits on, as the report's "at this moment" section.
+    fn export_cursor_sample(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let border =
+            "================================================================================";
+        let sub_border =
+            "--------------------------------------------------------------------------------";
         let eff = self.effective_index();
         let sample = self.get_sample(eff);
         lines.push(border.to_string());
@@ -145,6 +153,14 @@ impl HistoryState {
         }
         lines.push(String::new());
 
+        lines
+    }
+
+    /// Peaks and averages across the whole recording, plus the process table.
+    fn export_summary(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let border =
+            "================================================================================";
         // Peaks & summary
         lines.push(border.to_string());
         lines.push("                   2. TIMELINE METRICS & PEAKS SUMMARY".to_string());
@@ -204,6 +220,13 @@ impl HistoryState {
         lines.push(border.to_string());
         lines.push("End of Perfo History Report".to_string());
         lines.push(String::new());
+        lines
+    }
+
+    fn generate_export_text(&self, date_str: &str) -> String {
+        let mut lines = self.export_header(date_str);
+        lines.extend(self.export_cursor_sample());
+        lines.extend(self.export_summary());
         lines.join("\n")
     }
 

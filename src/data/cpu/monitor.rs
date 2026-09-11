@@ -119,19 +119,13 @@ impl CpuMonitor {
         }
     }
 
-    fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
-        let task_of = self.thread_owner_map(needs);
-        let CpuFields {
-            overall_percent,
-            per_core,
-            per_core_types,
-            per_core_freq_mhz,
-            per_core_max_freq_mhz,
-            cpu_temp_c,
-            per_core_temp_c,
-            load_avg,
-        } = self.cpu_fields(needs);
-
+    /// The process table for this snapshot, with usernames resolved through a
+    /// per-uid cache because NSS lookups are expensive at this rate.
+    fn process_list(
+        &mut self,
+        needs: CollectionNeeds,
+        task_of: &HashMap<u32, u32>,
+    ) -> Vec<ProcessInfo> {
         // Username lookups hit NSS; cache them per uid instead of resolving
         // every process every tick.
         let mut cache = std::mem::take(&mut self.users_cache);
@@ -198,6 +192,23 @@ impl CpuMonitor {
         }
         self.users_cache = cache;
         processes.sort_by(|a, b| b.cpu_percent.total_cmp(&a.cpu_percent));
+        processes
+    }
+
+    fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
+        let task_of = self.thread_owner_map(needs);
+        let CpuFields {
+            overall_percent,
+            per_core,
+            per_core_types,
+            per_core_freq_mhz,
+            per_core_max_freq_mhz,
+            cpu_temp_c,
+            per_core_temp_c,
+            load_avg,
+        } = self.cpu_fields(needs);
+
+        let processes = self.process_list(needs, &task_of);
 
         let mem = if needs.memory_details {
             mem::snapshot()
