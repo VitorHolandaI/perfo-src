@@ -177,9 +177,9 @@ jobs:
           GH_TOKEN: ${{ steps.dist-token.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # The tag now lives in the distribution repository, so verification
-          # is asked for by version and locates the tree there itself.
-          gh workflow run verify-release.yml -f version="${VERSION}"
+          set -euo pipefail
+          DIST="$RUNNER_TEMP/dist"
+          git clone --depth 1 \
             "https://x-access-token:${GH_TOKEN}@github.com/VitorHolandaI/perfo.git" "$DIST"
 
           # The published tree holds only what the plugin needs at runtime. A
