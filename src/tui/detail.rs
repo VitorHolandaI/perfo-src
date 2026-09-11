@@ -10,6 +10,20 @@ use crate::data::cpu::ProcessInfo;
 use crate::data::gpu::GpuInfo;
 use crate::theme::Theme;
 
+/// Detail-pane layout: the memory block on top, the device list below, and
+/// the width each column of the device table gets.
+const MEMORY_BLOCK_HEIGHT: u16 = 9;
+const DEVICE_BLOCK_HEIGHT: u16 = 10;
+const DEVICE_HEADER_HEIGHT: u16 = 5;
+const LEFT_PANE_PCT: u16 = 52;
+const RIGHT_PANE_PCT: u16 = 48;
+/// Label width before a bar starts.
+const BAR_LABEL_WIDTH: u16 = 14;
+/// How far device names, mounts and filesystem labels are truncated.
+const DEVICE_NAME_WIDTH: usize = 10;
+const MOUNT_WIDTH: usize = 12;
+const FS_WIDTH: usize = 8;
+
 use super::cpu::{self, Pane, Ui};
 
 const MEMORY_WARN_PCT: f64 = 5.0;
@@ -20,9 +34,13 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let [summary, processes] =
-        Layout::vertical([Constraint::Length(9), Constraint::Min(0)]).areas(inner);
-    let [ram, pressure] =
-        Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(summary);
+        Layout::vertical([Constraint::Length(MEMORY_BLOCK_HEIGHT), Constraint::Min(0)])
+            .areas(inner);
+    let [ram, pressure] = Layout::horizontal([
+        Constraint::Percentage(LEFT_PANE_PCT),
+        Constraint::Percentage(RIGHT_PANE_PCT),
+    ])
+    .areas(summary);
     draw_mem_summary(frame, ram, ui);
     draw_mem_pressure(frame, pressure, ui);
     draw_mem_processes(frame, processes, ui);
@@ -32,7 +50,7 @@ fn draw_mem_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
     let m = &ui.snap.mem;
     let total = m.total.max(1);
     let used_pct = crate::units::percent_of(m.used, total) as f64;
-    let bar_width = area.width.saturating_sub(14) as usize;
+    let bar_width = area.width.saturating_sub(BAR_LABEL_WIDTH) as usize;
     let lines = vec![
         Line::from(vec![
             Span::styled("RAM ", Style::default().fg(ui.theme.muted)),
@@ -142,7 +160,8 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
     let [usage, devices] =
-        Layout::vertical([Constraint::Length(10), Constraint::Min(0)]).areas(inner);
+        Layout::vertical([Constraint::Length(DEVICE_BLOCK_HEIGHT), Constraint::Min(0)])
+            .areas(inner);
     draw_disk_usage(frame, usage, ui);
     draw_disk_devices(frame, devices, ui);
 }
@@ -186,7 +205,7 @@ pub(super) fn draw_gpu(frame: &mut Frame, area: Rect, ui: &Ui) {
     let inner = panel.inner(area);
     let npu_height = super::npu::panel_height(&ui.snap.npu.devices);
     let [devices, npus, processes] = Layout::vertical([
-        Constraint::Length(5),
+        Constraint::Length(DEVICE_HEADER_HEIGHT),
         Constraint::Length(npu_height),
         Constraint::Min(0),
     ])
@@ -338,9 +357,12 @@ fn draw_disk_usage(frame: &mut Frame, area: Rect, ui: &Ui) {
         .iter()
         .take(area.height.saturating_sub(2) as usize)
     {
-        let name = cpu::truncate(d.name.rsplit('/').next().unwrap_or(&d.name), 10);
-        let mount = cpu::truncate(&d.mount, 12);
-        let fs = cpu::truncate(&d.fs, 8);
+        let name = cpu::truncate(
+            d.name.rsplit('/').next().unwrap_or(&d.name),
+            DEVICE_NAME_WIDTH,
+        );
+        let mount = cpu::truncate(&d.mount, MOUNT_WIDTH);
+        let fs = cpu::truncate(&d.fs, FS_WIDTH);
         let color = disk_color(d.percent, &ui.theme);
         lines.push(Line::from(vec![
             Span::styled(
@@ -370,7 +392,10 @@ fn draw_disk_devices(frame: &mut Frame, area: Rect, ui: &Ui) {
         .into_iter()
         .take(inner.height.saturating_sub(2) as usize)
     {
-        let name = cpu::truncate(d.name.rsplit('/').next().unwrap_or(&d.name), 12);
+        let name = cpu::truncate(
+            d.name.rsplit('/').next().unwrap_or(&d.name),
+            DEVICE_NAME_WIDTH,
+        );
         let temp = d
             .temp_c
             .map(|t| format!("{t:>4.0}C"))
