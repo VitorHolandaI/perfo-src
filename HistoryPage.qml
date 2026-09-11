@@ -941,8 +941,9 @@ Column {
           onClicked: historyPage.exportReport()
         }
       }
+    }
 
-      // Live recording indicator label (visible only during active recording)
+    // Live recording indicator label (visible only during active recording)
       Row {
         visible: historyPage.isSessionRecording
         spacing: Style.space(6)
@@ -1148,23 +1149,24 @@ Column {
         Repeater {
           model: ["CPU", "MEM", "IO", "NET", "GPU"]
           delegate: Rectangle {
+            id: metricPillBox
             readonly property bool isChecked: historyPage.isRecordSubsystemChecked(modelData)
             width: pillLabel.implicitWidth + Style.space(10)
             height: Style.space(20)
             radius: Style.cornerRadius
-            color: isChecked ? Color.urgent : "transparent"
-            border.color: isChecked ? Color.urgent : historyPage.foreground
+            color: metricPillBox.isChecked ? Color.urgent : "transparent"
+            border.color: metricPillBox.isChecked ? Color.urgent : historyPage.foreground
             border.width: 1
-            opacity: isChecked ? 1.0 : 0.45
+            opacity: metricPillBox.isChecked ? 1.0 : 0.45
 
             PlainText {
               id: pillLabel
               anchors.centerIn: parent
-              text: (isChecked ? "☑ " : "☐ ") + (index + 1) + "." + modelData
-              color: isChecked ? "#ffffff" : historyPage.foreground
+              text: (metricPillBox.isChecked ? "☑ " : "☐ ") + (index + 1) + "." + modelData
+              color: metricPillBox.isChecked ? "#ffffff" : historyPage.foreground
               font.family: historyPage.fontFamily
               font.pixelSize: Style.font.caption
-              font.bold: isChecked
+              font.bold: metricPillBox.isChecked
             }
 
             MouseArea {
@@ -1177,22 +1179,23 @@ Column {
 
         // ALL toggle button
         Rectangle {
+          id: allBtnBox
           readonly property bool allChecked: historyPage.recordCpu && historyPage.recordMem && historyPage.recordIo && historyPage.recordNet && historyPage.recordGpu
           width: Style.space(34)
           height: Style.space(20)
           radius: Style.cornerRadius
-          color: allChecked ? Color.urgent : "transparent"
-          border.color: allChecked ? Color.urgent : historyPage.foreground
+          color: allBtnBox.allChecked ? Color.urgent : "transparent"
+          border.color: allBtnBox.allChecked ? Color.urgent : historyPage.foreground
           border.width: 1
-          opacity: allChecked ? 1.0 : 0.6
+          opacity: allBtnBox.allChecked ? 1.0 : 0.6
 
           PlainText {
             anchors.centerIn: parent
             text: "ALL"
-            color: allChecked ? "#ffffff" : historyPage.foreground
+            color: allBtnBox.allChecked ? "#ffffff" : historyPage.foreground
             font.family: historyPage.fontFamily
             font.pixelSize: Style.font.caption
-            font.bold: allChecked
+            font.bold: allBtnBox.allChecked
           }
 
           MouseArea {

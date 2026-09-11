@@ -248,11 +248,18 @@ impl CollectionProfile {
         match self {
             Self::Dashboard => CollectionNeeds {
                 cpu: true,
+                cpu_details: true,
+                cpu_temperatures: true,
                 memory: true,
                 disks: true,
+                disk_details: true,
+                io_wait: true,
                 network: true,
                 gpu: true,
                 npu: true,
+                processes: true,
+                process_cpu: true,
+                process_memory: true,
                 ..CollectionNeeds::default()
             },
             Self::Cpu => CollectionNeeds {
@@ -1245,14 +1252,17 @@ mod tests {
     fn dashboard_collects_only_aggregate_providers() {
         let needs = CollectionProfile::Dashboard.needs();
         assert!(needs.cpu);
+        assert!(needs.cpu_details);
+        assert!(needs.cpu_temperatures);
         assert!(needs.memory);
         assert!(needs.disks);
+        assert!(needs.disk_details);
         assert!(needs.network);
         assert!(needs.gpu);
         assert!(needs.npu);
-        assert!(!needs.processes);
+        assert!(needs.processes);
         assert!(!needs.process_io);
-        assert!(!needs.cpu_temperatures);
+        assert!(!needs.process_affinity);
         assert!(!needs.disk_temperatures);
         assert!(!needs.fans);
     }

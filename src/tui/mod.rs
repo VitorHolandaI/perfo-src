@@ -2,6 +2,7 @@ pub mod cpu;
 mod detail;
 mod help;
 pub mod history;
+mod net_summary;
 mod npu;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -199,8 +200,6 @@ fn run_loop(
             full_tick = true;
             force_refresh = true;
             last_tick = Instant::now() - TICK;
-            snap = None;
-            continue;
         }
 
         // Manage the tracer thread.
@@ -213,7 +212,9 @@ fn run_loop(
         );
 
         if let Some(s) = &snap {
-            let (rows, pids, selected) = if active_plan.visible == CollectionProfile::Cpu {
+            let (rows, pids, selected) = if active_plan.visible == CollectionProfile::Cpu
+                || active_plan.visible == CollectionProfile::Dashboard
+            {
                 prepare(s, &mut state)
             } else {
                 (Vec::new(), Vec::new(), None)

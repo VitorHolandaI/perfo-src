@@ -73,8 +73,8 @@ fn dashboard_snapshot_omits_hidden_provider_details() {
     monitor.refresh_for(CollectionProfile::Dashboard, true);
     let snapshot = monitor.snapshot_for(CollectionProfile::Dashboard);
 
-    assert!(snapshot.processes.is_empty());
-    assert!(snapshot.per_core.is_empty());
+    assert!(!snapshot.processes.is_empty());
+    assert!(!snapshot.per_core.is_empty());
     assert!(snapshot.net.proc_net.is_empty());
     assert!(snapshot.net.listening.is_empty());
     assert!(snapshot.disks.iter().all(|disk| disk.temp_c.is_none()));
@@ -83,7 +83,6 @@ fn dashboard_snapshot_omits_hidden_provider_details() {
         .devices
         .iter()
         .all(|device| device.processes.is_empty()));
-    assert_eq!(snapshot.mem.psi_some_10, 0.0);
 }
 
 #[test]
