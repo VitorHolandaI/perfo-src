@@ -6,28 +6,20 @@ use super::format::format_local_time;
 use super::{HistoryProcess, HistorySample, HistoryState};
 
 impl HistoryState {
-    pub fn record_snapshot(&mut self, snap: &CpuSnapshot) {
-        if !self.recording {
-            return;
-        }
-
-        let now = std::time::SystemTime::now();
-        let timestamp = format_local_time(now);
-
-        let mem_pct = if snap.mem.total > 0 {
-            crate::units::percent_of(snap.mem.used, snap.mem.total)
-        } else {
-            0.0
-        };
-
+    /// Total read and write rates across every disk in the snapshot.
+    fn disk_rates(snap: &CpuSnapshot) -> (u64, u64) {
         let mut read_bps = 0u64;
         let mut write_bps = 0u64;
         for d in &snap.disks {
             read_bps += d.read_bps;
             write_bps += d.write_bps;
         }
-        let io_mb = (read_bps + write_bps) as f32 / 1_000_000.0;
+        (read_bps, write_bps)
+    }
 
+    /// The busiest GPU's utilisation, plus every GPU process across all cards
+    /// as `(pid, percent, vram)`.
+    fn gpu_usage(snap: &CpuSnapshot) -> (f32, Vec<(u32, f32, u64)>) {
         let mut gpu_pct = 0.0f32;
         let mut gpu_procs: Vec<(u32, f32, u64)> = Vec::new();
         for dev in &snap.gpu.devices {
@@ -44,7 +36,13 @@ impl HistoryState {
                 ));
             }
         }
+        (gpu_pct, gpu_procs)
+    }
 
+    /// The top processes for this sample, with their GPU and socket activity
+    /// folded in.
+    /// The heaviest processes by the snapshot's own ordering.
+    fn base_processes(snap: &CpuSnapshot, gpu_procs: &[(u32, f32, u64)]) -> Vec<HistoryProcess> {
         let mut procs = Vec::new();
         for p in snap.processes.iter().take(30) {
             let mut gp_pct = 0.0f32;
@@ -72,8 +70,17 @@ impl HistoryState {
                 udp: np.map(|n| n.udp).unwrap_or(0),
             });
         }
+        procs
+    }
 
-        for (g_pid, g_pct, g_vram) in &gpu_procs {
+    /// Adds any GPU process the base list missed, and fills in GPU usage for
+    /// the ones already there.
+    fn merge_gpu_processes(
+        procs: &mut Vec<HistoryProcess>,
+        gpu_procs: &[(u32, f32, u64)],
+        snap: &CpuSnapshot,
+    ) {
+        for (g_pid, g_pct, g_vram) in gpu_procs {
             if !procs.iter().any(|p| p.pid == *g_pid) {
                 let np = snap.net.proc_net.iter().find(|n| n.pid == *g_pid);
                 let p_info = snap.processes.iter().find(|p| p.pid == *g_pid);
@@ -96,7 +103,11 @@ impl HistoryState {
                 });
             }
         }
+    }
 
+    /// Adds any process with sockets that the base list missed, and fills in
+    /// socket counters for the ones already there.
+    fn merge_socket_counters(procs: &mut Vec<HistoryProcess>, snap: &CpuSnapshot) {
         for np in &snap.net.proc_net {
             if !procs.iter().any(|p| p.pid == np.pid) {
                 let p_info = snap.processes.iter().find(|p| p.pid == np.pid);
@@ -119,6 +130,34 @@ impl HistoryState {
                 });
             }
         }
+    }
+
+    /// The top processes for this sample, with their GPU and socket activity
+    /// folded in.
+    fn top_processes(snap: &CpuSnapshot, gpu_procs: &[(u32, f32, u64)]) -> Vec<HistoryProcess> {
+        let mut procs = Self::base_processes(snap, gpu_procs);
+        Self::merge_gpu_processes(&mut procs, gpu_procs, snap);
+        Self::merge_socket_counters(&mut procs, snap);
+        procs
+    }
+
+    pub fn record_snapshot(&mut self, snap: &CpuSnapshot) {
+        if !self.recording {
+            return;
+        }
+
+        let now = std::time::SystemTime::now();
+        let timestamp = format_local_time(now);
+
+        let mem_pct = if snap.mem.total > 0 {
+            crate::units::percent_of(snap.mem.used, snap.mem.total)
+        } else {
+            0.0
+        };
+        let (read_bps, write_bps) = Self::disk_rates(snap);
+        let io_mb = (read_bps + write_bps) as f32 / 1_000_000.0;
+        let (gpu_pct, gpu_procs) = Self::gpu_usage(snap);
+        let procs = Self::top_processes(snap, &gpu_procs);
 
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
