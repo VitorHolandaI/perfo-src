@@ -8,6 +8,7 @@ use std::path::Path;
 use super::format::format_duration;
 use super::paths::{get_config, resolve_recording_path};
 
+// qual:allow(test_quality, untested) reason: "prints a timeline built from load_offsets, which is tested"
 pub fn get_timeline(target: &str) -> io::Result<()> {
     let (rec_dir, _) = get_config();
     let path = resolve_recording_path(target, &rec_dir)?;
@@ -236,6 +237,7 @@ pub fn load_offsets(path: &Path) -> io::Result<Vec<(u64, u64)>> {
     Ok(offsets)
 }
 
+// qual:allow(test_quality, untested) reason: "prints slices from load_offsets and legacy_inspect_slices, both tested"
 pub fn inspect_recording(target: &str, index: usize, window: usize) -> io::Result<()> {
     let (rec_dir, _) = get_config();
     let path = resolve_recording_path(target, &rec_dir)?;
@@ -334,6 +336,7 @@ fn legacy_inspect_slices(path: &Path, start: usize, end: usize) -> io::Result<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_scan_sample_offsets_basic() {
@@ -359,5 +362,103 @@ mod tests {
         let json = br#"{"id":"test","samples":[]}"#;
         let offsets = scan_sample_offsets(json);
         assert!(offsets.is_empty());
+    }
+
+    /// A recording plus its sidecar, in a directory of its own so the tests
+    /// stay independent.
+    fn recording_fixture(name: &str, body: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("perfo-timeline-{name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create fixture dir");
+        let rec = dir.join("rec.json");
+        fs::write(&rec, body).expect("write recording");
+        (rec, dir.join("rec.offsets.bin"))
+    }
+
+    #[test]
+    fn load_offsets_writes_a_sidecar_it_can_read_back() {
+        let (rec, sidecar) = recording_fixture(
+            "sidecar",
+            r#"{"id":"t","samples":[{"cpu":10},{"cpu":20},{"cpu":30}]}"#,
+        );
+
+        let first = load_offsets(&rec).expect("scan the recording");
+        assert_eq!(first.len(), 3);
+        assert!(sidecar.exists(), "the scan must cache its offsets");
+
+        // Second call takes the sidecar path and must agree with the scan.
+        let second = load_offsets(&rec).expect("read the sidecar");
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn load_offsets_ignores_a_sidecar_older_than_the_recording() {
+        let (rec, sidecar) = recording_fixture("stale", r#"{"id":"t","samples":[{"cpu":1}]}"#);
+
+        // A sidecar that predates the recording describes a file that has since
+        // changed, so its entries would point at the wrong bytes.
+        fs::write(&sidecar, vec![0u8; 16]).expect("write stale sidecar");
+        let stale_time = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        filetime_set(&sidecar, stale_time);
+
+        let offsets = load_offsets(&rec).expect("rescan the recording");
+        assert_eq!(offsets.len(), 1);
+        let bytes = fs::read(&rec).expect("read recording");
+        assert_eq!(
+            &bytes[offsets[0].0 as usize..offsets[0].1 as usize],
+            br#"{"cpu":1}"#
+        );
+    }
+
+    /// Backdates a file's mtime. std has no setter, so go through utimensat.
+    fn filetime_set(path: &Path, when: std::time::SystemTime) {
+        let secs = when
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_secs() as i64;
+        let times = [
+            libc::timespec {
+                tv_sec: secs,
+                tv_nsec: 0,
+            },
+            libc::timespec {
+                tv_sec: secs,
+                tv_nsec: 0,
+            },
+        ];
+        let c_path = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+            .expect("path has no interior nul");
+        // SAFETY: c_path is a valid nul-terminated path and times is a 2-element
+        // timespec array, which is exactly what utimensat documents.
+        let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
+        assert_eq!(rc, 0, "utimensat failed on {path:?}");
+    }
+
+    #[test]
+    fn legacy_slices_carry_the_index_and_timestamp_of_each_sample() {
+        let (rec, _) = recording_fixture(
+            "legacy",
+            r#"{"samples":[
+                {"timestamp":"t0","processes":[{"pid":1}]},
+                {"timestamp":"t1","processes":[]},
+                {"timestamp":"t2"}
+            ]}"#,
+        );
+
+        let slices = legacy_inspect_slices(&rec, 1, 5).expect("slice the recording");
+        // The range is clamped by what exists, not padded to the requested end.
+        assert_eq!(slices.len(), 2);
+        assert_eq!(slices[0]["index"], 1);
+        assert_eq!(slices[0]["timestamp"], "t1");
+        // A sample with no process list still yields an empty array, never null.
+        assert_eq!(slices[1]["processes"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn legacy_slices_reject_a_recording_with_no_samples_array() {
+        let (rec, _) = recording_fixture("nosamples", r#"{"id":"t"}"#);
+
+        let err = legacy_inspect_slices(&rec, 0, 1).expect_err("missing samples must fail");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

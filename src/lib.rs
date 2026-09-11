@@ -115,6 +115,7 @@ fn parse(args: &[String]) -> Command {
     }
 }
 
+// qual:allow(test_quality, untested) reason: "writes a constant usage string to stdout"
 fn print_help() {
     println!(
         "perfo {} - system performance monitor
@@ -143,6 +144,7 @@ USAGE:
 }
 
 /// Parse args and dispatch the requested command.
+// qual:allow(test_quality, untested) reason: "CLI entry point; parse() is tested and each command's logic has its own tests"
 pub fn run() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse(&args) {
@@ -270,6 +272,7 @@ pub fn run() -> ExitCode {
 /// A client that is showing one pane can say so, and the collector then stops
 /// gathering what that pane does not display. The protocol is one command per
 /// line: `profile <name>`, `recording on`, `recording off`.
+// qual:allow(test_quality, untested) reason: "reads the process's real stdin on a thread; apply_control covers the protocol it feeds"
 fn spawn_stream_control() -> std::sync::mpsc::Receiver<String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -419,6 +422,122 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// The monitor a widget client gets, so the control protocol can be driven
+    /// without a live stdin. `new(false)` is the construction `run` uses.
+    fn stream_monitor() -> JsonStreamMonitor {
+        JsonStreamMonitor::new(false)
+    }
+
+    fn plan_of(monitor: &JsonStreamMonitor) -> CollectionPlan {
+        match monitor {
+            JsonStreamMonitor::Full(_, plan, _) => *plan,
+            JsonStreamMonitor::Summary(_) => panic!("expected a Full stream monitor"),
+        }
+    }
+
+    fn threads_of(monitor: &JsonStreamMonitor) -> bool {
+        match monitor {
+            JsonStreamMonitor::Full(_, _, options) => options.threads,
+            JsonStreamMonitor::Summary(_) => panic!("expected a Full stream monitor"),
+        }
+    }
+
+    #[test]
+    fn profile_control_switches_the_visible_pane() {
+        let mut monitor = stream_monitor();
+
+        monitor.apply_control("profile cpu");
+        assert_eq!(plan_of(&monitor).visible, CollectionProfile::Cpu);
+
+        // The closed panel still streams, so "hidden" has to be reachable.
+        monitor.apply_control("profile hidden");
+        assert_eq!(plan_of(&monitor).visible, CollectionProfile::Hidden);
+    }
+
+    #[test]
+    fn unknown_profile_leaves_the_previous_one_in_place() {
+        let mut monitor = stream_monitor();
+        monitor.apply_control("profile mem");
+
+        // A newer widget may name a pane this collector does not have; it must
+        // keep serving the last pane it understood rather than reset.
+        monitor.apply_control("profile quantum");
+        assert_eq!(plan_of(&monitor).visible, CollectionProfile::Mem);
+    }
+
+    #[test]
+    fn mask_enables_only_the_subsystems_the_client_listed() {
+        let mut monitor = stream_monitor();
+        assert_eq!(
+            plan_of(&monitor).recording_mask,
+            data::cpu::RecordingMask::ALL
+        );
+
+        monitor.apply_control("mask cpu,net");
+        let mask = plan_of(&monitor).recording_mask;
+        assert!(mask.cpu && mask.net);
+        assert!(!mask.mem && !mask.io && !mask.gpu && !mask.npu);
+    }
+
+    #[test]
+    fn mask_naming_nothing_known_is_ignored() {
+        let mut monitor = stream_monitor();
+        monitor.apply_control("mask cpu");
+
+        // An all-off mask would silently record nothing, so it is refused and
+        // the last usable mask survives.
+        monitor.apply_control("mask nonsense");
+        assert_eq!(plan_of(&monitor).recording_mask.count(), 1);
+        assert!(plan_of(&monitor).recording_mask.cpu);
+    }
+
+    #[test]
+    fn recording_and_threads_toggle_both_ways() {
+        let mut monitor = stream_monitor();
+
+        monitor.apply_control("recording on");
+        assert!(plan_of(&monitor).recording);
+        monitor.apply_control("recording off");
+        assert!(!plan_of(&monitor).recording);
+
+        monitor.apply_control("threads off");
+        assert!(!threads_of(&monitor));
+        monitor.apply_control("threads on");
+        assert!(threads_of(&monitor));
+    }
+
+    #[test]
+    fn unknown_control_lines_are_ignored() {
+        let mut monitor = stream_monitor();
+        let before = plan_of(&monitor);
+
+        for line in ["", "profile", "recording maybe", "threads", "garbage line"] {
+            monitor.apply_control(line);
+        }
+        assert_eq!(plan_of(&monitor), before);
+        assert!(threads_of(&monitor));
+    }
+
+    /// Regression: thread rows made the widget's CPU column read ~300%, because
+    /// a thread's time is already counted in its process.
+    #[test]
+    fn threads_off_drops_rows_that_are_parts_of_another_row() {
+        let mut monitor = stream_monitor();
+        monitor.apply_control("profile cpu");
+        monitor.apply_control("threads off");
+
+        let json = monitor.refresh_json().expect("snapshot serializes");
+        let snapshot: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+        let processes = snapshot["processes"]
+            .as_array()
+            .expect("snapshot carries a process list");
+
+        assert!(
+            processes.iter().all(|p| p["owner"].is_null()),
+            "threads off must leave only owning processes"
+        );
     }
 
     #[test]

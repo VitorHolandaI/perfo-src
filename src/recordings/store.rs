@@ -159,6 +159,7 @@ pub fn get_recordings_list() -> Vec<RecordingMetadata> {
     out
 }
 
+// qual:allow(test_quality, untested) reason: "prints get_recordings_list(); the rotation it applies is covered by the prune tests"
 pub fn list_recordings() -> io::Result<()> {
     let out = get_recordings_list();
     let json_str = serde_json::to_string(&out).map_err(io::Error::other)?;
@@ -209,6 +210,7 @@ pub fn save_session_data(
     })
 }
 
+// qual:allow(test_quality, untested) reason: "reads stdin and prints the result of save_session_data; the write path has no unit test yet"
 pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     let raw = match arg {
         Some(path_str) => {
@@ -279,6 +281,7 @@ pub fn save_recording(arg: Option<&str>) -> io::Result<()> {
     Ok(())
 }
 
+// qual:allow(test_quality, untested) reason: "prints a resolved file; resolve_recording_path is tested"
 pub fn get_recording(target: Option<&str>) -> io::Result<()> {
     let target = target.ok_or_else(|| {
         io::Error::new(
@@ -350,6 +353,7 @@ pub fn delete_recording_by_id(target: &str) -> io::Result<bool> {
     }
 }
 
+// qual:allow(test_quality, untested) reason: "prints the outcome of delete_recording_by_id, whose containment guard is tested"
 pub fn delete_recording(target: Option<&str>) -> io::Result<()> {
     let target = target.ok_or_else(|| {
         io::Error::new(
@@ -398,5 +402,55 @@ mod tests {
         }
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(&rec_dir);
+    }
+
+    /// Rotation deletes user data, so the rule it applies is worth pinning:
+    /// keep the `max_recs` newest `rec-*.json`, take each one's sidecars with
+    /// it, and never touch a file that is not a recording.
+    #[test]
+    fn rotation_keeps_the_newest_recordings_and_their_sidecars() {
+        let dir = std::env::temp_dir().join("perfo-prune-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        // Names sort chronologically, which is what rotation orders by.
+        for stamp in ["20260101-000000", "20260102-000000", "20260103-000000"] {
+            fs::write(dir.join(format!("rec-{stamp}.json")), "{}").expect("write recording");
+            fs::write(dir.join(format!("rec-{stamp}.timeline.json")), "{}")
+                .expect("write timeline");
+            fs::write(dir.join(format!("rec-{stamp}.offsets.bin")), []).expect("write offsets");
+        }
+        fs::write(dir.join("notes.txt"), "keep me").expect("write unrelated file");
+
+        prune_recordings(&dir, 2);
+
+        assert!(dir.join("rec-20260103-000000.json").exists());
+        assert!(dir.join("rec-20260102-000000.json").exists());
+        assert!(
+            !dir.join("rec-20260101-000000.json").exists(),
+            "the oldest recording must be rotated out"
+        );
+        // The sidecars of a rotated recording would otherwise leak forever.
+        assert!(!dir.join("rec-20260101-000000.timeline.json").exists());
+        assert!(!dir.join("rec-20260101-000000.offsets.bin").exists());
+        // A survivor keeps everything it came with.
+        assert!(dir.join("rec-20260103-000000.timeline.json").exists());
+        assert!(dir.join("rec-20260103-000000.offsets.bin").exists());
+        assert!(dir.join("notes.txt").exists(), "rotation is not a cleaner");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rotation_below_the_limit_deletes_nothing() {
+        let dir = std::env::temp_dir().join("perfo-prune-noop-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create test dir");
+        fs::write(dir.join("rec-20260101-000000.json"), "{}").expect("write recording");
+
+        prune_recordings(&dir, crate::recordings::paths::DEFAULT_MAX_RECORDINGS);
+
+        assert!(dir.join("rec-20260101-000000.json").exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -400,3 +400,27 @@ impl From<CollectionProfile> for CollectionPlan {
         Self::for_profile(profile)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The panel's contract is "everything `full()` gathers, except affinity".
+    /// Written as a diff so a new field added to `full()` has to be considered
+    /// here too, instead of silently reaching the once-a-second panel path.
+    #[test]
+    fn widget_panel_is_full_collection_minus_process_affinity() {
+        let panel = CollectionNeeds::widget_panel();
+        let full = CollectionNeeds::full();
+
+        assert!(!panel.process_affinity, "the panel has no affinity column");
+        assert!(full.process_affinity);
+        assert_eq!(
+            panel,
+            CollectionNeeds {
+                process_affinity: false,
+                ..full
+            }
+        );
+    }
+}

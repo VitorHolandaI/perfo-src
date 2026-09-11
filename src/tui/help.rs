@@ -429,3 +429,40 @@ const fn cols(text: &'static str) -> HelpRow<'static> {
         text,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A header row renders as accent+bold, and the legend builder splits on
+    /// `|` and maps each `g:`/`y:`/`r:`/`a:` prefix onto a theme colour. These
+    /// are the two row kinds with no key column, so nothing else covers them.
+    #[test]
+    fn header_and_legend_rows_render_with_their_theme_colours() {
+        let theme = Theme::DEFAULT;
+        let rows = [hdr("Section"), cols("g:low | y:mid | r:high | plain")];
+
+        let lines = help_lines(&rows, &theme);
+        assert_eq!(lines.len(), 2);
+
+        let header = &lines[0].spans[0];
+        assert_eq!(header.content, "  Section");
+        assert_eq!(header.style.fg, Some(theme.accent));
+        assert!(header.style.add_modifier.contains(Modifier::BOLD));
+
+        // Text spans only, dropping the separators the builder interleaves.
+        let legend: Vec<_> = lines[1]
+            .spans
+            .iter()
+            .filter(|s| !s.content.trim().is_empty())
+            .collect();
+        assert_eq!(legend.len(), 4);
+        assert_eq!(legend[0].content, "low");
+        assert_eq!(legend[0].style.fg, Some(theme.green));
+        assert_eq!(legend[1].style.fg, Some(theme.yellow));
+        assert_eq!(legend[2].style.fg, Some(theme.red));
+        // An unprefixed segment keeps the foreground colour and its full text.
+        assert_eq!(legend[3].content, "plain");
+        assert_eq!(legend[3].style.fg, Some(theme.fg));
+    }
+}
