@@ -59,6 +59,19 @@ pub struct CpuMonitor {
     history: VecDeque<f32>,
 }
 
+/// The CPU half of a snapshot, gathered in one place so snapshot_needs reads
+/// as the assembly it is.
+struct CpuFields {
+    overall_percent: f32,
+    per_core: Vec<f32>,
+    per_core_types: Vec<CoreType>,
+    per_core_freq_mhz: Vec<u64>,
+    per_core_max_freq_mhz: Vec<u64>,
+    cpu_temp_c: Option<f32>,
+    per_core_temp_c: Vec<Option<f32>>,
+    load_avg: [f64; 3],
+}
+
 impl CpuMonitor {
     pub fn new() -> Self {
         Self::new_with_needs(CollectionNeeds::full())
@@ -250,20 +263,26 @@ impl CpuMonitor {
         self.snapshot_needs(plan.into().needs())
     }
 
-    fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
-        // On Linux every thread appears as its own /proc entry; map each
-        // thread tid to its owning process via Process::tasks().
+    /// Every thread shows up as its own /proc entry; map each tid back to the
+    /// process that owns it.
+    fn thread_owner_map(&self, needs: CollectionNeeds) -> HashMap<u32, u32> {
         let mut task_of: HashMap<u32, u32> = HashMap::new();
-        if needs.processes {
-            for (pid, p) in self.sys.processes() {
-                if let Some(tids) = p.tasks() {
-                    for t in tids {
-                        task_of.insert(t.as_u32(), pid.as_u32());
-                    }
+        if !needs.processes {
+            return task_of;
+        }
+        for (pid, p) in self.sys.processes() {
+            if let Some(tids) = p.tasks() {
+                for t in tids {
+                    task_of.insert(t.as_u32(), pid.as_u32());
                 }
             }
         }
+        task_of
+    }
 
+    /// The per-core and whole-CPU numbers, each gated on whether the caller
+    /// asked for that level of detail.
+    fn cpu_fields(&mut self, needs: CollectionNeeds) -> CpuFields {
         let overall_percent = if needs.cpu {
             self.sys.global_cpu_usage()
         } else {
@@ -312,6 +331,30 @@ impl CpuMonitor {
         } else {
             [0.0; 3]
         };
+        CpuFields {
+            overall_percent,
+            per_core,
+            per_core_types,
+            per_core_freq_mhz,
+            per_core_max_freq_mhz,
+            cpu_temp_c,
+            per_core_temp_c,
+            load_avg,
+        }
+    }
+
+    fn snapshot_needs(&mut self, needs: CollectionNeeds) -> CpuSnapshot {
+        let task_of = self.thread_owner_map(needs);
+        let CpuFields {
+            overall_percent,
+            per_core,
+            per_core_types,
+            per_core_freq_mhz,
+            per_core_max_freq_mhz,
+            cpu_temp_c,
+            per_core_temp_c,
+            load_avg,
+        } = self.cpu_fields(needs);
 
         // Username lookups hit NSS; cache them per uid instead of resolving
         // every process every tick.
