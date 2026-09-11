@@ -142,65 +142,17 @@ fn ruler_column_spans(ui: &Ui, w: usize, cursor_pos: usize) -> Vec<Span<'static>
     ruler_spans
 }
 
-pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(ui.theme.muted))
-        .title(format!(" TIMELINE GRAPH ({}) ", state.metric.label()));
-    frame.render_widget(block.clone(), area);
-    let inner = block.inner(area);
-
-    if inner.width < 10 || inner.height < 2 {
-        return;
-    }
-
-    let total = state.sample_count();
-    let span_secs = state.span.seconds(total);
-    let start_idx = total.saturating_sub(span_secs);
-    let visible_count = total.saturating_sub(start_idx);
-
-    if visible_count == 0 {
-        let msg = Paragraph::new("Collecting history samples...")
-            .style(Style::default().fg(ui.theme.muted));
-        frame.render_widget(msg, inner);
-        return;
-    }
-
-    let w = inner.width as usize;
+/// The two axis lines under the chart: wall-clock timestamps, and elapsed
+/// time against the span.
+fn axis_lines(
+    state: &HistoryState,
+    ui: &Ui,
+    w: usize,
+    start_idx: usize,
+    span_secs: usize,
+    total: usize,
+) -> (Line<'static>, Line<'static>) {
     let eff = state.effective_index();
-
-    let mut cursor_chars = vec![' '; w];
-
-    let step = (visible_count as f64) / (w as f64);
-    let cursor_pos = if eff >= start_idx && visible_count > 0 {
-        let rel = eff - start_idx;
-        ((rel as f64 / visible_count as f64) * (w as f64 - 1.0)).round() as usize
-    } else {
-        w.saturating_sub(1)
-    };
-
-    if cursor_pos < w {
-        cursor_chars[cursor_pos] = '▼';
-    }
-    let max_metric_val = metric_ceiling(state, total);
-    let geom = ChartGeometry {
-        w,
-        start_idx,
-        total,
-        step,
-        cursor_pos,
-    };
-    let bar_spans = bar_column_spans(state, ui, &geom, max_metric_val);
-    let ruler_spans = ruler_column_spans(ui, w, cursor_pos);
-
-    let cursor_line = Line::from(Span::styled(
-        cursor_chars.into_iter().collect::<String>(),
-        Style::default()
-            .fg(ui.theme.accent)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let bars_line = Line::from(bar_spans);
-
     let start_time = state
         .get_sample(start_idx)
         .map(|s| s.timestamp.as_str())
@@ -213,8 +165,6 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
         .get_sample(eff)
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
-
-    let ruler_line = Line::from(ruler_spans);
 
     let total_span = span_secs.min(total).max(1);
     let elapsed = if state.is_live() {
@@ -274,6 +224,71 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
             Style::default().fg(ui.theme.muted),
         ),
     ]);
+
+    (time_axis_line, timer_axis_line)
+}
+
+pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(ui.theme.muted))
+        .title(format!(" TIMELINE GRAPH ({}) ", state.metric.label()));
+    frame.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    if inner.width < 10 || inner.height < 2 {
+        return;
+    }
+
+    let total = state.sample_count();
+    let span_secs = state.span.seconds(total);
+    let start_idx = total.saturating_sub(span_secs);
+    let visible_count = total.saturating_sub(start_idx);
+
+    if visible_count == 0 {
+        let msg = Paragraph::new("Collecting history samples...")
+            .style(Style::default().fg(ui.theme.muted));
+        frame.render_widget(msg, inner);
+        return;
+    }
+
+    let w = inner.width as usize;
+    let eff = state.effective_index();
+
+    let mut cursor_chars = vec![' '; w];
+
+    let step = (visible_count as f64) / (w as f64);
+    let cursor_pos = if eff >= start_idx && visible_count > 0 {
+        let rel = eff - start_idx;
+        ((rel as f64 / visible_count as f64) * (w as f64 - 1.0)).round() as usize
+    } else {
+        w.saturating_sub(1)
+    };
+
+    if cursor_pos < w {
+        cursor_chars[cursor_pos] = '▼';
+    }
+    let max_metric_val = metric_ceiling(state, total);
+    let geom = ChartGeometry {
+        w,
+        start_idx,
+        total,
+        step,
+        cursor_pos,
+    };
+    let bar_spans = bar_column_spans(state, ui, &geom, max_metric_val);
+    let ruler_spans = ruler_column_spans(ui, w, cursor_pos);
+
+    let cursor_line = Line::from(Span::styled(
+        cursor_chars.into_iter().collect::<String>(),
+        Style::default()
+            .fg(ui.theme.accent)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let bars_line = Line::from(bar_spans);
+
+    let (time_axis_line, timer_axis_line) = axis_lines(state, ui, w, start_idx, span_secs, total);
+    let ruler_line = Line::from(ruler_spans);
 
     let par = Paragraph::new(vec![
         cursor_line,
