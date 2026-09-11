@@ -74,6 +74,8 @@ pub struct Ui<'a> {
     pub help_page: usize,
     pub show_menu: bool,
     pub cores_focused: bool,
+    /// Whether the process table lists threads alongside their process.
+    pub show_threads: bool,
     pub lang: crate::tui::Lang,
     pub tracing: bool,
     pub trace_lines: Option<&'a std::collections::VecDeque<String>>,
@@ -146,29 +148,27 @@ pub fn draw(frame: &mut Frame, ui: &Ui) {
 /// Fullscreen CPU window: one frame around CPU, memory, disks, and processes.
 fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
+    // The process table means something different with threads shown, so the
+    // title says which one you are looking at rather than leaving it to the
+    // status line, which drops the hint on a narrow terminal.
+    let threads = if ui.show_threads { " [+threads]" } else { "" };
     let title = match ui.core_filter {
-        Some(c) => format!("1:CPU + PROCESSES: core {c}"),
-        None => "1:CPU + PROCESSES".to_string(),
+        Some(c) => format!("1:CPU + PROCESSES: core {c}{threads}"),
+        None => format!("1:CPU + PROCESSES{threads}"),
     };
     let outer = block(&title, true, &ui.theme);
     frame.render_widget(outer.clone(), area);
     let inner = outer.inner(area);
-    let [cpu_area, mid_area, proc_area] = Layout::vertical([
+    // This pane is about the cores and what is running on them. It used to
+    // also draw the memory, disk and accelerator summaries, but the CPU
+    // collection profile never gathers those, so the boxes always rendered
+    // empty. The panes at 4, 5 and 6 own that data.
+    let [cpu_area, proc_area] = Layout::vertical([
         Constraint::Length(CPU_BLOCK_CHROME + core_lines as u16),
-        Constraint::Length(SUMMARY_HEIGHT),
         Constraint::Min(0),
     ])
     .areas(inner);
     draw_cpu(frame, cpu_area, ui, false);
-    let [mem_area, disk_area, gpu_area] = Layout::horizontal([
-        Constraint::Percentage(32),
-        Constraint::Percentage(43),
-        Constraint::Percentage(25),
-    ])
-    .areas(mid_area);
-    draw_mem(frame, mem_area, ui);
-    draw_disks(frame, disk_area, ui);
-    super::detail::draw_gpu_summary(frame, gpu_area, ui);
     draw_processes(frame, proc_area, ui, false);
 }
 

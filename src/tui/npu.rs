@@ -10,10 +10,6 @@ use crate::data::npu::NpuInfo;
 
 use super::cpu;
 
-pub(super) fn summary_lines(devices: &[NpuInfo]) -> Vec<Line<'static>> {
-    devices.iter().map(summary_line).collect()
-}
-
 pub(super) fn panel_height(devices: &[NpuInfo]) -> u16 {
     if devices.is_empty() {
         0
@@ -34,16 +30,6 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, devices: &[NpuInfo]) {
             .map(detail_line),
     );
     frame.render_widget(Paragraph::new(lines), area);
-}
-
-fn summary_line(device: &NpuInfo) -> Line<'static> {
-    Line::from(format!(
-        "{} {:>4} FREQ {} MEM {}",
-        cpu::truncate(&device.name, 10),
-        percent(device.utilization_percent),
-        frequency(device),
-        memory(device)
-    ))
 }
 
 fn detail_line(device: &NpuInfo) -> Line<'static> {
@@ -97,11 +83,8 @@ mod tests {
     #[test]
     fn lines_format_available_metrics() {
         let device = device();
-        assert_eq!(
-            summary_line(&device).to_string(),
-            "Intel NPU  42% FREQ 400/1600MHz MEM 64M"
-        );
         assert!(detail_line(&device).to_string().contains("0000:00:0b.0"));
+        assert!(detail_line(&device).to_string().contains("42%"));
     }
 
     #[test]

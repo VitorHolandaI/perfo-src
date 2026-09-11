@@ -166,39 +166,6 @@ pub(super) fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
     draw_disk_devices(frame, devices, ui);
 }
 
-pub(super) fn draw_gpu_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
-    let panel = cpu::block("6:ACCEL", false, &ui.theme);
-    frame.render_widget(panel.clone(), area);
-    let inner = panel.inner(area);
-    let mut lines = ui
-        .snap
-        .gpu
-        .devices
-        .iter()
-        .take(inner.height.saturating_sub(1) as usize)
-        .map(|device| {
-            let vram = if device.vendor == "Intel" {
-                "shared".into()
-            } else {
-                gpu_memory(device)
-            };
-            Line::from(format!(
-                "{} {:>4} VRAM {}",
-                cpu::truncate(&device.name, 10),
-                gpu_metric(device.usage_percent, "%"),
-                vram
-            ))
-        })
-        .collect::<Vec<_>>();
-    lines.extend(super::npu::summary_lines(&ui.snap.npu.devices));
-    let lines = if lines.is_empty() {
-        vec![Line::from("no readable GPUs")]
-    } else {
-        lines
-    };
-    frame.render_widget(Paragraph::new(lines), inner);
-}
-
 pub(super) fn draw_gpu(frame: &mut Frame, area: Rect, ui: &Ui) {
     let panel = cpu::block("6:GPU / NPU", ui.pane == Pane::Gpu, &ui.theme);
     frame.render_widget(panel.clone(), area);

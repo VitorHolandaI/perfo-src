@@ -162,6 +162,7 @@ fn run_loop(
                 help_page: state.help_page,
                 show_menu: state.show_menu,
                 cores_focused: state.cores_focused,
+                show_threads: state.show_threads,
                 lang: state.lang,
                 tracing: state.tracing || trace_thread.is_some(),
                 trace_lines: if state.tracing || trace_thread.is_some() {
