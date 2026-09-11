@@ -53,10 +53,23 @@ Panel {
     root.controller.hide()
   }
 
+  // `bar.run` hands the string to `bash -lc`, and
+  // omarchy-launch-floating-terminal-with-presentation then re-expands its
+  // arguments inside a second `bash -c`. Both levels have to be quoted or a
+  // space in $HOME splits the path in half.
+  function shellQuote(value) {
+    return "'" + String(value).replace(/'/g, "'\\''") + "'"
+  }
+
   function openTerminal() {
     if (!root.bar) return
     root.close()
-    root.bar.run("omarchy-launch-floating-terminal-with-presentation perfo")
+    // A bare `perfo` resolves through $PATH, which a plain `omarchy plugin add`
+    // install never populates, so run the binary from the plugin tree instead.
+    var binary = root.hostWidget && root.hostWidget.binaryPath
+      ? root.shellQuote(root.shellQuote(root.hostWidget.binaryPath))
+      : "perfo"
+    root.bar.run("omarchy-launch-floating-terminal-with-presentation " + binary)
   }
 
   function movePage(delta) {

@@ -307,7 +307,6 @@ fn metric_card_display(value: Option<f32>, detected: bool) -> String {
     }
 }
 
-
 /// Fullscreen CPU window: one frame around CPU, memory, disks, and processes.
 fn draw_cpu_pane(frame: &mut Frame, area: Rect, ui: &Ui) {
     let core_lines = ui.snap.per_core.len().min(MAX_CORE_ROWS).div_ceil(2);
