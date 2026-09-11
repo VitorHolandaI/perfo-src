@@ -826,7 +826,13 @@ Panel {
     var procs = []
     if (root.snapshot.processes) {
       var raw = root.snapshot.processes
-      for (var i = 0; i < Math.min(raw.length, 8); i++) {
+      // A saved recording has to carry the same process depth the TUI's own
+      // recorder writes -- src/tui/history/record.rs takes 30 -- or replaying
+      // a widget recording in the TUI shows a table 8 rows deep and looks
+      // broken. The live buffer stays shallow because it only feeds this
+      // panel's sparklines and is kept for up to maxHistorySamples ticks.
+      var procLimit = root.isSessionRecording ? 30 : 8
+      for (var i = 0; i < Math.min(raw.length, procLimit); i++) {
         var p = raw[i]
         var gpuMatch = null
         for (var gi = 0; gi < gpuProcs.length; gi++) {

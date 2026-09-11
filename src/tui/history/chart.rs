@@ -160,16 +160,17 @@ fn axis_lines(
     ui: &Ui,
     w: usize,
     start_idx: usize,
-    span_secs: usize,
-    total: usize,
+    visible_count: usize,
 ) -> (Line<'static>, Line<'static>) {
     let eff = state.effective_index();
     let start_time = state
         .get_sample(start_idx)
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
+    // The window follows the cursor, so its right edge is the last sample in
+    // view, not the last sample in the recording.
     let end_time = state
-        .last_sample()
+        .get_sample(start_idx + visible_count.saturating_sub(1))
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
     let cur_time = state
@@ -177,11 +178,11 @@ fn axis_lines(
         .map(|s| s.timestamp.as_str())
         .unwrap_or("--");
 
-    let total_span = span_secs.min(total).max(1);
+    let total_span = visible_count.max(1);
     let elapsed = if state.is_live() {
         total_span
     } else {
-        let span_samples = total.saturating_sub(1).saturating_sub(start_idx).max(1);
+        let span_samples = visible_count.saturating_sub(1).max(1);
         let ratio = (eff.saturating_sub(start_idx) as f64) / (span_samples as f64);
         ((ratio * total_span as f64).round() as usize).min(total_span)
     };
@@ -237,6 +238,35 @@ fn axis_lines(
     (time_axis_line, timer_axis_line)
 }
 
+/// The slice of samples the chart draws, as `(start, count)`.
+///
+/// The window is `span_secs` wide and normally sits at the end of the
+/// recording. It has to follow the cursor: on anything longer than the span --
+/// two minutes at the default zoom -- scrubbing back used to leave the window
+/// parked at the end and pin the marker to the last column, which reads as the
+/// cursor disappearing. Centring the window on the cursor keeps context on
+/// both sides, and the clamp keeps a live view end-anchored exactly as before.
+fn visible_window(total: usize, span_secs: usize, eff: usize) -> (usize, usize) {
+    if total == 0 {
+        return (0, 0);
+    }
+    let span = span_secs.clamp(1, total);
+    let last_start = total - span;
+    (eff.saturating_sub(span / 2).min(last_start), span)
+}
+
+/// Which column carries the cursor, given its offset into the window.
+///
+/// The divisor is `visible_count - 1`, not `visible_count`: that is what lets
+/// the last sample land on the last column instead of one short of it.
+fn cursor_column(rel: usize, visible_count: usize, w: usize) -> usize {
+    if w == 0 || visible_count <= 1 {
+        return 0;
+    }
+    let ratio = rel.min(visible_count - 1) as f64 / (visible_count - 1) as f64;
+    ((ratio * (w - 1) as f64).round() as usize).min(w - 1)
+}
+
 pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -251,8 +281,7 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
 
     let total = state.sample_count();
     let span_secs = state.span.seconds(total);
-    let start_idx = total.saturating_sub(span_secs);
-    let visible_count = total.saturating_sub(start_idx);
+    let (start_idx, visible_count) = visible_window(total, span_secs, state.effective_index());
 
     if visible_count == 0 {
         let msg = Paragraph::new("Collecting history samples...")
@@ -267,12 +296,7 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
     let mut cursor_chars = vec![' '; w];
 
     let step = (visible_count as f64) / (w as f64);
-    let cursor_pos = if eff >= start_idx && visible_count > 0 {
-        let rel = eff - start_idx;
-        ((rel as f64 / visible_count as f64) * (w as f64 - 1.0)).round() as usize
-    } else {
-        w.saturating_sub(1)
-    };
+    let cursor_pos = cursor_column(eff.saturating_sub(start_idx), visible_count, w);
 
     if cursor_pos < w {
         cursor_chars[cursor_pos] = '▼';
@@ -296,7 +320,7 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
     ));
     let bars_line = Line::from(bar_spans);
 
-    let (time_axis_line, timer_axis_line) = axis_lines(state, ui, w, start_idx, span_secs, total);
+    let (time_axis_line, timer_axis_line) = axis_lines(state, ui, w, start_idx, visible_count);
     let ruler_line = Line::from(ruler_spans);
 
     let par = Paragraph::new(vec![
@@ -307,4 +331,71 @@ pub(super) fn draw_timeline_chart(frame: &mut Frame, area: Rect, ui: &Ui, state:
         timer_axis_line,
     ]);
     frame.render_widget(par, inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A two-hour recording at the default two-minute zoom: the case where
+    /// scrubbing back used to pin the cursor to the right edge.
+    const LONG: usize = 7200;
+    const SPAN: usize = 120;
+
+    #[test]
+    fn a_live_view_stays_anchored_to_the_end_of_the_recording() {
+        let (start, count) = visible_window(LONG, SPAN, LONG - 1);
+        assert_eq!((start, count), (LONG - SPAN, SPAN));
+    }
+
+    #[test]
+    fn scrubbing_back_scrolls_the_window_instead_of_leaving_it_behind() {
+        let eff = 3000;
+        let (start, count) = visible_window(LONG, SPAN, eff);
+
+        // Regression: the window used to stay at LONG - SPAN = 7080 whatever
+        // the cursor did, so a cursor at 3000 fell outside it entirely.
+        assert!(
+            start <= eff && eff < start + count,
+            "cursor must be in view"
+        );
+        assert_eq!(count, SPAN);
+        // Centred, so there is context on both sides of the cursor.
+        assert_eq!(eff - start, SPAN / 2);
+    }
+
+    #[test]
+    fn the_window_never_runs_off_either_end() {
+        let (start, count) = visible_window(LONG, SPAN, 0);
+        assert_eq!((start, count), (0, SPAN));
+
+        let (start, count) = visible_window(LONG, SPAN, LONG - 1);
+        assert_eq!(start + count, LONG);
+    }
+
+    #[test]
+    fn a_recording_shorter_than_the_span_shows_all_of_itself() {
+        // Nothing to scroll: this is what every short recording already did.
+        for eff in [0, 10, 49] {
+            assert_eq!(visible_window(50, SPAN, eff), (0, 50));
+        }
+        assert_eq!(visible_window(0, SPAN, 0), (0, 0));
+    }
+
+    #[test]
+    fn the_cursor_reaches_both_edges_of_the_chart() {
+        let w = 100;
+        assert_eq!(cursor_column(0, SPAN, w), 0);
+        // Regression: dividing by visible_count instead of visible_count - 1
+        // left the last sample one column short of the right edge.
+        assert_eq!(cursor_column(SPAN - 1, SPAN, w), w - 1);
+        assert_eq!(cursor_column((SPAN - 1) / 2, SPAN, w), (w - 1) / 2);
+    }
+
+    #[test]
+    fn the_cursor_column_never_leaves_the_chart() {
+        assert_eq!(cursor_column(9_999, SPAN, 100), 99);
+        assert_eq!(cursor_column(0, 1, 100), 0);
+        assert_eq!(cursor_column(0, SPAN, 0), 0);
+    }
 }
