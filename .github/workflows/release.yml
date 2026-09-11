@@ -96,19 +96,28 @@ jobs:
           source_commit = '$SOURCE_COMMIT'
           build_run = '$BUILD_RUN'
 
+          # Paths are (published name, source path). README.md ships from
+          # dist/ because the root one carries a remote-script install path.
           tracked = [
-              'BarWidget.qml', 'Panel.qml', 'ProcessGrid.qml', 'GpuPage.qml',
-              'HistoryPage.qml', 'PlainText.qml',
-              'manifest.json', 'preview.png', 'README.md', 'LICENSE',
+              ('BarWidget.qml', 'BarWidget.qml'),
+              ('Panel.qml', 'Panel.qml'),
+              ('ProcessGrid.qml', 'ProcessGrid.qml'),
+              ('GpuPage.qml', 'GpuPage.qml'),
+              ('HistoryPage.qml', 'HistoryPage.qml'),
+              ('PlainText.qml', 'PlainText.qml'),
+              ('manifest.json', 'manifest.json'),
+              ('preview.png', 'preview.png'),
+              ('README.md', 'dist/README.md'),
+              ('LICENSE', 'LICENSE'),
           ]
           files = []
-          for path in tracked:
-              if not os.path.exists(path):
+          for published, source in tracked:
+              if not os.path.exists(source):
                   continue
-              st = os.lstat(path)
-              digest = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+              st = os.lstat(source)
+              digest = hashlib.sha256(open(source, 'rb').read()).hexdigest()
               files.append({
-                  'path': path,
+                  'path': published,
                   'sha256': digest,
                   'size': st.st_size,
                   'mode': '{:04o}'.format(stat.S_IMODE(st.st_mode)),
@@ -177,7 +186,13 @@ jobs:
           # .qml deleted upstream has to disappear here too, so the set is
           # replaced rather than merged.
           rm -f "$DIST"/*.qml
-          cp -- *.qml manifest.json bundle.json preview.png README.md LICENSE "$DIST/"
+          cp -- *.qml manifest.json bundle.json preview.png LICENSE "$DIST/"
+          # dist/README.md, not the development README beside it. The one at the
+          # repository root documents a curl-into-bash install from a mutable
+          # branch, which is the supply-chain path the marketplace maintainer
+          # blocked in omacom/omarchy-plugin-marketplace#4881. Publishing it
+          # would undo that fix.
+          cp -- dist/README.md "$DIST/README.md"
           mkdir -p "$DIST/bin"
           cp bin/perfo "$DIST/bin/perfo"
           chmod 755 "$DIST/bin/perfo"
