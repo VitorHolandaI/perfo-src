@@ -21,7 +21,9 @@ pub(super) fn read_u64(path: &Path) -> Option<u64> {
 
 pub(super) fn read_percent(path: &Path) -> Option<f32> {
     let value = read_trimmed(path)?.parse::<f32>().ok()?;
-    value.is_finite().then(|| value.clamp(0.0, 100.0))
+    value
+        .is_finite()
+        .then(|| crate::units::clamp_percent(value))
 }
 
 pub(super) fn hwmon_temperature(device: &Path) -> Option<f32> {

@@ -173,10 +173,8 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         }
     };
 
-    let el_m = elapsed / 60;
-    let el_s = elapsed % 60;
-    let tot_m = total_span / 60;
-    let tot_s = total_span % 60;
+    let (el_m, el_s) = crate::units::minutes_seconds(elapsed as u64);
+    let (tot_m, tot_s) = crate::units::minutes_seconds(total_span as u64);
 
     let timer_tag = Span::styled(
         format!(" ⏱ {:02}:{:02}/{:02}:{:02} ", el_m, el_s, tot_m, tot_s),

@@ -83,7 +83,7 @@ pub(crate) fn iowait_percent(previous: (u64, u64), current: (u64, u64)) -> f32 {
     if total == 0 {
         0.0
     } else {
-        (waited as f64 / total as f64 * 100.0) as f32
+        crate::units::percent_of(waited, total)
     }
 }
 

@@ -174,10 +174,8 @@ fn axis_lines(
         let ratio = (eff.saturating_sub(start_idx) as f64) / (span_samples as f64);
         ((ratio * total_span as f64).round() as usize).min(total_span)
     };
-    let el_m = elapsed / 60;
-    let el_s = elapsed % 60;
-    let tot_m = total_span / 60;
-    let tot_s = total_span % 60;
+    let (el_m, el_s) = crate::units::minutes_seconds(elapsed as u64);
+    let (tot_m, tot_s) = crate::units::minutes_seconds(total_span as u64);
 
     let cur_str = if state.is_live() {
         format!("+{}s LIVE", elapsed)

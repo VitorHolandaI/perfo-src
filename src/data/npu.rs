@@ -147,7 +147,9 @@ fn utilization_percent(previous: (u64, Instant), current: (u64, Instant)) -> Opt
     if elapsed_us <= 0.0 {
         return None;
     }
-    Some((busy_us as f64 / elapsed_us * 100.0).clamp(0.0, 100.0) as f32)
+    Some(crate::units::clamp_percent(
+        (busy_us as f64 / elapsed_us * 100.0) as f32,
+    ))
 }
 
 fn is_accel_device(name: &str) -> bool {

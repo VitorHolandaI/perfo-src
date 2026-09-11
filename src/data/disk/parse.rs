@@ -12,6 +12,9 @@ pub(super) const BYTES_PER_SECTOR: u64 = 512;
 const BYTES_PER_KIB: u64 = 1024;
 
 /// Milliseconds per second.
+/// One whole percent, as the busy-time ratio is scaled.
+pub(super) const PERCENT_SCALE: f32 = 100.0;
+
 pub(super) const MS_PER_SEC: f32 = 1000.0;
 
 /// /proc/diskstats fields read into RawCounters (17 = discard + flush data).
@@ -115,14 +118,14 @@ pub(super) fn io_stats_from(
         r_await_ms: r_await,
         w_await_ms: w_await,
         queue_avg: d(prev.ms_weighted_io, cur.ms_weighted_io) as f32 / (e * MS_PER_SEC),
-        busy_pct: d(prev.ms_doing_io, cur.ms_doing_io) as f32 / (e * MS_PER_SEC / 100.0),
+        busy_pct: d(prev.ms_doing_io, cur.ms_doing_io) as f32 / (e * MS_PER_SEC / PERCENT_SCALE),
         read_merge_pct: if r_merge > 0 {
-            d(prev.reads_merged, cur.reads_merged) as f32 / r_merge as f32 * 100.0
+            crate::units::percent_of(d(prev.reads_merged, cur.reads_merged), r_merge)
         } else {
             0.0
         },
         write_merge_pct: if w_merge > 0 {
-            d(prev.writes_merged, cur.writes_merged) as f32 / w_merge as f32 * 100.0
+            crate::units::percent_of(d(prev.writes_merged, cur.writes_merged), w_merge)
         } else {
             0.0
         },

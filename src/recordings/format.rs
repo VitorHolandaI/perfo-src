@@ -2,19 +2,21 @@
 
 use std::time::SystemTime;
 
+use crate::units::{SECONDS_PER_HOUR, SECONDS_PER_MINUTE};
+
 pub fn format_duration(seconds: u64) -> String {
-    if seconds < 60 {
+    if seconds < SECONDS_PER_MINUTE {
         format!("{}s", seconds)
-    } else if seconds < 3600 {
-        let rem = seconds % 60;
+    } else if seconds < SECONDS_PER_HOUR {
+        let rem = seconds % SECONDS_PER_MINUTE;
         if rem > 0 {
-            format!("{}m {}s", seconds / 60, rem)
+            format!("{}m {}s", seconds / SECONDS_PER_MINUTE, rem)
         } else {
-            format!("{}m", seconds / 60)
+            format!("{}m", seconds / SECONDS_PER_MINUTE)
         }
     } else {
-        let h = seconds / 3600;
-        let m = (seconds % 3600) / 60;
+        let h = seconds / SECONDS_PER_HOUR;
+        let m = (seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE;
         if m > 0 {
             format!("{}h {}m", h, m)
         } else {

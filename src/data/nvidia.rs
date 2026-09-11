@@ -388,7 +388,7 @@ fn nvml_value<T>(result: NvmlReturn, value: T) -> Option<T> {
 }
 
 fn nvml_percent(result: NvmlReturn, value: f32) -> Option<f32> {
-    nvml_value(result, value).map(|value| value.clamp(0.0, 100.0))
+    nvml_value(result, value).map(crate::units::clamp_percent)
 }
 
 fn power_watts(power_mw: c_uint) -> f32 {

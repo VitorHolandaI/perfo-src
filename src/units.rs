@@ -26,9 +26,26 @@ pub fn fill_width(percent: f32, width: u16) -> u16 {
     filled as u16
 }
 
+/// Splits a duration into whole minutes and the leftover seconds, which is how
+/// every elapsed/total label in the UI is written.
+pub fn minutes_seconds(seconds: u64) -> (u64, u64) {
+    (seconds / SECONDS_PER_MINUTE, seconds % SECONDS_PER_MINUTE)
+}
+
+pub const SECONDS_PER_MINUTE: u64 = 60;
+pub const SECONDS_PER_HOUR: u64 = 3600;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn minutes_seconds_splits_a_duration() {
+        assert_eq!(minutes_seconds(0), (0, 0));
+        assert_eq!(minutes_seconds(59), (0, 59));
+        assert_eq!(minutes_seconds(60), (1, 0));
+        assert_eq!(minutes_seconds(3661), (61, 1));
+    }
 
     #[test]
     fn percent_of_guards_a_zero_whole() {
