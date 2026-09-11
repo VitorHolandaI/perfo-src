@@ -11,6 +11,17 @@ use ratatui::{
 use super::{HistoryMetric, HistoryState};
 use crate::tui::cpu::Ui;
 
+/// Rate metrics never scale below this, so an idle chart still has a ruler.
+const MIN_IO_SCALE: f32 = 10.0;
+const MIN_NET_SCALE: f32 = 100_000.0;
+/// Block glyphs run from empty to full; this is the index of the last one.
+const TOP_GLYPH: usize = 7;
+/// Peaks at or above these paint the bar in the warning colours.
+const PEAK_HOT_PCT: f32 = 80.0;
+const PEAK_WARN_PCT: f32 = 50.0;
+/// The ruler marks quarters of the visible span.
+const RULER_DIVISIONS: usize = 4;
+
 /// Where the chart's columns land: how many there are, which samples they
 /// cover, and which one carries the cursor.
 struct ChartGeometry {
@@ -27,7 +38,7 @@ fn metric_ceiling(state: &HistoryState, total: usize) -> f32 {
     match state.metric {
         HistoryMetric::Cpu | HistoryMetric::Mem | HistoryMetric::Gpu => 100.0f32,
         HistoryMetric::Io => {
-            let mut m = 10.0f32;
+            let mut m = MIN_IO_SCALE;
             for idx in 0..total {
                 if let Some(s) = state.get_sample(idx) {
                     if s.io_mb > m {
@@ -38,7 +49,7 @@ fn metric_ceiling(state: &HistoryState, total: usize) -> f32 {
             m
         }
         HistoryMetric::Net => {
-            let mut m = 100_000.0f32; // minimum scale 100 KB/s
+            let mut m = MIN_NET_SCALE;
             for idx in 0..total {
                 if let Some(s) = state.get_sample(idx) {
                     let v = (s.net_rx_bps + s.net_tx_bps) as f32;
@@ -92,7 +103,7 @@ fn bar_column_spans(
         }
 
         let ratio = (peak / max_metric_val).clamp(0.0, 1.0);
-        let g_idx = ((ratio * 7.0).round() as usize).min(7);
+        let g_idx = ((ratio * TOP_GLYPH as f32).round() as usize).min(TOP_GLYPH);
         let ch = GLYPHS[g_idx];
 
         let is_cur = col == cursor_pos;
@@ -101,12 +112,12 @@ fn bar_column_spans(
                 .fg(Color::Black)
                 .bg(ui.theme.accent)
                 .add_modifier(Modifier::BOLD)
-        } else if peak >= 80.0
+        } else if peak >= PEAK_HOT_PCT
             && state.metric != HistoryMetric::Io
             && state.metric != HistoryMetric::Net
         {
             Style::default().fg(ui.theme.red)
-        } else if peak >= 50.0
+        } else if peak >= PEAK_WARN_PCT
             && state.metric != HistoryMetric::Io
             && state.metric != HistoryMetric::Net
         {
@@ -133,7 +144,7 @@ fn ruler_column_spans(ui: &Ui, w: usize, cursor_pos: usize) -> Vec<Span<'static>
             ));
         } else if col == 0 || col == w.saturating_sub(1) {
             ruler_spans.push(Span::styled("|", Style::default().fg(ui.theme.fg)));
-        } else if col == w / 4 || col == w / 2 || col == (3 * w) / 4 {
+        } else if col == w / RULER_DIVISIONS || col == w / 2 || col == (3 * w) / 4 {
             ruler_spans.push(Span::styled("+", Style::default().fg(ui.theme.muted)));
         } else {
             ruler_spans.push(Span::styled("-", Style::default().fg(ui.theme.muted)));

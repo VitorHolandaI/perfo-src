@@ -10,6 +10,18 @@ use ratatui::{
 
 use crate::data::cpu::CoreType;
 
+/// Width the CPU/memory labels occupy before their bar starts.
+const OVERALL_LABEL_WIDTH: u16 = 26;
+const MEM_LABEL_WIDTH: usize = 8;
+const DISK_LABEL_WIDTH: u16 = 30;
+/// Below this width the core grid drops to one column.
+const TWO_CORES_PER_LINE_ABOVE: u16 = 60;
+/// Height of the block above the process table.
+const CPU_HEADER_HEIGHT: u16 = 6;
+/// PSI pressure thresholds (percent of the last 10s stalled).
+const PSI_HOT: f64 = 10.0;
+const PSI_WARN: f64 = 5.0;
+
 use super::format::{
     bar, bar_glyph, block, cpu_color, freq_color, ghz, human_bytes, short_bytes, sparkline,
     truncate, truncate_with_scroll, unique_disks, DISK_HOT_PCT, DISK_WARN_PCT,
@@ -32,9 +44,9 @@ pub(super) fn draw_cpu(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
         area
     };
     let [overall_area, cores_area] =
-        Layout::vertical([Constraint::Length(6), Constraint::Min(0)]).areas(inner);
+        Layout::vertical([Constraint::Length(CPU_HEADER_HEIGHT), Constraint::Min(0)]).areas(inner);
 
-    let bar_w = overall_area.width.saturating_sub(26) as usize;
+    let bar_w = overall_area.width.saturating_sub(OVERALL_LABEL_WIDTH) as usize;
     let color = cpu_color(ui.snap.overall_percent, &ui.theme);
     let overall = Line::from(vec![
         Span::styled("overall ", Style::default().add_modifier(Modifier::BOLD)),
@@ -81,11 +93,11 @@ pub(super) fn draw_cpu(frame: &mut Frame, area: Rect, ui: &Ui, framed: bool) {
 
 pub(super) fn draw_cores(frame: &mut Frame, area: Rect, ui: &Ui) {
     let n = ui.snap.per_core.len().min(MAX_CORE_ROWS);
-    let two_per_line = area.width >= 60;
+    let two_per_line = area.width >= TWO_CORES_PER_LINE_ABOVE;
     let bar_w = if two_per_line {
-        (area.width.saturating_sub(1) / 2).saturating_sub(26) as usize
+        (area.width.saturating_sub(1) / 2).saturating_sub(OVERALL_LABEL_WIDTH) as usize
     } else {
-        area.width.saturating_sub(30) as usize
+        area.width.saturating_sub(DISK_LABEL_WIDTH) as usize
     };
     let bar_w = bar_w.max(1);
     let mut lines: Vec<Line> = Vec::new();
@@ -163,7 +175,7 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
     let inner = block("4:MEM", focused, &ui.theme).inner(area);
     let m = &ui.snap.mem;
     let w = inner.width as usize;
-    let bar_w = w.saturating_sub(8);
+    let bar_w = w.saturating_sub(MEM_LABEL_WIDTH);
     let frac = |x: u64| (x as f64 / m.total.max(1) as f64 * bar_w as f64) as usize;
 
     let used_w = frac(m.used);
@@ -236,9 +248,9 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
         ))
     };
 
-    let psi_color = if m.psi_some_10 > 10.0 {
+    let psi_color = if m.psi_some_10 > PSI_HOT {
         ui.theme.red
-    } else if m.psi_some_10 > 5.0 {
+    } else if m.psi_some_10 > PSI_WARN {
         ui.theme.yellow
     } else {
         ui.theme.green
