@@ -163,69 +163,92 @@ unsafe fn open_inet_diag(family: u8) -> Option<libc::c_int> {
 }
 
 /// Walks the netlink reply, pulling each socket's byte counters into `out`.
+/// Length of the complete netlink message at `offset`.
+///
+/// `None` ends the walk, for any of three reasons the caller has to tell
+/// apart: the buffer ran out mid-message, the length field is malformed, or
+/// the kernel sent NLMSG_DONE / NLMSG_ERROR.
+fn nlmsg_payload_len(buf: &[u8], offset: usize, filled: usize) -> Option<usize> {
+    if offset + NLMSG_HDRLEN > filled {
+        return None;
+    }
+    let len = u32::from_ne_bytes(buf[offset..offset + 4].try_into().unwrap_or_default()) as usize;
+    let kind = u16::from_ne_bytes(buf[offset + 4..offset + 6].try_into().unwrap_or_default());
+    if len < NLMSG_HDRLEN || offset + len > filled || kind == NLMSG_ERROR || kind == NLMSG_DONE {
+        return None;
+    }
+    Some(len)
+}
+
+/// The `(bytes_received, bytes_sent)` pair inside a TCP_INFO attribute.
+fn tcp_info_counters(info: &[u8]) -> Option<(u64, u64)> {
+    if info.len() < TCP_INFO_MIN_LEN {
+        return None;
+    }
+    Some((
+        u64::from_ne_bytes(info[TCPI_BYTES_RECEIVED].try_into().unwrap_or_default()),
+        u64::from_ne_bytes(info[TCPI_BYTES_SENT].try_into().unwrap_or_default()),
+    ))
+}
+
+/// A socket's inode and byte counters from one inet_diag message.
+///
+/// Walks the rtattr chain that follows the fixed-size header and stops at the
+/// first TCP_INFO carrying counters; a message has at most one. Inode 0 means
+/// the kernel did not attach the socket to a file, so it can never be matched
+/// back to a process and is dropped here.
+fn inet_diag_counters(msg: &[u8]) -> Option<(u64, (u64, u64))> {
+    if msg.len() < INET_DIAG_MSG_LEN {
+        return None;
+    }
+    let inode = u32::from_ne_bytes(msg[IDIAG_INODE].try_into().unwrap_or_default()) as u64;
+    if inode == 0 {
+        return None;
+    }
+
+    let mut offset = INET_DIAG_MSG_LEN;
+    while offset + RTATTR_HDRLEN <= msg.len() {
+        let rta_len =
+            u16::from_ne_bytes(msg[offset..offset + 2].try_into().unwrap_or_default()) as usize;
+        let rta_type =
+            u16::from_ne_bytes(msg[offset + 2..offset + 4].try_into().unwrap_or_default());
+        if rta_len < RTATTR_HDRLEN || offset + rta_len > msg.len() {
+            break;
+        }
+        if rta_type == INET_DIAG_INFO {
+            let payload = &msg[offset + RTATTR_HDRLEN..offset + rta_len];
+            if let Some(counters) = tcp_info_counters(payload) {
+                return Some((inode, counters));
+            }
+        }
+        offset += nl_align(rta_len);
+    }
+    None
+}
+
 unsafe fn read_inet_diag_reply(fd: libc::c_int, out: &mut HashMap<u64, (u64, u64)>) {
     let mut buf = [0u8; NL_RECV_BUF];
     loop {
         let n = libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0);
         if n <= 0 {
-            break;
+            return;
         }
-        let n = n as usize;
+        let filled = n as usize;
+
         let mut offset = 0;
-        let mut done = false;
-        while offset + NLMSG_HDRLEN <= n {
-            let nl_len =
-                u32::from_ne_bytes(buf[offset..offset + 4].try_into().unwrap_or_default()) as usize;
-            let nl_type =
-                u16::from_ne_bytes(buf[offset + 4..offset + 6].try_into().unwrap_or_default());
-            if nl_len < NLMSG_HDRLEN
-                || offset + nl_len > n
-                || nl_type == NLMSG_ERROR
-                || nl_type == NLMSG_DONE
-            {
-                done = true;
-                break;
-            }
+        while let Some(nl_len) = nlmsg_payload_len(&buf, offset, filled) {
             let msg = &buf[offset + NLMSG_HDRLEN..offset + nl_len];
-            if msg.len() >= INET_DIAG_MSG_LEN {
-                let inode =
-                    u32::from_ne_bytes(msg[IDIAG_INODE].try_into().unwrap_or_default()) as u64;
-                let mut rta_offset = INET_DIAG_MSG_LEN;
-                while rta_offset + RTATTR_HDRLEN <= msg.len() {
-                    let rta_len = u16::from_ne_bytes(
-                        msg[rta_offset..rta_offset + 2]
-                            .try_into()
-                            .unwrap_or_default(),
-                    ) as usize;
-                    let rta_type = u16::from_ne_bytes(
-                        msg[rta_offset + 2..rta_offset + 4]
-                            .try_into()
-                            .unwrap_or_default(),
-                    );
-                    if rta_len < RTATTR_HDRLEN || rta_offset + rta_len > msg.len() {
-                        break;
-                    }
-                    if rta_type == INET_DIAG_INFO {
-                        let info = &msg[rta_offset + RTATTR_HDRLEN..rta_offset + rta_len];
-                        if info.len() >= TCP_INFO_MIN_LEN {
-                            let rx = u64::from_ne_bytes(
-                                info[TCPI_BYTES_RECEIVED].try_into().unwrap_or_default(),
-                            );
-                            let tx = u64::from_ne_bytes(
-                                info[TCPI_BYTES_SENT].try_into().unwrap_or_default(),
-                            );
-                            if inode > 0 {
-                                out.insert(inode, (rx, tx));
-                            }
-                        }
-                    }
-                    rta_offset += nl_align(rta_len);
-                }
+            if let Some((inode, counters)) = inet_diag_counters(msg) {
+                out.insert(inode, counters);
             }
             offset += nl_align(nl_len);
         }
-        if done {
-            break;
+
+        // Running out of buffer mid-header means more datagrams may follow, so
+        // recv again. Stopping anywhere else was DONE, ERROR or a malformed
+        // length, and each of those ends the reply.
+        if offset + NLMSG_HDRLEN <= filled {
+            return;
         }
     }
 }

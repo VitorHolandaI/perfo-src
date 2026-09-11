@@ -1,22 +1,22 @@
 {
   "version": 2,
-  "quality_score": 0.5602182574930835,
-  "iosp_score": 0.9745958429561201,
-  "violations": 11,
-  "total": 637,
-  "complexity_warnings": 26,
-  "magic_number_warnings": 67,
-  "nesting_depth_warnings": 7,
-  "function_length_warnings": 36,
+  "quality_score": 0.6709494258805312,
+  "iosp_score": 0.9695652173913043,
+  "violations": 14,
+  "total": 674,
+  "complexity_warnings": 20,
+  "magic_number_warnings": 64,
+  "nesting_depth_warnings": 3,
+  "function_length_warnings": 10,
   "unsafe_warnings": 21,
   "error_handling_warnings": 2,
-  "duplicate_groups": 6,
+  "duplicate_groups": 4,
   "dead_code_warnings": 2,
   "dead_type_warnings": 0,
-  "fragment_groups": 14,
-  "boilerplate_warnings": 8,
+  "fragment_groups": 12,
+  "boilerplate_warnings": 7,
   "srp_struct_warnings": 0,
-  "srp_module_warnings": 13,
+  "srp_module_warnings": 4,
   "wildcard_import_warnings": 4,
   "sdp_violations": 0,
   "coupling_warnings": 0,
@@ -28,12 +28,22 @@
   "tq_untested_logic_warnings": 0,
   "structural_srp_warnings": 5,
   "structural_coupling_warnings": 0,
-  "total_findings": 223,
+  "total_findings": 173,
   "violation_details": [
+    {
+      "name": "DiskMonitor::refresh_with_details",
+      "file": "src/data/disk/monitor.rs",
+      "line": 123
+    },
     {
       "name": "NvmlApi::load",
       "file": "src/data/nvidia.rs",
       "line": 86
+    },
+    {
+      "name": "HistoryState::record_snapshot",
+      "file": "src/tui/history/record.rs",
+      "line": 144
     },
     {
       "name": "run_with_pane",
@@ -41,24 +51,29 @@
       "line": 25
     },
     {
+      "name": "sample_tick",
+      "file": "src/tui/app.rs",
+      "line": 65
+    },
+    {
+      "name": "draw_frame",
+      "file": "src/tui/app.rs",
+      "line": 127
+    },
+    {
       "name": "run_loop",
       "file": "src/tui/app.rs",
-      "line": 61
+      "line": 184
     },
     {
       "name": "prepare",
       "file": "src/tui/app.rs",
-      "line": 191
+      "line": 251
     },
     {
       "name": "build_tree",
       "file": "src/tui/app.rs",
-      "line": 246
-    },
-    {
-      "name": "HistoryState::record_snapshot",
-      "file": "src/tui/history/record.rs",
-      "line": 144
+      "line": 306
     },
     {
       "name": "stop_current_trace",
@@ -73,17 +88,17 @@
     {
       "name": "run_loop",
       "file": "src/trace/mod.rs",
-      "line": 230
+      "line": 299
     },
     {
       "name": "attach_preamble",
       "file": "src/trace/mod.rs",
-      "line": 319
+      "line": 340
     },
     {
       "name": "spawn",
       "file": "src/trace/mod.rs",
-      "line": 364
+      "line": 385
     }
   ]
 }
