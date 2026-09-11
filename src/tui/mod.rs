@@ -700,26 +700,117 @@ fn get_process_full_cmd(pid: u32) -> String {
     format!("[{pid}]")
 }
 
-fn handle_normal_key(
-    state: &mut State,
-    display_pids: &[u32],
-    code: KeyCode,
-    system_theme: Option<Theme>,
-) -> bool {
-    if !state.fullscreen {
-        return handle_dashboard_key(state, code, system_theme);
+/// `1`-`7` jump straight to a fullscreen pane.
+fn pane_for_digit(digit: char) -> Option<Pane> {
+    match digit {
+        '1' => Some(Pane::Cpu),
+        '2' => Some(Pane::Io),
+        '3' => Some(Pane::Net),
+        '4' => Some(Pane::Mem),
+        '5' => Some(Pane::Disks),
+        '6' => Some(Pane::Gpu),
+        '7' => Some(Pane::History),
+        _ => None,
     }
+}
+
+/// Keys that only act on the history pane. `None` means this handler did not
+/// claim the key, so the caller keeps looking.
+fn handle_history_scroll_key(state: &mut State, code: KeyCode) -> Option<bool> {
     match code {
-        KeyCode::Char('q') | KeyCode::Char('Q') => true,
-        KeyCode::Esc => {
-            // Esc clears the core filter first; a second Esc quits.
-            if state.core_filter.is_some() {
-                state.core_filter = None;
-                false
-            } else {
-                true
+        KeyCode::Char('<') | KeyCode::Char(',') => {
+            if state.pane == Pane::History {
+                state.history.step(-1);
             }
+            Some(false)
         }
+        KeyCode::Char('>') | KeyCode::Char('.') => {
+            if state.pane == Pane::History {
+                state.history.step(1);
+            }
+            Some(false)
+        }
+        KeyCode::Char('[') | KeyCode::Char('{') => {
+            if state.pane == Pane::History {
+                state.history.jump(-1);
+            }
+            Some(false)
+        }
+        KeyCode::Char(']') | KeyCode::Char('}') => {
+            if state.pane == Pane::History {
+                state.history.jump(1);
+            }
+            Some(false)
+        }
+        KeyCode::Char('0') => {
+            if state.pane == Pane::History {
+                state.history.jump_to_live();
+            }
+            Some(false)
+        }
+        KeyCode::Char('e') | KeyCode::Char('E') => {
+            if state.pane == Pane::History {
+                state.history.export();
+            }
+            Some(false)
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if state.pane == Pane::History {
+                state.history.toggle_session_recording();
+            }
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
+/// Keys that flip a single flag and never quit.
+fn handle_toggle_key(state: &mut State, code: KeyCode) -> Option<bool> {
+    match code {
+        KeyCode::Char('p') | KeyCode::Char('P') => {
+            state.sort = SortKey::Cpu;
+            Some(false)
+        }
+        KeyCode::Char('M') => {
+            state.sort = SortKey::Mem;
+            Some(false)
+        }
+        KeyCode::Char('i') | KeyCode::Char('I') => {
+            state.invert = !state.invert;
+            Some(false)
+        }
+        KeyCode::Char('c') => {
+            state.full_cmd = !state.full_cmd;
+            Some(false)
+        }
+        KeyCode::Char('t') => {
+            state.tree = !state.tree;
+            Some(false)
+        }
+        KeyCode::Char('H') => {
+            state.show_threads = !state.show_threads;
+            Some(false)
+        }
+        KeyCode::Char('K') => {
+            state.show_kernel = !state.show_kernel;
+            Some(false)
+        }
+        KeyCode::Char('m') => {
+            state.show_menu = !state.show_menu;
+            Some(false)
+        }
+        KeyCode::Char('/') => {
+            state.searching = true;
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
+/// Keys whose meaning depends on which pane is focused: on history they scrub
+/// or switch the recording view, elsewhere they keep their global meaning.
+fn handle_pane_aware_key(state: &mut State, code: KeyCode) -> Option<bool> {
+    Some(match code {
         KeyCode::Tab | KeyCode::BackTab => {
             if state.pane == Pane::Cpu {
                 state.cores_focused = !state.cores_focused;
@@ -728,129 +819,6 @@ fn handle_normal_key(
             }
             false
         }
-        KeyCode::Char('k') => {
-            if state.selected_pid.is_some() {
-                state.status_msg = None;
-                state.kill_prompt = true;
-            }
-            false
-        }
-        KeyCode::Char('p') | KeyCode::Char('P') => {
-            state.sort = SortKey::Cpu;
-            false
-        }
-        KeyCode::Char('M') => {
-            state.sort = SortKey::Mem;
-            false
-        }
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            state.invert = !state.invert;
-            false
-        }
-        KeyCode::Char('c') => {
-            state.full_cmd = !state.full_cmd;
-            false
-        }
-        KeyCode::Char('y') | KeyCode::Char('Y') => {
-            let target_pid = state.selected_pid.or_else(|| display_pids.first().copied());
-            if let Some(pid) = target_pid {
-                state.selected_pid = Some(pid);
-                let cmd = get_process_full_cmd(pid);
-                copy_to_clipboard(&cmd);
-                state.status_msg = Some(match state.lang {
-                    Lang::Pt => format!("Comando do PID {pid} copiado"),
-                    Lang::En => format!("Copied command of PID {pid}"),
-                });
-            }
-            false
-        }
-        KeyCode::Char('t') => {
-            state.tree = !state.tree;
-            false
-        }
-        KeyCode::Char('H') => {
-            state.show_threads = !state.show_threads;
-            false
-        }
-        KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('h') => {
-            state.help = true;
-            false
-        }
-        KeyCode::Char('K') => {
-            state.show_kernel = !state.show_kernel;
-            false
-        }
-        KeyCode::Char('1') => {
-            focus_pane(state, Pane::Cpu);
-            false
-        }
-        KeyCode::Char('2') => {
-            focus_pane(state, Pane::Io);
-            false
-        }
-        KeyCode::Char('3') => {
-            focus_pane(state, Pane::Net);
-            false
-        }
-        KeyCode::Char('4') => {
-            focus_pane(state, Pane::Mem);
-            false
-        }
-        KeyCode::Char('5') => {
-            focus_pane(state, Pane::Disks);
-            false
-        }
-        KeyCode::Char('6') => {
-            focus_pane(state, Pane::Gpu);
-            false
-        }
-        KeyCode::Char('7') => {
-            focus_pane(state, Pane::History);
-            false
-        }
-        KeyCode::Char('<') | KeyCode::Char(',') => {
-            if state.pane == Pane::History {
-                state.history.step(-1);
-            }
-            false
-        }
-        KeyCode::Char('>') | KeyCode::Char('.') => {
-            if state.pane == Pane::History {
-                state.history.step(1);
-            }
-            false
-        }
-        KeyCode::Char('[') | KeyCode::Char('{') => {
-            if state.pane == Pane::History {
-                state.history.jump(-1);
-            }
-            false
-        }
-        KeyCode::Char(']') | KeyCode::Char('}') => {
-            if state.pane == Pane::History {
-                state.history.jump(1);
-            }
-            false
-        }
-        KeyCode::Char('0') => {
-            if state.pane == Pane::History {
-                state.history.jump_to_live();
-            }
-            false
-        }
-        KeyCode::Char('e') | KeyCode::Char('E') => {
-            if state.pane == Pane::History {
-                state.history.export();
-            }
-            false
-        }
-        KeyCode::Char('r') | KeyCode::Char('R') => {
-            if state.pane == Pane::History {
-                state.history.toggle_session_recording();
-            }
-            false
-        }
-        KeyCode::Char('C') => toggle_theme(state, system_theme),
         KeyCode::Char('L') => {
             if state.pane == Pane::History {
                 state.history.jump_to_live();
@@ -858,10 +826,6 @@ fn handle_normal_key(
             } else {
                 toggle_lang(state)
             }
-        }
-        KeyCode::Char('m') => {
-            state.show_menu = !state.show_menu;
-            false
         }
         KeyCode::Char('s') | KeyCode::Char('S') => {
             if state.pane == Pane::History {
@@ -879,16 +843,6 @@ fn handle_normal_key(
             }
             false
         }
-        KeyCode::Char('/') => {
-            state.searching = true;
-            false
-        }
-        KeyCode::Up
-        | KeyCode::Down
-        | KeyCode::PageUp
-        | KeyCode::PageDown
-        | KeyCode::Home
-        | KeyCode::End => handle_nav_key(state, display_pids, code),
         KeyCode::Left => {
             if state.pane == Pane::History {
                 state.history.step(-1);
@@ -921,6 +875,76 @@ fn handle_normal_key(
             }
             false
         }
+        _ => return None,
+    })
+}
+
+fn handle_normal_key(
+    state: &mut State,
+    display_pids: &[u32],
+    code: KeyCode,
+    system_theme: Option<Theme>,
+) -> bool {
+    if !state.fullscreen {
+        return handle_dashboard_key(state, code, system_theme);
+    }
+    if let KeyCode::Char(digit @ '1'..='7') = code {
+        if let Some(pane) = pane_for_digit(digit) {
+            focus_pane(state, pane);
+            return false;
+        }
+    }
+    if let Some(quit) = handle_history_scroll_key(state, code) {
+        return quit;
+    }
+    if let Some(quit) = handle_toggle_key(state, code) {
+        return quit;
+    }
+    if let Some(quit) = handle_pane_aware_key(state, code) {
+        return quit;
+    }
+    match code {
+        KeyCode::Char('q') | KeyCode::Char('Q') => true,
+        KeyCode::Esc => {
+            // Esc clears the core filter first; a second Esc quits.
+            if state.core_filter.is_some() {
+                state.core_filter = None;
+                false
+            } else {
+                true
+            }
+        }
+        KeyCode::Char('k') => {
+            if state.selected_pid.is_some() {
+                state.status_msg = None;
+                state.kill_prompt = true;
+            }
+            false
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            let target_pid = state.selected_pid.or_else(|| display_pids.first().copied());
+            if let Some(pid) = target_pid {
+                state.selected_pid = Some(pid);
+                let cmd = get_process_full_cmd(pid);
+                copy_to_clipboard(&cmd);
+                state.status_msg = Some(match state.lang {
+                    Lang::Pt => format!("Comando do PID {pid} copiado"),
+                    Lang::En => format!("Copied command of PID {pid}"),
+                });
+            }
+            false
+        }
+        KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('h') => {
+            state.help = true;
+            false
+        }
+        KeyCode::Char('C') => toggle_theme(state, system_theme),
+        KeyCode::Up
+        | KeyCode::Down
+        | KeyCode::PageUp
+        | KeyCode::PageDown
+        | KeyCode::Home
+        | KeyCode::End => handle_nav_key(state, display_pids, code),
         KeyCode::Enter => {
             if state.cores_focused {
                 toggle_core_filter(state);
@@ -1407,6 +1431,52 @@ mod tests {
         handle_key(&mut s, &[], KeyCode::Char('C'), KeyModifiers::empty(), None);
         assert!(!s.use_system_theme);
         assert_eq!(s.status_msg.as_deref(), Some("theme: default"));
+    }
+
+    #[test]
+    fn pane_for_digit_maps_every_fullscreen_key() {
+        let expected = [
+            ('1', Pane::Cpu),
+            ('2', Pane::Io),
+            ('3', Pane::Net),
+            ('4', Pane::Mem),
+            ('5', Pane::Disks),
+            ('6', Pane::Gpu),
+            ('7', Pane::History),
+        ];
+        for (digit, pane) in expected {
+            assert_eq!(pane_for_digit(digit), Some(pane), "digit {digit}");
+        }
+        for digit in ['0', '8', '9', 'a'] {
+            assert_eq!(pane_for_digit(digit), None, "digit {digit}");
+        }
+    }
+
+    #[test]
+    fn key_group_handlers_only_claim_their_own_keys() {
+        let mut state = State::default();
+
+        // A key no group owns falls through every handler.
+        assert_eq!(
+            handle_history_scroll_key(&mut state, KeyCode::Char('q')),
+            None
+        );
+        assert_eq!(handle_toggle_key(&mut state, KeyCode::Char('q')), None);
+        assert_eq!(handle_pane_aware_key(&mut state, KeyCode::Char('q')), None);
+
+        // Each group claims a key of its own and never asks to quit.
+        assert_eq!(
+            handle_history_scroll_key(&mut state, KeyCode::Char('0')),
+            Some(false)
+        );
+        assert_eq!(
+            handle_toggle_key(&mut state, KeyCode::Char('t')),
+            Some(false)
+        );
+        assert_eq!(
+            handle_pane_aware_key(&mut state, KeyCode::Char(' ')),
+            Some(false)
+        );
     }
 
     #[test]
