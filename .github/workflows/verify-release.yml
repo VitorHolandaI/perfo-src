@@ -1,13 +1,14 @@
 name: Verify release
 
+# The published tree lives in the distribution repository while the source that
+# produced it lives here, so verification has to hold both: rebuild from this
+# commit, then prove the artifact published over there is the same bytes.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      ref:
-        description: Release tag or commit to verify
-        required: false
+      version:
+        description: Released version to verify, without the leading v
+        required: true
         type: string
 
 permissions:
@@ -15,65 +16,95 @@ permissions:
   attestations: read
   id-token: write
 
+env:
+  DIST_REPO: VitorHolandaI/perfo
+
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      - name: Fetch the published tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "v${VERSION}" \
+            "https://github.com/${DIST_REPO}.git" "$RUNNER_TEMP/dist"
+          test -x "$RUNNER_TEMP/dist/bin/perfo"
+          test -f "$RUNNER_TEMP/dist/bundle.json"
+
+      - name: Read the source commit the release claims
+        id: claim
+        run: |
+          set -euo pipefail
+          BUNDLE="$RUNNER_TEMP/dist/bundle.json"
+          SOURCE_COMMIT="$(python3 -c "import json;print(json.load(open('$BUNDLE'))['sourceCommit'])")"
+          VERSION="$(python3 -c "import json;print(json.load(open('$BUNDLE'))['version'])")"
+          TARGET="$(python3 -c "import json;print(json.load(open('$BUNDLE'))['target'])")"
+          test "$VERSION" = "${{ inputs.version }}" || {
+            echo "bundle.json says version $VERSION, asked to verify ${{ inputs.version }}" >&2
+            exit 1
+          }
+          test "$TARGET" = "x86_64-unknown-linux-musl" || {
+            echo "bundle.json declares target $TARGET; the release builds musl" >&2
+            exit 1
+          }
+          echo "source_commit=${SOURCE_COMMIT}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.ref }}
-          fetch-depth: 2
+          ref: ${{ steps.claim.outputs.source_commit }}
+          fetch-depth: 1
 
       - uses: dtolnay/rust-toolchain@d1031067263f94b142dd6c0ce24c5eb9d02d52a0 # stable
         with:
           toolchain: 1.98.0
+          targets: x86_64-unknown-linux-musl
 
-      - name: Release commit shape
+      - name: Rebuild the binary from that commit
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: Published binary equals the rebuild
         run: |
           set -euo pipefail
-          test -x bin/perfo
-          test -f bundle.json
-          git log -1 --format=%s | grep -qE '^release: v[0-9]+\.[0-9]+\.[0-9]+$'
-          SOURCE_COMMIT="$(python3 -c 'import json;print(json.load(open("bundle.json"))["sourceCommit"])')"
-          PARENT="$(git rev-parse HEAD^)"
-          test "$SOURCE_COMMIT" = "$PARENT" || {
-            echo "bundle.json sourceCommit $SOURCE_COMMIT != parent $PARENT" >&2
-            exit 1
-          }
-
-      - name: Rebuild binary reproducibly
-        run: cargo build --release --locked
-
-      - name: Committed binary equals rebuilt binary
-        run: |
-          set -euo pipefail
-          REBUILT="$(sha256sum target/release/perfo | cut -d' ' -f1)"
-          COMMITTED="$(sha256sum bin/perfo | cut -d' ' -f1)"
+          REBUILT="$(sha256sum target/x86_64-unknown-linux-musl/release/perfo | cut -d' ' -f1)"
+          PUBLISHED="$(sha256sum "$RUNNER_TEMP/dist/bin/perfo" | cut -d' ' -f1)"
           echo "rebuilt   $REBUILT"
-          echo "committed $COMMITTED"
-          test "$REBUILT" = "$COMMITTED" || {
-            echo "bin/perfo is not reproducible from this commit" >&2
+          echo "published $PUBLISHED"
+          test "$REBUILT" = "$PUBLISHED" || {
+            echo "the published binary is not reproducible from ${{ steps.claim.outputs.source_commit }}" >&2
             exit 1
           }
 
-      - name: bundle.json entries match the tree
+      - name: bundle.json entries match the published tree
         run: |
           set -euo pipefail
           python3 -c "
           import hashlib, json, os, stat, sys
-          receipt = json.load(open('bundle.json'))
+          root = os.environ['RUNNER_TEMP'] + '/dist'
+          receipt = json.load(open(os.path.join(root, 'bundle.json')))
           bad = []
           for f in receipt['files']:
-              p = f['path']
+              p = os.path.join(root, f['path'])
               if not os.path.isfile(p):
-                  bad.append(f'{p}: not a regular file'); continue
+                  bad.append(f'{f[\"path\"]}: not a regular file'); continue
               digest = hashlib.sha256(open(p, 'rb').read()).hexdigest()
               mode = '{:04o}'.format(stat.S_IMODE(os.lstat(p).st_mode))
-              if digest != f['sha256']: bad.append(f'{p}: sha256 mismatch')
-              if os.path.getsize(p) != f['size']: bad.append(f'{p}: size mismatch')
-              if mode != f['mode']: bad.append(f'{p}: mode mismatch')
-          if bad: sys.exit('\\n'.join(bad))
-          print(f'{len(receipt[\"files\"])} receipt entries match the tree')
+              if digest != f['sha256']: bad.append(f'{f[\"path\"]}: sha256 mismatch')
+              if os.path.getsize(p) != f['size']: bad.append(f'{f[\"path\"]}: size mismatch')
+              if mode != f['mode']: bad.append(f'{f[\"path\"]}: mode mismatch')
+          # Anything shipped but unlisted is unreceipted, which is the same
+          # problem from the other direction.
+          listed = {f['path'] for f in receipt['files']}
+          for dirpath, dirnames, filenames in os.walk(root):
+              dirnames[:] = [d for d in dirnames if d != '.git']
+              for name in filenames:
+                  rel = os.path.relpath(os.path.join(dirpath, name), root)
+                  if rel not in listed and rel != 'bundle.json':
+                      bad.append(f'{rel}: shipped but not in bundle.json')
+          if bad: sys.exit('\n'.join(bad))
+          print(f'{len(receipt[\"files\"])} receipt entries match the published tree')
           "
 
       - name: Verify provenance attestation
@@ -81,10 +112,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BUILD_RUN="$(python3 -c 'import json;print(json.load(open("bundle.json")).get("buildRun",""))')"
+          BUNDLE="$RUNNER_TEMP/dist/bundle.json"
+          BUILD_RUN="$(python3 -c "import json;print(json.load(open('$BUNDLE')).get('buildRun',''))")"
           test -n "$BUILD_RUN" || { echo 'bundle.json has no buildRun' >&2; exit 1; }
+          case "$BUILD_RUN" in
+            */actions/runs/[0-9]*) ;;
+            *) echo "buildRun is not a workflow run: $BUILD_RUN" >&2; exit 1 ;;
+          esac
           echo "buildRun: $BUILD_RUN"
-          gh attestation verify bin/perfo \
+
+          # The attestation was produced here, by release.yml, over this exact
+          # binary — the same bytes the distribution repository now ships.
+          gh attestation verify "$RUNNER_TEMP/dist/bin/perfo" \
             --repo "${GITHUB_REPOSITORY}" \
             --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
             --format json > attestation.json

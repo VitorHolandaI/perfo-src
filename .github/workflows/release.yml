@@ -40,6 +40,7 @@ jobs:
         with:
           toolchain: 1.98.0
           components: rustfmt, clippy
+          targets: x86_64-unknown-linux-musl
 
       - name: Fetch dependencies
         run: cargo fetch --locked
@@ -52,12 +53,18 @@ jobs:
           manifest_version=$(jq -r '.version' manifest.json)
           test "$cargo_version" = "$manifest_version"
 
-          # Fail before the build rather than after `git tag`. The stamp step
-          # commits bin/perfo and bundle.json before tagging, so a collision
-          # discovered there aborts between the commit and the atomic push and
-          # leaves main carrying digests that no longer match its own files.
-          if git rev-parse -q --verify "refs/tags/v${cargo_version}" >/dev/null; then
-            echo "::error::Tag v${cargo_version} already exists. Bump the version in Cargo.toml and manifest.json before releasing."
+          # Fail before the build rather than after `git tag`. The publish step
+          # commits the runtime tree and tags it in one go, so a collision
+          # discovered there aborts mid-push and leaves the distribution repo
+          # carrying digests that no longer match its own files.
+          #
+          # The tag lands in the distribution repository, so that is where the
+          # collision has to be checked. Checking this repository's tags would
+          # pass while the real target already has the tag.
+          if git ls-remote --exit-code --tags \
+               https://github.com/VitorHolandaI/perfo.git \
+               "refs/tags/v${cargo_version}" >/dev/null 2>&1; then
+            echo "::error::Tag v${cargo_version} already exists in VitorHolandaI/perfo. Bump the version in Cargo.toml and manifest.json before releasing."
             exit 1
           fi
 
@@ -70,13 +77,13 @@ jobs:
           cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: Build release binary
-        run: cargo build --release --locked
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
 
       - name: Stamp plugin artifacts
         run: |
           set -euo pipefail
           mkdir -p bin
-          cp target/release/perfo bin/perfo
+          cp target/x86_64-unknown-linux-musl/release/perfo bin/perfo
           chmod 755 bin/perfo
 
           SOURCE_COMMIT="$(git rev-parse HEAD)"
@@ -119,7 +126,7 @@ jobs:
               'schemaVersion': 1,
               'pluginId': 'vitor.perfo',
               'version': version,
-              'target': 'x86_64-unknown-linux-gnu',
+              'target': 'x86_64-unknown-linux-musl',
               'omarchyContract': 1,
               'sourceCommit': source_commit,
               'buildRun': build_run,
@@ -137,6 +144,9 @@ jobs:
           test -f bundle.json
           test -f manifest.json
           file bin/perfo | grep -qE 'ELF 64-bit|x86-64'
+          # A dynamically linked build carries a glibc floor and will not run
+          # on a distribution older than the runner's.
+          file bin/perfo | grep -q 'static-pie'
           bin/perfo --version 2>&1 | head -1
 
       - name: Attest binary provenance
@@ -144,23 +154,57 @@ jobs:
         with:
           subject-path: bin/perfo
 
-      - name: Commit, tag, push, release
+      - name: Mint a token for the distribution repository
+        id: dist-token
+        uses: actions/create-github-app-token@a8d616148505b5069dccd32f177bb87d7f39123b # v3.0.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: VitorHolandaI
+          repositories: perfo
+
+      - name: Publish the runtime tree to the distribution repository
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.dist-token.outputs.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          set -euo pipefail
+          # The tag now lives in the distribution repository, so verification
+          # is asked for by version and locates the tree there itself.
+          gh workflow run verify-release.yml -f version="${VERSION}"
+            "https://x-access-token:${GH_TOKEN}@github.com/VitorHolandaI/perfo.git" "$DIST"
+
+          # The published tree holds only what the plugin needs at runtime. A
+          # .qml deleted upstream has to disappear here too, so the set is
+          # replaced rather than merged.
+          rm -f "$DIST"/*.qml
+          cp -- *.qml manifest.json bundle.json preview.png README.md LICENSE "$DIST/"
+          mkdir -p "$DIST/bin"
+          cp bin/perfo "$DIST/bin/perfo"
+          chmod 755 "$DIST/bin/perfo"
+
+          cd "$DIST"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add bin/perfo bundle.json
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::Nothing changed in the runtime tree; refusing to tag an empty release."
+            exit 1
+          fi
           git commit -m "release: v${VERSION}"
           git tag "v${VERSION}"
           git push --atomic origin HEAD:main "refs/tags/v${VERSION}"
 
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ steps.dist-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
           tar --create --gzip --file "perfo-linux-x86_64.tar.gz" --directory=bin perfo
           sha256sum "perfo-linux-x86_64.tar.gz" > "perfo-linux-x86_64.sha256"
 
           gh release create "v${VERSION}" \
+            --repo VitorHolandaI/perfo \
             --title "Perfo ${VERSION}" \
             --notes-file - <<EON
           Perfo ${VERSION}
@@ -169,11 +213,14 @@ jobs:
           - \`perfo-linux-x86_64.tar.gz\` — standalone binary for terminal use
           - \`bin/perfo\` — plugin-embedded binary (committed to repo)
 
+          Built from [perfo-src@${GITHUB_SHA}](https://github.com/VitorHolandaI/perfo-src/commit/${GITHUB_SHA}).
+
           ## Plugin
           Install with: \`omarchy plugin add https://github.com/VitorHolandaI/perfo.git\`
           EON
 
           gh release upload "v${VERSION}" \
+            --repo VitorHolandaI/perfo \
             "perfo-linux-x86_64.tar.gz" \
             "perfo-linux-x86_64.sha256" \
             --clobber
@@ -182,4 +229,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
-        run: gh workflow run verify-release.yml --ref "v${VERSION}"
+        run: |
+          # The tag now lives in the distribution repository, so verification
+          # is asked for by version and locates the tree there itself.
+          gh workflow run verify-release.yml -f version="${VERSION}"
