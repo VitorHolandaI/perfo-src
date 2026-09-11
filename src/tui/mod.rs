@@ -1137,83 +1137,191 @@ fn status_line(state: &State) -> String {
     status_line_for_width(state, 0)
 }
 
-fn status_line_for_width(state: &State, width: usize) -> String {
+/// Terminal widths at which the status line can afford more key hints. The
+/// numbers are the measured width of the line once that group is appended.
+const WIDTH_FOR_CORE_SORT_KEYS: usize = 120;
+const WIDTH_FOR_PROC_SORT_KEYS: usize = 135;
+const WIDTH_FOR_TREE_AND_TRACE: usize = 160;
+const WIDTH_FOR_THREAD_FILTERS: usize = 190;
+
+const STATUS_SUFFIX: &str = " | ? help | q quit";
+
+/// Modes that take over the whole status line: they replace the hints rather
+/// than competing with them for space.
+fn status_line_override(state: &State) -> Option<String> {
     if state.searching {
-        return format!("/{}{}", state.search, "_");
+        return Some(format!("/{}{}", state.search, "_"));
     }
     if state.kill_prompt {
         if let Some(pid) = state.selected_pid {
-            return match state.lang {
+            return Some(match state.lang {
                 Lang::Pt => format!("matar {pid}?  1=SIGTERM  9=SIGKILL  0=cancela"),
                 Lang::En => format!("kill {pid}?  1=SIGTERM  9=SIGKILL  0=cancel"),
-            };
+            });
         }
     }
     if state.tracing {
         if let Some(pid) = state.trace_start_pid {
-            return match state.lang {
+            return Some(match state.lang {
                 Lang::Pt => format!("TRACE {pid}: s/q para parar (syscalls ao vivo)"),
                 Lang::En => format!("TRACING {pid}: s/q to stop (live syscalls)"),
-            };
+            });
         }
     }
-    if let Some(msg) = &state.status_msg {
-        return msg.clone();
+    state.status_msg.clone()
+}
+
+/// The history pane has its own hints, pre-written at three widths because the
+/// timeline keys do not degrade gracefully one token at a time.
+fn history_status_line(state: &State, width: usize) -> String {
+    let rec = if state.history.recording {
+        "● REC"
+    } else {
+        "⏸ PAUSED"
+    };
+    let play = if state.history.playing {
+        " [PLAYING]"
+    } else {
+        ""
+    };
+    let live = if state.history.is_live() {
+        "LIVE"
+    } else {
+        "SCRUB"
+    };
+
+    let full = format!(
+        "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | ? help | q quit",
+        state.history.metric.label(),
+        state.history.span.label()
+    );
+    if width == 0 || full.chars().count() <= width {
+        return full;
+    }
+    let medium = format!(
+        "[7:HIST] {rec}{play} | {live} | <> step | [] jump | Space play | 0 live | Tab metric | e export | ? help | q quit"
+    );
+    if medium.chars().count() <= width {
+        return medium;
+    }
+    format!("[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit")
+}
+
+/// The `[1:CPU + PROCS | CORES] ` style label that opens the status line.
+fn pane_prefix(state: &State) -> &'static str {
+    if !state.fullscreen {
+        return "[DASHBOARD] ";
+    }
+    match state.pane {
+        Pane::Cpu if state.cores_focused => "[1:CPU + PROCS | CORES] ",
+        Pane::Cpu => "[1:CPU + PROCS | PROCESSES] ",
+        Pane::Io => "[2:IO] ",
+        Pane::Net => "[3:NET] ",
+        Pane::Mem => "[4:MEM] ",
+        Pane::Disks => "[5:DISKS] ",
+        Pane::Gpu => "[6:GPU] ",
+        Pane::History => "[7:HIST] ",
+    }
+}
+
+/// Hints for the CPU pane with the core grid focused.
+fn core_tokens(width: usize) -> Vec<String> {
+    let mut tokens: Vec<String> = vec![
+        "m menu".into(),
+        "Tab procs".into(),
+        "Enter filter core".into(),
+        "arrows nav".into(),
+    ];
+    if width == 0 || width >= WIDTH_FOR_CORE_SORT_KEYS {
+        tokens.push("p CPU".into());
+        tokens.push("M MEM".into());
+        tokens.push("z pause".into());
+    }
+    tokens
+}
+
+/// Hints for the CPU pane with the process table focused.
+fn process_tokens(state: &State, width: usize) -> Vec<String> {
+    let mut tokens: Vec<String> = vec![
+        "m menu".into(),
+        "Tab cores".into(),
+        "y/Enter copy".into(),
+        "←→ scroll".into(),
+        "↑↓ nav".into(),
+        "k kill".into(),
+    ];
+    if width == 0 || width >= WIDTH_FOR_PROC_SORT_KEYS {
+        tokens.push("p CPU".into());
+        tokens.push("M MEM".into());
+    }
+    tokens.push("/ search".into());
+    if width == 0 || width >= WIDTH_FOR_TREE_AND_TRACE {
+        tokens.push(format!("t tree{}", check(state.tree)));
+        tokens.push("s trace".into());
+    }
+    if width == 0 || width >= WIDTH_FOR_THREAD_FILTERS {
+        tokens.push(format!("H threads{}", check(state.show_threads)));
+        tokens.push(format!("K kernel{}", check(state.show_kernel)));
+        tokens.push("i reverse".into());
+    }
+    tokens
+}
+
+fn check(enabled: bool) -> &'static str {
+    if enabled {
+        " \u{2713}"
+    } else {
+        ""
+    }
+}
+
+fn status_tokens(state: &State, width: usize) -> Vec<String> {
+    let generic = || {
+        vec![
+            "m menu".to_string(),
+            "1-7 panes".to_string(),
+            "z pause".to_string(),
+        ]
+    };
+    if !state.fullscreen {
+        return generic();
+    }
+    match state.pane {
+        Pane::Cpu if state.cores_focused => core_tokens(width),
+        Pane::Cpu => process_tokens(state, width),
+        _ => generic(),
+    }
+}
+
+/// Appends as many hints as fit, always leaving room for the help/quit suffix.
+fn fit_tokens(prefix: String, tokens: &[String], width: usize) -> String {
+    if width == 0 {
+        return format!("{prefix}{}{STATUS_SUFFIX}", tokens.join(" | "));
+    }
+    let available = width.saturating_sub(STATUS_SUFFIX.chars().count());
+    let mut out = prefix;
+    let mut first = true;
+    for token in tokens {
+        let sep = if first { "" } else { " | " };
+        if out.chars().count() + sep.chars().count() + token.chars().count() > available {
+            continue;
+        }
+        out.push_str(sep);
+        out.push_str(token);
+        first = false;
+    }
+    out.push_str(STATUS_SUFFIX);
+    out
+}
+
+fn status_line_for_width(state: &State, width: usize) -> String {
+    if let Some(line) = status_line_override(state) {
+        return line;
     }
     if state.fullscreen && state.pane == Pane::History {
-        let rec = if state.history.recording {
-            "● REC"
-        } else {
-            "⏸ PAUSED"
-        };
-        let play = if state.history.playing {
-            " [PLAYING]"
-        } else {
-            ""
-        };
-        let live = if state.history.is_live() {
-            "LIVE"
-        } else {
-            "SCRUB"
-        };
-        let full_hist = format!(
-            "[7:HIST] {rec}{play} | {live} | < > step 1s | [ ] jump | Space play | 0 live | Tab metric ({}) | z span ({}) | e export | r rec | 1-6 panes | ? help | q quit",
-            state.history.metric.label(),
-            state.history.span.label()
-        );
-        if width == 0 || full_hist.chars().count() <= width {
-            return full_hist;
-        }
-        let med_hist = format!(
-            "[7:HIST] {rec}{play} | {live} | <> step | [] jump | Space play | 0 live | Tab metric | e export | ? help | q quit"
-        );
-        if med_hist.chars().count() <= width {
-            return med_hist;
-        }
-        return format!("[7:HIST] {rec}{play} | <> step | Space play | ? help | q quit");
+        return history_status_line(state, width);
     }
-    let pane = if !state.fullscreen {
-        "[DASHBOARD] "
-    } else {
-        match state.pane {
-            Pane::Cpu => {
-                if state.cores_focused {
-                    "[1:CPU + PROCS | CORES] "
-                } else {
-                    "[1:CPU + PROCS | PROCESSES] "
-                }
-            }
-            Pane::Io => "[2:IO] ",
-            Pane::Net => "[3:NET] ",
-            Pane::Mem => "[4:MEM] ",
-            Pane::Disks => "[5:DISKS] ",
-            Pane::Gpu => "[6:GPU] ",
-            Pane::History => "[7:HIST] ",
-        }
-    };
-    let full = if state.fullscreen { "[FULL] " } else { "" };
-    let paused = if state.paused { "\u{23F8} PAUSED " } else { "" };
-    let filter = if state.fullscreen && state.pane == Pane::Cpu {
+    let core_filter = if state.fullscreen && state.pane == Pane::Cpu {
         state
             .core_filter
             .map(|c| format!("core filter {c} | Esc clears | "))
@@ -1221,88 +1329,13 @@ fn status_line_for_width(state: &State, width: usize) -> String {
     } else {
         String::new()
     };
-    let prefix = format!("{pane}{full}{paused}{filter}");
-
-    let mandatory_suffix = " | ? help | q quit";
-    let suffix_len = mandatory_suffix.chars().count();
-
-    let mut tokens: Vec<String> = Vec::new();
-    if !state.fullscreen {
-        tokens.push("m menu".into());
-        tokens.push("1-7 panes".into());
-        tokens.push("z pause".into());
-    } else {
-        match state.pane {
-            Pane::Cpu => {
-                if state.cores_focused {
-                    tokens.push("m menu".into());
-                    tokens.push("Tab procs".into());
-                    tokens.push("Enter filter core".into());
-                    tokens.push("arrows nav".into());
-                    if width == 0 || width >= 120 {
-                        tokens.push("p CPU".into());
-                        tokens.push("M MEM".into());
-                        tokens.push("z pause".into());
-                    }
-                } else {
-                    tokens.push("m menu".into());
-                    tokens.push("Tab cores".into());
-                    tokens.push("y/Enter copy".into());
-                    tokens.push("←→ scroll".into());
-                    tokens.push("↑↓ nav".into());
-                    tokens.push("k kill".into());
-                    if width == 0 || width >= 135 {
-                        tokens.push("p CPU".into());
-                        tokens.push("M MEM".into());
-                    }
-                    tokens.push("/ search".into());
-                    if width == 0 || width >= 160 {
-                        tokens.push(format!(
-                            "t tree{}",
-                            if state.tree { " \u{2713}" } else { "" }
-                        ));
-                        tokens.push("s trace".into());
-                    }
-                    if width == 0 || width >= 190 {
-                        tokens.push(format!(
-                            "H threads{}",
-                            if state.show_threads { " \u{2713}" } else { "" }
-                        ));
-                        tokens.push(format!(
-                            "K kernel{}",
-                            if state.show_kernel { " \u{2713}" } else { "" }
-                        ));
-                        tokens.push("i reverse".into());
-                    }
-                }
-            }
-            _ => {
-                tokens.push("m menu".into());
-                tokens.push("1-7 panes".into());
-                tokens.push("z pause".into());
-            }
-        }
-    }
-
-    if width == 0 {
-        return format!("{prefix}{}{mandatory_suffix}", tokens.join(" | "));
-    }
-
-    let mut out = prefix;
-    let mut first = true;
-    let available = width.saturating_sub(suffix_len);
-    for token in &tokens {
-        let sep = if first { "" } else { " | " };
-        let cost = sep.chars().count() + token.chars().count();
-        if out.chars().count() + cost > available {
-            continue;
-        }
-        out.push_str(sep);
-        out.push_str(token);
-        first = false;
-    }
-    out.push_str(mandatory_suffix);
-    out
+    let prefix = format!(
+        "{}{}{}{core_filter}",
+        pane_prefix(state),
+        if state.fullscreen { "[FULL] " } else { "" },
+        if state.paused { "\u{23F8} PAUSED " } else { "" },
+    );
+    fit_tokens(prefix, &status_tokens(state, width), width)
 }
 
 #[cfg(test)]
