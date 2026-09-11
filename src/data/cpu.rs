@@ -995,12 +995,6 @@ impl CpuMonitor {
         self.stat_prev = (iw, tot);
     }
 
-    /// Cheap refresh: CPU + memory + temperatures only. Process data stays at
-    /// the last full refresh; use between full refreshes so the bars stay smooth.
-    pub fn refresh_light(&mut self) {
-        self.refresh_needs(CollectionNeeds::full(), false);
-    }
-
     pub fn snapshot(&mut self) -> CpuSnapshot {
         self.snapshot_needs(CollectionNeeds::full())
     }
