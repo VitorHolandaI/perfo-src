@@ -10,6 +10,7 @@ pub mod recordings;
 pub mod theme;
 pub mod trace;
 pub mod tui;
+pub mod units;
 
 use std::process::ExitCode;
 

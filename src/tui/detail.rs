@@ -31,7 +31,7 @@ pub(super) fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
 fn draw_mem_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
     let m = &ui.snap.mem;
     let total = m.total.max(1);
-    let used_pct = m.used as f64 / total as f64 * 100.0;
+    let used_pct = crate::units::percent_of(m.used, total) as f64;
     let bar_width = area.width.saturating_sub(14) as usize;
     let lines = vec![
         Line::from(vec![
@@ -66,7 +66,7 @@ fn draw_mem_pressure(frame: &mut Frame, area: Rect, ui: &Ui) {
     let swap_pct = if m.swap_total == 0 {
         0.0
     } else {
-        m.swap_used as f64 / m.swap_total as f64 * 100.0
+        crate::units::percent_of(m.swap_used, m.swap_total) as f64
     };
     let psi = format!(
         "{:.1} / {:.1} / {:.1}%",
@@ -120,7 +120,7 @@ fn draw_mem_processes(frame: &mut Frame, area: Rect, ui: &Ui) {
         .iter()
         .take(area.height.saturating_sub(2) as usize)
     {
-        let pct = p.mem_bytes as f64 / ui.snap.mem.total.max(1) as f64 * 100.0;
+        let pct = crate::units::percent_of(p.mem_bytes, ui.snap.mem.total) as f64;
         lines.push(Line::from(format!(
             "{:>8} {:<12} {:>8} {:>6.1}% {}",
             p.pid,

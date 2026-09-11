@@ -84,7 +84,7 @@ fn cpu_color(v: f32, theme: &Theme) -> Color {
 }
 
 pub(super) fn bar(value: f32, width: usize) -> String {
-    let filled = ((value.clamp(0.0, 100.0) / 100.0) * width as f32).round() as usize;
+    let filled = crate::units::fill_width(value, width as u16) as usize;
     let filled = filled.min(width);
     format!(
         "{}{}",
@@ -545,7 +545,7 @@ fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
     let cache_w = frac(m.cache);
     let buf_w = frac(m.buffers);
     let free_w = bar_w.saturating_sub(used_w + cache_w + buf_w);
-    let pct = m.used as f32 / m.total.max(1) as f32 * 100.0;
+    let pct = crate::units::percent_of(m.used, m.total);
 
     let bar_line = Line::from(vec![
         Span::styled(
@@ -553,13 +553,13 @@ fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
             Style::default().fg(ui.theme.green),
         ),
         Span::styled(
-            bar_glyph(m.cache as f32 / m.total.max(1) as f32 * 100.0)
+            bar_glyph(crate::units::percent_of(m.cache, m.total))
                 .to_string()
                 .repeat(cache_w),
             Style::default().fg(ui.theme.yellow),
         ),
         Span::styled(
-            bar_glyph(m.buffers as f32 / m.total.max(1) as f32 * 100.0)
+            bar_glyph(crate::units::percent_of(m.buffers, m.total))
                 .to_string()
                 .repeat(buf_w),
             Style::default().fg(ui.theme.accent),
@@ -583,7 +583,7 @@ fn draw_mem(frame: &mut Frame, area: Rect, ui: &Ui) {
 
     let swap_line = if m.swap_total > 0 {
         let swap_used_w = (m.swap_used as f64 / m.swap_total as f64 * bar_w as f64) as usize;
-        let swap_pct = m.swap_used as f32 / m.swap_total as f32 * 100.0;
+        let swap_pct = crate::units::percent_of(m.swap_used, m.swap_total);
         Line::from(vec![
             Span::styled("swap ", Style::default().fg(ui.theme.muted)),
             Span::styled(
@@ -655,7 +655,7 @@ fn draw_disks(frame: &mut Frame, area: Rect, ui: &Ui) {
         } else {
             ui.theme.green
         };
-        let filled = ((d.percent.clamp(0.0, 100.0) / 100.0) * bar_w as f32).round() as usize;
+        let filled = crate::units::fill_width(d.percent, bar_w as u16) as usize;
         let filled = filled.min(bar_w);
         let name = d.name.rsplit('/').next().unwrap_or(&d.name);
         let mount = truncate(&d.mount, 12);

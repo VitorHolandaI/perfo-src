@@ -201,7 +201,7 @@ impl HistoryState {
         let timestamp = format_local_time(now);
 
         let mem_pct = if snap.mem.total > 0 {
-            (snap.mem.used as f64 / snap.mem.total as f64 * 100.0) as f32
+            crate::units::percent_of(snap.mem.used, snap.mem.total)
         } else {
             0.0
         };
