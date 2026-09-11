@@ -12,6 +12,8 @@ pub mod trace;
 pub mod tui;
 pub mod units;
 
+use data::cpu::{CollectionPlan, CollectionProfile};
+
 use std::process::ExitCode;
 
 enum Command {
@@ -184,8 +186,12 @@ pub fn run() -> ExitCode {
         }
         Command::StreamJson { summary } => {
             let mut monitor = JsonStreamMonitor::new(summary);
+            let control = spawn_stream_control();
             loop {
                 data::cpu::wait_sample_interval();
+                while let Ok(line) = control.try_recv() {
+                    monitor.apply_control(&line);
+                }
                 match monitor.refresh_json() {
                     Ok(json) => {
                         println!("{json}");
@@ -259,8 +265,33 @@ pub fn run() -> ExitCode {
     }
 }
 
+/// Reads control lines from stdin without blocking the sampling loop.
+///
+/// A client that is showing one pane can say so, and the collector then stops
+/// gathering what that pane does not display. The protocol is one command per
+/// line: `profile <name>`, `recording on`, `recording off`.
+fn spawn_stream_control() -> std::sync::mpsc::Receiver<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match std::io::BufRead::read_line(&mut stdin.lock(), &mut line) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {
+                    if tx.send(line.trim().to_string()).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    rx
+}
+
 enum JsonStreamMonitor {
-    Full(Box<data::cpu::CpuMonitor>),
+    Full(Box<data::cpu::CpuMonitor>, CollectionPlan),
     Summary(Box<data::summary::WidgetSummaryMonitor>),
 }
 
@@ -269,15 +300,76 @@ impl JsonStreamMonitor {
         if summary {
             Self::Summary(Box::default())
         } else {
-            Self::Full(Box::default())
+            Self::Full(Box::default(), CollectionPlan::default())
+        }
+    }
+
+    /// Narrows collection to what the client says it is showing. Unknown names
+    /// are ignored so an older widget keeps working.
+    fn set_profile(&mut self, name: &str) {
+        if let Self::Full(_, plan) = self {
+            if let Ok(profile) = name.parse::<CollectionProfile>() {
+                plan.visible = profile;
+            }
+        }
+    }
+
+    /// Narrows a recording to the subsystems the user ticked in the picker, so
+    /// recording only CPU does not also walk every process's sockets.
+    fn set_recording_mask(&mut self, subsystems: &str) {
+        if let Self::Full(_, plan) = self {
+            // Default is ALL, so start from nothing and turn on what the
+            // client listed.
+            let mut mask = data::cpu::RecordingMask {
+                cpu: false,
+                mem: false,
+                io: false,
+                net: false,
+                gpu: false,
+                npu: false,
+            };
+            for name in subsystems.split(',') {
+                match name.trim() {
+                    "cpu" => mask.cpu = true,
+                    "mem" => mask.mem = true,
+                    "io" => mask.io = true,
+                    "net" => mask.net = true,
+                    "gpu" => mask.gpu = true,
+                    "npu" => mask.npu = true,
+                    _ => {}
+                }
+            }
+            if !mask.is_empty() {
+                plan.recording_mask = mask;
+            }
+        }
+    }
+
+    /// Turns background recording on or off, which unions the history needs
+    /// into whatever the visible pane already asks for.
+    fn set_recording(&mut self, recording: bool) {
+        if let Self::Full(_, plan) = self {
+            plan.recording = recording;
+        }
+    }
+
+    /// Applies one control line. Unknown commands are ignored so a newer
+    /// widget cannot break an older collector, or the other way round.
+    fn apply_control(&mut self, line: &str) {
+        match line.split_once(' ') {
+            Some(("profile", name)) => self.set_profile(name),
+            Some(("recording", "on")) => self.set_recording(true),
+            Some(("recording", "off")) => self.set_recording(false),
+            Some(("mask", subsystems)) => self.set_recording_mask(subsystems),
+            _ => {}
         }
     }
 
     fn refresh_json(&mut self) -> serde_json::Result<String> {
         match self {
-            Self::Full(monitor) => {
-                monitor.refresh();
-                serde_json::to_string(&monitor.snapshot())
+            Self::Full(monitor, plan) => {
+                monitor.refresh_for(*plan, true);
+                serde_json::to_string(&monitor.snapshot_for(*plan))
             }
             Self::Summary(monitor) => {
                 monitor.refresh();

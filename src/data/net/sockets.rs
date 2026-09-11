@@ -242,49 +242,65 @@ fn query_inet_diag(family: u8, out: &mut HashMap<u64, (u64, u64)>) {
 
 /// Processes with open sockets, resolved by scanning /proc/<pid>/fd for
 /// `socket:[inode]` links. Only own (yama-visible) processes are readable.
+/// Maps every socket inode visible in /proc to the pid holding it.
+///
+/// Walking `/proc/<pid>/fd` and readlink-ing each entry is the most expensive
+/// thing this collector does — on a busy desktop it is tens of thousands of
+/// syscalls. Both the per-process counters and the listening-port table need
+/// the same mapping, so the walk happens once and they share the result.
+pub(super) fn socket_inode_owners() -> HashMap<u64, u32> {
+    let mut owners = HashMap::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return owners;
+    };
+    for e in entries.flatten() {
+        let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(fds) = std::fs::read_dir(e.path().join("fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            let Ok(link) = std::fs::read_link(fd.path()) else {
+                continue;
+            };
+            let Some(inode) = link
+                .to_str()
+                .and_then(|s| s.strip_prefix("socket:["))
+                .and_then(|rest| rest.strip_suffix(']'))
+                .and_then(|n| n.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            owners.entry(inode).or_insert(pid);
+        }
+    }
+    owners
+}
+
 pub(super) fn proc_sockets(
     prev_proc_bytes: &mut HashMap<u32, (u64, u64)>,
     elapsed: f32,
+    owners: &HashMap<u64, u32>,
 ) -> Vec<ProcNet> {
     let inodes = socket_inodes();
     let socket_bytes = tcp_socket_bytes();
     let mut per_pid: HashMap<u32, ProcNet> = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir("/proc") {
-        for e in entries.flatten() {
-            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
-                continue;
-            };
-            let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
-                continue;
-            };
-            for fd in fds.flatten() {
-                let Ok(link) = std::fs::read_link(fd.path()) else {
-                    continue;
-                };
-                let s = link.to_string_lossy();
-                let Some(inode) = s
-                    .strip_prefix("socket:[")
-                    .and_then(|rest| rest.strip_suffix(']'))
-                    .and_then(|n| n.parse::<u64>().ok())
-                else {
-                    continue;
-                };
-                let Some(class) = inodes.get(&inode) else {
-                    continue;
-                };
-                let entry = per_pid.entry(pid).or_default();
-                entry.pid = pid;
-                match class {
-                    Sock::TcpEst => entry.tcp_est += 1,
-                    Sock::TcpListen => entry.tcp_listen += 1,
-                    Sock::Udp => entry.udp += 1,
-                    Sock::TcpOther => {}
-                }
-                if let Some(&(rx, tx)) = socket_bytes.get(&inode) {
-                    entry.rx_bytes = entry.rx_bytes.saturating_add(rx);
-                    entry.tx_bytes = entry.tx_bytes.saturating_add(tx);
-                }
-            }
+    for (&inode, &pid) in owners {
+        let Some(class) = inodes.get(&inode) else {
+            continue;
+        };
+        let entry = per_pid.entry(pid).or_default();
+        entry.pid = pid;
+        match class {
+            Sock::TcpEst => entry.tcp_est += 1,
+            Sock::TcpListen => entry.tcp_listen += 1,
+            Sock::Udp => entry.udp += 1,
+            Sock::TcpOther => {}
+        }
+        if let Some(&(rx, tx)) = socket_bytes.get(&inode) {
+            entry.rx_bytes = entry.rx_bytes.saturating_add(rx);
+            entry.tx_bytes = entry.tx_bytes.saturating_add(tx);
         }
     }
 
@@ -358,7 +374,7 @@ fn listening_sockets() -> Vec<(u64, u16, String, u32)> {
 }
 
 /// Discover listening ports, PID (when readable), and cmdline.
-pub(super) fn listening_ports() -> Vec<ListeningPort> {
+pub(super) fn listening_ports(owners: &HashMap<u64, u32>) -> Vec<ListeningPort> {
     let sockets = listening_sockets();
     if sockets.is_empty() {
         return Vec::new();
@@ -370,34 +386,10 @@ pub(super) fn listening_ports() -> Vec<ListeningPort> {
             .entry(*inode)
             .or_insert((*port, proto.clone(), *uid));
     }
-    // Scan /proc/<pid>/fd for matching socket inodes.
-    let mut pid_map: HashMap<u64, u32> = HashMap::new();
-    if let Ok(entries) = std::fs::read_dir("/proc") {
-        for e in entries.flatten() {
-            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else {
-                continue;
-            };
-            let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
-                continue;
-            };
-            for fd in fds.flatten() {
-                let Ok(link) = std::fs::read_link(fd.path()) else {
-                    continue;
-                };
-                let s = link.to_string_lossy();
-                let Some(inode) = s
-                    .strip_prefix("socket:[")
-                    .and_then(|rest| rest.strip_suffix(']'))
-                    .and_then(|n| n.parse::<u64>().ok())
-                else {
-                    continue;
-                };
-                if inode_map.contains_key(&inode) {
-                    pid_map.entry(inode).or_insert(pid);
-                }
-            }
-        }
-    }
+    let pid_map: HashMap<u64, u32> = inode_map
+        .keys()
+        .filter_map(|inode| owners.get(inode).map(|pid| (*inode, *pid)))
+        .collect();
     // Collapse IPv4/IPv6 duplicates into one port/protocol row.
     let mut by_key: HashMap<(u16, String), Vec<(u32, u32)>> = HashMap::new();
     for (inode, port, proto, uid) in &sockets {

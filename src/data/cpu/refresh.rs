@@ -91,6 +91,12 @@ impl CpuMonitor {
         self.refresh_needs(CollectionNeeds::full(), true);
     }
 
+    /// Refresh for the widget's open panel, which needs everything the TUI
+    /// dashboard does except per-process affinity.
+    pub fn refresh_for_widget(&mut self) {
+        self.refresh_needs(CollectionNeeds::widget_panel(), true);
+    }
+
     pub fn refresh_for(&mut self, plan: impl Into<CollectionPlan>, detailed_tick: bool) {
         self.refresh_needs(plan.into().needs(), detailed_tick);
     }

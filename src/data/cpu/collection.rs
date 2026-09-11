@@ -5,6 +5,10 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CollectionProfile {
+    /// Nothing is on screen. Used when the Omarchy widget's panel is closed
+    /// but a recording is still running: the recording mask alone then decides
+    /// what gets collected.
+    Hidden,
     Dashboard,
     Cpu,
     Io,
@@ -13,6 +17,26 @@ pub enum CollectionProfile {
     Disks,
     Gpu,
     History,
+}
+
+impl std::str::FromStr for CollectionProfile {
+    type Err = ();
+
+    /// Parses the name a client sends to switch which pane it is showing.
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "hidden" | "none" => Ok(Self::Hidden),
+            "dash" | "dashboard" => Ok(Self::Dashboard),
+            "cpu" => Ok(Self::Cpu),
+            "io" => Ok(Self::Io),
+            "net" => Ok(Self::Net),
+            "mem" => Ok(Self::Mem),
+            "disks" => Ok(Self::Disks),
+            "gpu" => Ok(Self::Gpu),
+            "hist" | "history" => Ok(Self::History),
+            _ => Err(()),
+        }
+    }
 }
 
 impl CollectionProfile {
@@ -83,6 +107,7 @@ impl CollectionProfile {
                 npu: true,
                 ..CollectionNeeds::default()
             },
+            Self::Hidden => CollectionNeeds::default(),
             Self::History => CollectionNeeds {
                 cpu: true,
                 memory: true,
@@ -90,7 +115,10 @@ impl CollectionProfile {
                 process_cpu: true,
                 process_memory: true,
                 process_tasks: true,
-                process_affinity: true,
+                // A recorded sample has no affinity field, so collecting it
+                // would read /proc/<pid>/stat for every process once a second
+                // and throw the result away.
+                process_affinity: false,
                 process_io: true,
                 disks: true,
                 network: true,
@@ -131,6 +159,18 @@ pub struct CollectionNeeds {
 }
 
 impl CollectionNeeds {
+    /// Everything the Omarchy widget's open panel renders.
+    ///
+    /// That is `full()` minus per-process affinity: the panel has no column
+    /// for it, and collecting it reads /proc/<pid>/stat for every process on
+    /// the machine once a second.
+    pub fn widget_panel() -> Self {
+        Self {
+            process_affinity: false,
+            ..Self::full()
+        }
+    }
+
     pub fn full() -> Self {
         Self {
             cpu: true,

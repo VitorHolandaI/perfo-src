@@ -27,6 +27,32 @@ BarWidget {
   readonly property bool isRecording: panelLoader.item ? panelLoader.item.isSessionRecording : false
   readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
   readonly property bool needsDetails: opened || isRecording
+
+  // The collector only gathers what the visible page renders. Page indices
+  // follow Panel.qml's pageNames; FANS and HELP have no collection profile of
+  // their own and fall back to the dashboard set.
+  readonly property var pageProfiles: ["dash", "cpu", "io", "net", "mem", "disks", "dash", "gpu", "hist", "dash"]
+  readonly property string activeProfile: {
+    // A closed panel renders nothing, so a recording still running behind it
+    // should collect only what its subsystem mask asks for.
+    if (!opened) return "hidden"
+    if (!panelLoader.item) return "dash"
+    var idx = panelLoader.item.page
+    return (idx >= 0 && idx < pageProfiles.length) ? pageProfiles[idx] : "dash"
+  }
+
+  // Subsystems the recording picker has ticked, as the collector expects them.
+  readonly property string recordingMask: {
+    var page = panelLoader.item ? panelLoader.item.historyPageComp : null
+    if (!page) return "cpu,mem,io,net,gpu,npu"
+    var on = []
+    if (page.recordCpu) on.push("cpu")
+    if (page.recordMem) on.push("mem")
+    if (page.recordIo) on.push("io")
+    if (page.recordNet) on.push("net")
+    if (page.recordGpu) on.push("gpu")
+    return on.length > 0 ? on.join(",") : "cpu,mem,io,net,gpu,npu"
+  }
   readonly property var snapshot: needsDetails && detailSnapshot ? detailSnapshot : summarySnapshot
 
   readonly property string cpuLabel: snapshot ? "C " + Math.round(snapshot.overall_percent) + "%" : "C --"
@@ -92,6 +118,18 @@ BarWidget {
     return highest === null ? "N --" : "N " + Math.round(highest) + "%"
   }
 
+  // Tells the collector which page is on screen and whether a recording is
+  // running, so it stops gathering what nothing is going to render.
+  function sendCollectorState() {
+    if (!detailCollector.running) return
+    detailCollector.write("profile " + barWidgetRoot.activeProfile + "\n")
+    detailCollector.write("mask " + barWidgetRoot.recordingMask + "\n")
+    detailCollector.write("recording " + (barWidgetRoot.isRecording ? "on" : "off") + "\n")
+  }
+
+  onActiveProfileChanged: sendCollectorState()
+  onIsRecordingChanged: sendCollectorState()
+  onRecordingMaskChanged: sendCollectorState()
   onBarChanged: injectPanel()
 
   Process {
@@ -114,6 +152,8 @@ BarWidget {
     id: detailCollector
     command: [barWidgetRoot.binaryPath, "stream", "--json"]
     running: barWidgetRoot.needsDetails
+    stdinEnabled: true
+    onStarted: barWidgetRoot.sendCollectorState()
     stdout: SplitParser {
       onRead: function(line) {
         if (!barWidgetRoot.needsDetails) return

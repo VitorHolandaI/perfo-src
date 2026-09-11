@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::data::disk::rate;
 
 use super::parse::{link_state, netdev_from, tcp_stats_from, DevCounters};
-use super::sockets::{listening_ports, proc_sockets};
+use super::sockets::{listening_ports, proc_sockets, socket_inode_owners};
 use super::{NetInfo, NetSnapshot, NetTotals};
 
 pub struct NetMonitor {
@@ -121,8 +121,15 @@ impl NetMonitor {
             total_tx as f32,
             crate::data::disk::HISTORY_SAMPLES,
         );
+        // One walk of /proc/<pid>/fd feeds both the per-process counters and
+        // the listening-port table; it is the most expensive thing here.
+        let owners = if processes || listeners {
+            socket_inode_owners()
+        } else {
+            HashMap::new()
+        };
         let proc_net = if processes {
-            proc_sockets(&mut self.prev_proc_bytes, elapsed)
+            proc_sockets(&mut self.prev_proc_bytes, elapsed, &owners)
         } else {
             self.prev_proc_bytes.clear();
             Vec::new()
@@ -141,7 +148,7 @@ impl NetMonitor {
             tx_history: self.tx_history.clone(),
             proc_net,
             listening: if listeners {
-                listening_ports()
+                listening_ports(&owners)
             } else {
                 Vec::new()
             },
