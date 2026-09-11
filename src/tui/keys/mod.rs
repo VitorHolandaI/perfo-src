@@ -1,5 +1,6 @@
 //! Key dispatch: the modal handlers get first refusal, then the normal ones.
 
+mod groups;
 mod modal;
 mod normal;
 
@@ -169,5 +170,75 @@ pub(super) fn send_signal(state: &mut State, sig: i32) {
         } else {
             format!("kill {pid} failed: {}", std::io::Error::last_os_error())
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    #[test]
+    fn move_core_arrows() {
+        let mut s = State::default();
+        move_core(&mut s, KeyCode::Right);
+        assert_eq!(s.core_focus, 1);
+        move_core(&mut s, KeyCode::Up);
+        assert_eq!(s.core_focus, 0);
+        move_core(&mut s, KeyCode::Down);
+        assert_eq!(s.core_focus, 2);
+    }
+
+    #[test]
+    fn move_selection_clamps() {
+        let pids = [10, 20, 30];
+        let mut s = State::default();
+        move_selection(&mut s, &pids, 1);
+        assert_eq!(s.selected_pid, Some(20));
+        move_selection(&mut s, &pids, i32::MAX);
+        assert_eq!(s.selected_pid, Some(30));
+        move_selection(&mut s, &pids, i32::MIN);
+        assert_eq!(s.selected_pid, Some(10));
+    }
+
+    #[test]
+    fn move_selection_empty_is_noop() {
+        let mut s = State::default();
+        move_selection(&mut s, &[], 1);
+        assert_eq!(s.selected_pid, None);
+    }
+
+    #[test]
+    fn menu_selects_panel_and_closes() {
+        let mut s = State::default();
+        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
+        assert!(s.show_menu);
+        handle_key(&mut s, &[], KeyCode::Char('3'), KeyModifiers::empty(), None);
+        assert_eq!(s.pane, Pane::Net);
+        assert!(s.fullscreen);
+        assert!(!s.show_menu);
+        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('4'), KeyModifiers::empty(), None);
+        assert_eq!(s.pane, Pane::Mem);
+        assert!(s.fullscreen);
+        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('6'), KeyModifiers::empty(), None);
+        assert_eq!(s.pane, Pane::Gpu);
+        assert!(s.fullscreen);
+        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
+        handle_key(&mut s, &[], KeyCode::Char('?'), KeyModifiers::empty(), None);
+        assert!(s.help);
+        assert!(!s.show_menu);
+    }
+
+    #[test]
+    fn lang_toggles_between_pt_and_en() {
+        let mut s = State::default();
+        assert_eq!(s.lang, Lang::En);
+        handle_key(&mut s, &[], KeyCode::Char('L'), KeyModifiers::empty(), None);
+        assert_eq!(s.lang, Lang::Pt);
+        handle_key(&mut s, &[], KeyCode::Char('L'), KeyModifiers::empty(), None);
+        assert_eq!(s.lang, Lang::En);
+        assert!(s.status_msg.is_some());
     }
 }

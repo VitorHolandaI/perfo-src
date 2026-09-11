@@ -2,194 +2,18 @@
 
 use crossterm::event::KeyCode;
 
+use super::groups::{
+    handle_history_scroll_key, handle_pane_aware_key, handle_toggle_key, pane_for_digit,
+};
+
 use crate::theme::Theme;
 
 use super::super::clipboard::{copy_to_clipboard, get_process_full_cmd};
-use super::super::cpu::{Pane, SortKey};
+use super::super::cpu::Pane;
 use super::super::{Lang, State};
 use super::{
-    focus_pane, handle_nav_key, move_core, select_menu_pane, start_trace, toggle_core_filter,
-    toggle_lang, toggle_theme,
+    focus_pane, handle_nav_key, select_menu_pane, toggle_core_filter, toggle_lang, toggle_theme,
 };
-
-/// `1`-`7` jump straight to a fullscreen pane.
-pub(super) fn pane_for_digit(digit: char) -> Option<Pane> {
-    match digit {
-        '1' => Some(Pane::Cpu),
-        '2' => Some(Pane::Io),
-        '3' => Some(Pane::Net),
-        '4' => Some(Pane::Mem),
-        '5' => Some(Pane::Disks),
-        '6' => Some(Pane::Gpu),
-        '7' => Some(Pane::History),
-        _ => None,
-    }
-}
-
-/// Keys that only act on the history pane. `None` means this handler did not
-/// claim the key, so the caller keeps looking.
-pub(super) fn handle_history_scroll_key(state: &mut State, code: KeyCode) -> Option<bool> {
-    match code {
-        KeyCode::Char('<') | KeyCode::Char(',') => {
-            if state.pane == Pane::History {
-                state.history.step(-1);
-            }
-            Some(false)
-        }
-        KeyCode::Char('>') | KeyCode::Char('.') => {
-            if state.pane == Pane::History {
-                state.history.step(1);
-            }
-            Some(false)
-        }
-        KeyCode::Char('[') | KeyCode::Char('{') => {
-            if state.pane == Pane::History {
-                state.history.jump(-1);
-            }
-            Some(false)
-        }
-        KeyCode::Char(']') | KeyCode::Char('}') => {
-            if state.pane == Pane::History {
-                state.history.jump(1);
-            }
-            Some(false)
-        }
-        KeyCode::Char('0') => {
-            if state.pane == Pane::History {
-                state.history.jump_to_live();
-            }
-            Some(false)
-        }
-        KeyCode::Char('e') | KeyCode::Char('E') => {
-            if state.pane == Pane::History {
-                state.history.export();
-            }
-            Some(false)
-        }
-        KeyCode::Char('r') | KeyCode::Char('R') => {
-            if state.pane == Pane::History {
-                state.history.toggle_session_recording();
-            }
-            Some(false)
-        }
-        _ => None,
-    }
-}
-
-/// Keys that flip a single flag and never quit.
-pub(super) fn handle_toggle_key(state: &mut State, code: KeyCode) -> Option<bool> {
-    match code {
-        KeyCode::Char('p') | KeyCode::Char('P') => {
-            state.sort = SortKey::Cpu;
-            Some(false)
-        }
-        KeyCode::Char('M') => {
-            state.sort = SortKey::Mem;
-            Some(false)
-        }
-        KeyCode::Char('i') | KeyCode::Char('I') => {
-            state.invert = !state.invert;
-            Some(false)
-        }
-        KeyCode::Char('c') => {
-            state.full_cmd = !state.full_cmd;
-            Some(false)
-        }
-        KeyCode::Char('t') => {
-            state.tree = !state.tree;
-            Some(false)
-        }
-        KeyCode::Char('H') => {
-            state.show_threads = !state.show_threads;
-            Some(false)
-        }
-        KeyCode::Char('K') => {
-            state.show_kernel = !state.show_kernel;
-            Some(false)
-        }
-        KeyCode::Char('m') => {
-            state.show_menu = !state.show_menu;
-            Some(false)
-        }
-        KeyCode::Char('/') => {
-            state.searching = true;
-            Some(false)
-        }
-        _ => None,
-    }
-}
-
-/// Keys whose meaning depends on which pane is focused: on history they scrub
-/// or switch the recording view, elsewhere they keep their global meaning.
-pub(super) fn handle_pane_aware_key(state: &mut State, code: KeyCode) -> Option<bool> {
-    Some(match code {
-        KeyCode::Tab | KeyCode::BackTab => {
-            if state.pane == Pane::Cpu {
-                state.cores_focused = !state.cores_focused;
-            } else if state.pane == Pane::History {
-                state.history.metric = state.history.metric.next();
-            }
-            false
-        }
-        KeyCode::Char('L') => {
-            if state.pane == Pane::History {
-                state.history.jump_to_live();
-                false
-            } else {
-                toggle_lang(state)
-            }
-        }
-        KeyCode::Char('s') | KeyCode::Char('S') => {
-            if state.pane == Pane::History {
-                state.history.open_sessions_modal();
-                false
-            } else {
-                start_trace(state)
-            }
-        }
-        KeyCode::Char('z') | KeyCode::Char('Z') => {
-            if state.pane == Pane::History {
-                state.history.span = state.history.span.next();
-            } else {
-                state.paused = !state.paused;
-            }
-            false
-        }
-        KeyCode::Left => {
-            if state.pane == Pane::History {
-                state.history.step(-1);
-                false
-            } else if state.pane == Pane::Cpu && state.cores_focused {
-                move_core(state, code);
-                false
-            } else {
-                state.cmd_scroll = state.cmd_scroll.saturating_sub(10);
-                false
-            }
-        }
-        KeyCode::Right => {
-            if state.pane == Pane::History {
-                state.history.step(1);
-                false
-            } else if state.pane == Pane::Cpu && state.cores_focused {
-                move_core(state, code);
-                false
-            } else {
-                state.cmd_scroll = state.cmd_scroll.saturating_add(10);
-                false
-            }
-        }
-        KeyCode::Char(' ') => {
-            if state.pane == Pane::History {
-                state.history.toggle_playback();
-            } else if state.cores_focused {
-                toggle_core_filter(state);
-            }
-            false
-        }
-        _ => return None,
-    })
-}
 
 pub(super) fn handle_normal_key(
     state: &mut State,
@@ -334,39 +158,11 @@ pub(super) fn handle_menu_key(state: &mut State, code: KeyCode) {
 mod tests {
 
     use super::super::handle_key;
-    use super::super::move_selection;
+
     use super::*;
+    use crate::tui::cpu::SortKey;
 
     use crossterm::event::{KeyCode, KeyModifiers};
-    #[test]
-    fn move_core_arrows() {
-        let mut s = State::default();
-        move_core(&mut s, KeyCode::Right);
-        assert_eq!(s.core_focus, 1);
-        move_core(&mut s, KeyCode::Up);
-        assert_eq!(s.core_focus, 0);
-        move_core(&mut s, KeyCode::Down);
-        assert_eq!(s.core_focus, 2);
-    }
-
-    #[test]
-    fn move_selection_clamps() {
-        let pids = [10, 20, 30];
-        let mut s = State::default();
-        move_selection(&mut s, &pids, 1);
-        assert_eq!(s.selected_pid, Some(20));
-        move_selection(&mut s, &pids, i32::MAX);
-        assert_eq!(s.selected_pid, Some(30));
-        move_selection(&mut s, &pids, i32::MIN);
-        assert_eq!(s.selected_pid, Some(10));
-    }
-
-    #[test]
-    fn move_selection_empty_is_noop() {
-        let mut s = State::default();
-        move_selection(&mut s, &[], 1);
-        assert_eq!(s.selected_pid, None);
-    }
 
     #[test]
     fn keys_toggle_sort_pause_theme() {
@@ -492,17 +288,6 @@ mod tests {
     }
 
     #[test]
-    fn lang_toggles_between_pt_and_en() {
-        let mut s = State::default();
-        assert_eq!(s.lang, Lang::En);
-        handle_key(&mut s, &[], KeyCode::Char('L'), KeyModifiers::empty(), None);
-        assert_eq!(s.lang, Lang::Pt);
-        handle_key(&mut s, &[], KeyCode::Char('L'), KeyModifiers::empty(), None);
-        assert_eq!(s.lang, Lang::En);
-        assert!(s.status_msg.is_some());
-    }
-
-    #[test]
     fn esc_clears_core_filter_then_quits() {
         let mut s = State {
             core_filter: Some(2),
@@ -577,28 +362,5 @@ mod tests {
         assert_eq!(s.cmd_scroll, 0);
         handle_key(&mut s, &[], KeyCode::Left, KeyModifiers::empty(), None);
         assert_eq!(s.cmd_scroll, 0);
-    }
-
-    #[test]
-    fn menu_selects_panel_and_closes() {
-        let mut s = State::default();
-        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
-        assert!(s.show_menu);
-        handle_key(&mut s, &[], KeyCode::Char('3'), KeyModifiers::empty(), None);
-        assert_eq!(s.pane, Pane::Net);
-        assert!(s.fullscreen);
-        assert!(!s.show_menu);
-        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
-        handle_key(&mut s, &[], KeyCode::Char('4'), KeyModifiers::empty(), None);
-        assert_eq!(s.pane, Pane::Mem);
-        assert!(s.fullscreen);
-        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
-        handle_key(&mut s, &[], KeyCode::Char('6'), KeyModifiers::empty(), None);
-        assert_eq!(s.pane, Pane::Gpu);
-        assert!(s.fullscreen);
-        handle_key(&mut s, &[], KeyCode::Char('m'), KeyModifiers::empty(), None);
-        handle_key(&mut s, &[], KeyCode::Char('?'), KeyModifiers::empty(), None);
-        assert!(s.help);
-        assert!(!s.show_menu);
     }
 }
