@@ -34,6 +34,18 @@ Panel {
   // is kept for up to maxHistorySamples ticks.
   readonly property int liveProcessDepth: 8
 
+  // A process merged in for its GPU or its sockets is outside the top-N
+  // slice, so its start time has to come from the full snapshot. Mirrors
+  // merge_gpu_processes / merge_socket_counters in src/tui/history/record.rs.
+  function startTimeOf(pid) {
+    var all = root.snapshot && root.snapshot.processes ? root.snapshot.processes : []
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].pid === pid)
+        return Number(all[i].start_time) || 0
+    }
+    return 0
+  }
+
   onSnapshotChanged: root.recordHistorySample()
 
   onPageChanged: {
@@ -865,6 +877,10 @@ Panel {
         if (cmdStr.length > 160) cmdStr = cmdStr.substring(0, 159) + "…"
         procs.push({
           pid: p.pid,
+          // A pid alone does not identify a process across time; the TUI's
+          // replay pairs it with the start time to tell "still running" from
+          // "pid reused". See src/tui/history/traceable.rs.
+          start_time: Number(p.start_time) || 0,
           name: p.name || "",
           cmd: cmdStr,
           cpu_percent: Number(p.cpu_percent) || 0,
@@ -898,6 +914,7 @@ Panel {
       if (!alreadyIn) {
         procs.push({
           pid: gpItem.pid,
+          start_time: root.startTimeOf(gpItem.pid),
           name: "",
           cmd: "",
           cpu_percent: 0,
@@ -940,6 +957,7 @@ Panel {
         }
         procs.push({
           pid: npSock.pid,
+          start_time: root.startTimeOf(npSock.pid),
           name: matchedCmd,
           cmd: matchedCmd,
           cpu_percent: 0,

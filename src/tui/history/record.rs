@@ -67,6 +67,7 @@ impl HistoryState {
             let np = snap.net.proc_net.iter().find(|n| n.pid == p.pid);
             procs.push(HistoryProcess {
                 pid: p.pid,
+                start_time: p.start_time,
                 name: p.name.clone(),
                 cmd: p.cmd.clone(),
                 cpu_percent: p.cpu_percent,
@@ -99,6 +100,7 @@ impl HistoryState {
                 let p_info = snap.processes.iter().find(|p| p.pid == *g_pid);
                 procs.push(HistoryProcess {
                     pid: *g_pid,
+                    start_time: p_info.map(|p| p.start_time).unwrap_or(0),
                     name: p_info.map(|p| p.name.clone()).unwrap_or_default(),
                     cmd: p_info.map(|p| p.cmd.clone()).unwrap_or_default(),
                     cpu_percent: p_info.map(|p| p.cpu_percent).unwrap_or(0.0),
@@ -126,6 +128,7 @@ impl HistoryState {
                 let p_info = snap.processes.iter().find(|p| p.pid == np.pid);
                 procs.push(HistoryProcess {
                     pid: np.pid,
+                    start_time: p_info.map(|p| p.start_time).unwrap_or(0),
                     name: p_info.map(|p| p.name.clone()).unwrap_or_default(),
                     cmd: p_info.map(|p| p.cmd.clone()).unwrap_or_default(),
                     cpu_percent: p_info.map(|p| p.cpu_percent).unwrap_or(0.0),

@@ -9,6 +9,7 @@ mod nav;
 mod record;
 pub mod session;
 mod tables;
+pub mod traceable;
 
 pub(crate) use draw::draw_history;
 
@@ -92,6 +93,14 @@ impl HistorySpan {
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct HistoryProcess {
     pub pid: u32,
+    /// The process's start time (epoch seconds) as of the recorded tick.
+    ///
+    /// A pid on its own does not identify a process across time, so a replay
+    /// cannot tell whether pid 8231 from 40 minutes ago is the pid 8231 alive
+    /// now. Defaulted so recordings written before this field still load; 0
+    /// there means "unknown", not "started at the epoch".
+    #[serde(default)]
+    pub start_time: u64,
     #[serde(default)]
     pub name: String,
     #[serde(default)]

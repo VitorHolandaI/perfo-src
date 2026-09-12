@@ -9,11 +9,14 @@ use ratatui::{
 };
 
 use super::format::clean_process_name;
+use super::traceable::{trace_target, TraceTarget};
 use super::{HistoryMetric, HistoryProcess, HistoryState};
 use crate::tui::cpu::Ui;
 
 /// Column widths of the process tables, in the order the header lists them.
 const COL_PID: u16 = 8;
+/// Room for the identity marker the pid column carries in a replay.
+const MARKER_WIDTH: u16 = 2;
 const COL_PROCESS: u16 = 16;
 const COL_PRIMARY: u16 = 12;
 const COL_SECONDARY: u16 = 12;
@@ -167,8 +170,16 @@ fn draw_net_processes_table(
             let rx_str = format_proc_net_io(p.net_rx_bps, p.net_rx_bytes);
             let tx_str = format_proc_net_io(p.net_tx_bps, p.net_tx_bytes);
             let conns_str = format_proc_conns(p);
+            let target = trace_target(p, &ui.snap.processes);
             TableRow::new(vec![
-                Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
+                Span::styled(
+                    format!("{} {:<7}", target.marker(), p.pid),
+                    Style::default().fg(match target {
+                        TraceTarget::Alive => ui.theme.fg,
+                        TraceTarget::Reused => ui.theme.red,
+                        _ => ui.theme.muted,
+                    }),
+                ),
                 Span::styled(
                     p_name,
                     Style::default()
@@ -191,7 +202,7 @@ fn draw_net_processes_table(
     }
 
     let widths = [
-        Constraint::Length(COL_PID),
+        Constraint::Length(COL_PID + MARKER_WIDTH),
         Constraint::Length(COL_PROCESS),
         Constraint::Length(COL_PRIMARY),
         Constraint::Length(COL_SECONDARY),
@@ -211,8 +222,11 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
     state.sort_processes(&mut procs);
 
     let title = format!(
-        " ACTIVE PROCESSES AT SELECTED TIMING ({}) ",
-        sample.map(|s| s.timestamp.as_str()).unwrap_or("--")
+        " ACTIVE PROCESSES AT SELECTED TIMING ({})  [{} live  {} exited  {} pid reused] ",
+        sample.map(|s| s.timestamp.as_str()).unwrap_or("--"),
+        TraceTarget::Alive.marker(),
+        TraceTarget::Exited.marker(),
+        TraceTarget::Reused.marker(),
     );
     let block = Block::default()
         .borders(Borders::ALL)
@@ -259,8 +273,16 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
             } else {
                 crate::tui::cpu::human_bytes(p.mem_bytes)
             };
+            let target = trace_target(p, &ui.snap.processes);
             TableRow::new(vec![
-                Span::styled(format!("{:<7}", p.pid), Style::default().fg(ui.theme.fg)),
+                Span::styled(
+                    format!("{} {:<7}", target.marker(), p.pid),
+                    Style::default().fg(match target {
+                        TraceTarget::Alive => ui.theme.fg,
+                        TraceTarget::Reused => ui.theme.red,
+                        _ => ui.theme.muted,
+                    }),
+                ),
                 Span::styled(
                     p_name,
                     Style::default()
@@ -286,7 +308,7 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
     }
 
     let widths = [
-        Constraint::Length(COL_PID),
+        Constraint::Length(COL_PID + MARKER_WIDTH),
         Constraint::Length(COL_RX),
         Constraint::Length(COL_NARROW),
         Constraint::Length(COL_NARROW),

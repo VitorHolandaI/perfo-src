@@ -162,6 +162,7 @@ impl CpuMonitor {
                         self.io_window.get(&pid_u).copied().unwrap_or((0, 0));
                     ProcessInfo {
                         pid: pid_u,
+                        start_time: p.start_time(),
                         name: p.name().to_string_lossy().into_owned(),
                         ppid: p.parent().map(|pp| pp.as_u32()),
                         owner,

@@ -389,6 +389,7 @@ mod tests {
     fn proc(pid: u32, cpu: f32, mem: u64) -> ProcessInfo {
         ProcessInfo {
             pid,
+            start_time: 0,
             name: format!("p{pid}"),
             ppid: None,
             owner: None,
