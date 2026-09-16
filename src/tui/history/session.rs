@@ -10,12 +10,13 @@ use std::time::Instant;
 /// is ~99% of a recorded sample's bytes.
 pub const PROCESS_DEPTHS: [usize; 5] = [8, 30, 50, 100, 0];
 
-/// Picker rows: six subsystem checkboxes, the process-depth stepper, then
-/// START and CANCEL.
+/// Picker rows: six subsystem checkboxes, the process-depth stepper, the
+/// duration stepper, then START and CANCEL.
 pub const DEPTH_ROW_IDX: usize = 6;
-pub const START_BUTTON_IDX: usize = 7;
-pub const CANCEL_BUTTON_IDX: usize = 8;
-pub const RECORD_MODAL_SLOTS: usize = 9;
+pub const DURATION_ROW_IDX: usize = 7;
+pub const START_BUTTON_IDX: usize = 8;
+pub const CANCEL_BUTTON_IDX: usize = 9;
+pub const RECORD_MODAL_SLOTS: usize = 10;
 
 /// The depth a recording starts at, overridable so the widget and the TUI can
 /// be pointed at the same value from one place.
@@ -132,16 +133,28 @@ impl HistoryState {
         }
     }
 
+    /// Starts recording for the picked duration. An invalid custom duration
+    /// keeps the picker open on the duration row and says what is wrong.
     pub fn start_session_recording(&mut self) {
+        let target = match self.chosen_record_samples() {
+            Ok(target) => target,
+            Err(e) => {
+                self.record_modal_idx = DURATION_ROW_IDX;
+                self.export_status = Some((e, Instant::now()));
+                return;
+            }
+        };
+        self.target_record_seconds = target;
         self.record_modal = false;
         self.is_session_recording = true;
         self.session_record_buffer.clear();
         let summary = self.recording_mask.summary();
         self.export_status = Some((
             format!(
-                "Recording session [{} @{}p] started...",
+                "Recording session [{} @{}p, {} min] started...",
                 summary,
-                process_depth_label(self.record_process_depth)
+                process_depth_label(self.record_process_depth),
+                target / 60
             ),
             Instant::now(),
         ));

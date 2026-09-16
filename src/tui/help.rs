@@ -331,6 +331,7 @@ const PT_PAGE_5: &[HelpRow<'static>] = &[
     txt(""),
     hdr("GRAVACAO E SESSOES"),
     key("r", "inicia ou finaliza a gravacao de voo para disco"),
+    key("t", "no seletor de gravacao: tempo 2/5/10/40 min ou custom"),
     key("s", "abre o menu de sessoes gravadas salvas"),
     key("Enter", "no menu de sessoes: carrega a sessao selecionada"),
     key("d", "no menu de sessoes: deleta a gravacao selecionada"),
@@ -355,6 +356,10 @@ const EN_PAGE_5: &[HelpRow<'static>] = &[
     txt(""),
     hdr("RECORDING AND SESSIONS"),
     key("r", "start or stop session flight recording to disk"),
+    key(
+        "t",
+        "in record picker: recording time 2/5/10/40 min or custom",
+    ),
     key("s", "open saved sessions modal"),
     key("Enter", "in sessions modal: load selected recording"),
     key("d", "in sessions modal: delete selected recording"),

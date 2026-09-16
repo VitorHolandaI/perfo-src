@@ -2,6 +2,7 @@
 
 mod chart;
 mod draw;
+pub mod duration;
 mod export;
 mod format;
 mod modals;
@@ -161,7 +162,12 @@ pub struct HistoryState {
     // Session recording
     pub is_session_recording: bool,
     pub session_record_buffer: Vec<HistorySample>,
+    /// Samples the running recording stops at, fixed when it starts from
+    /// `record_duration` so changing the picker mid-recording does not move it.
     pub target_record_seconds: usize,
+    pub record_duration: duration::RecordDuration,
+    /// Digits typed for a custom duration, in minutes.
+    pub record_custom_minutes: String,
     pub recording_mask: RecordingMask,
     pub record_modal: bool,
     pub record_modal_idx: usize,
@@ -195,6 +201,8 @@ impl Default for HistoryState {
             is_session_recording: false,
             session_record_buffer: Vec::new(),
             target_record_seconds: 120,
+            record_duration: duration::RecordDuration::default(),
+            record_custom_minutes: String::new(),
             recording_mask: RecordingMask::ALL,
             record_modal: false,
             record_modal_idx: 0,
