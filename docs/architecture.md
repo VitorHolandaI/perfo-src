@@ -108,6 +108,10 @@ Both ends of a loopback connection appear in the dump as separate sockets. The
 client end of a connection to a local service is skipped, because the serving
 socket reports the same bytes and charging both would double the port's total.
 
+Because the totals outlive their sockets, the tracked set only grows. Past 256
+ports the quietest are forgotten, while any port holding an open socket is
+kept regardless of how little it has moved.
+
 ## Current gaps
 
 - Fake hwmon fixture trees covering multiple notebook shapes are not yet in

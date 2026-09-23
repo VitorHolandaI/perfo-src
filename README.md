@@ -275,7 +275,9 @@ The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency
 
 Below the interface table the pane lists network processes, then `PORT
 TRAFFIC (TCP only)`: every port moving bytes, with its current rates, its
-totals since the monitor started, and how many sockets are open on it. A port
+totals since the monitor started, how many sockets are open on it, and a rate
+sparkline per direction so a port that just went quiet reads differently from
+one that was never busy. A port
 is marked `in` when it is one this machine listens on, and `out` when the row
 names the peer's port on an outbound connection — so HTTPS traffic reads as
 `443` instead of as the ephemeral local port the kernel picked. `LISTENING
