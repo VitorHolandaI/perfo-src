@@ -11,7 +11,7 @@ pub use monitor::NetMonitor;
 use serde::Serialize;
 use std::collections::VecDeque;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Default)]
 pub struct NetInfo {
     pub name: String,
     pub rx_bps: u64,

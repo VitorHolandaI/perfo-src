@@ -8,13 +8,28 @@ use ratatui::{
     Frame,
 };
 
-use crate::data::net::PortSide;
+use crate::data::net::{NetInfo, PortSide};
 
 use super::format::{block, human_bytes, pipe, short_bytes, sparkline, truncate};
 use super::{Pane, Ui};
 
 /// How many port rows fit the pane without pushing the listening table off.
 const MAX_PORT_ROWS: usize = 12;
+/// How many interface rows the full pane draws before summarising the rest.
+const MAX_INTERFACE_ROWS: usize = 8;
+
+/// The interfaces worth a row, busiest first, and how many were left out.
+///
+/// A machine running containers has dozens of idle `veth` and bridge links.
+/// Drawing them all fills the pane and pushes the tables underneath off the
+/// screen, so only the ones actually moving bytes earn a row.
+fn busiest_interfaces(ifaces: &[NetInfo], max: usize) -> (Vec<&NetInfo>, usize) {
+    let mut ranked: Vec<&NetInfo> = ifaces.iter().collect();
+    ranked.sort_by_key(|i| std::cmp::Reverse(i.rx_bps + i.tx_bps));
+    let hidden = ranked.len().saturating_sub(max);
+    ranked.truncate(max);
+    (ranked, hidden)
+}
 
 /// Full-pane network view (menu 3 -> NET): per-interface rx/tx rates and
 /// packet/error/drop counters plus TCP retransmissions and connections.
@@ -24,7 +39,8 @@ const MAX_PORT_ROWS: usize = 12;
 /// every `│` lines up across the three rows.
 /// One row per interface: link state, speed and current rates.
 fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
-    for i in &ui.snap.net.ifaces {
+    let (shown, hidden) = busiest_interfaces(&ui.snap.net.ifaces, MAX_INTERFACE_ROWS);
+    for i in shown {
         let link = match (i.link_mbps, i.link_up) {
             (Some(m), true) => format!("{m}M up"),
             (Some(m), false) => format!("{m}M down"),
@@ -74,6 +90,12 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             pipe("│", &ui.theme),
             Span::styled(format!("{:>14}", link), Style::default().fg(ui.theme.fg)),
         ]));
+    }
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(" +{hidden} idle or slower interfaces"),
+            Style::default().fg(ui.theme.muted),
+        )));
     }
 }
 
@@ -279,4 +301,42 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
 
 pub(super) fn draw_net_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
     crate::tui::net_summary::draw(frame, area, ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{busiest_interfaces, NetInfo};
+
+    fn iface(name: &str, rx_bps: u64, tx_bps: u64) -> NetInfo {
+        NetInfo {
+            name: name.to_string(),
+            rx_bps,
+            tx_bps,
+            ..NetInfo::default()
+        }
+    }
+
+    #[test]
+    fn busiest_interfaces_ranks_by_both_directions() {
+        // An upload-only link beats a quieter one that happens to receive.
+        let ifaces = vec![
+            iface("lo", 10, 10),
+            iface("wg0", 0, 900),
+            iface("eth0", 30, 0),
+        ];
+        let (shown, hidden) = busiest_interfaces(&ifaces, 2);
+        assert_eq!(
+            shown.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            ["wg0", "eth0"]
+        );
+        assert_eq!(hidden, 1);
+    }
+
+    #[test]
+    fn busiest_interfaces_hides_nothing_when_they_all_fit() {
+        let ifaces = vec![iface("eth0", 1, 1)];
+        let (shown, hidden) = busiest_interfaces(&ifaces, 8);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(hidden, 0);
+    }
 }
