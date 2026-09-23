@@ -1,15 +1,19 @@
 //! Traffic charged to the ports actually carrying it, not only the ports
 //! being listened on.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::data::disk::rate;
+use crate::data::disk::{rate, HISTORY_SAMPLES};
 
 use super::inet_diag::SocketSample;
-use super::{PortSide, PortTraffic};
+use super::{push_capped, PortSide, PortTraffic};
 
 /// How many ports the table keeps.
 const MAX_TRAFFIC_PORTS: usize = 32;
+/// How many ports are remembered at once. Totals outlive the sockets that
+/// earned them, so without a bound a long session would hold every port it
+/// ever touched, each with its own rate rings.
+const MAX_TRACKED_PORTS: usize = 256;
 
 /// The port a socket's bytes belong to, and which end of the connection it is.
 ///
@@ -63,6 +67,8 @@ pub(super) struct PortTrafficTracker {
     charged: HashMap<(u16, PortSide), (u64, u64)>,
     /// The same totals one refresh ago, which is what the rates divide.
     previous: HashMap<(u16, PortSide), (u64, u64)>,
+    /// rx/tx rate rings per port, for the sparklines.
+    history: HashMap<(u16, PortSide), (VecDeque<f32>, VecDeque<f32>)>,
 }
 
 impl PortTrafficTracker {
@@ -91,29 +97,62 @@ impl PortTrafficTracker {
         }
         self.seen = still_open;
 
-        let mut rows: Vec<PortTraffic> = self
-            .charged
-            .iter()
-            .map(|(&(port, side), &(rx_bytes, tx_bytes))| {
-                let (prev_rx, prev_tx) =
-                    self.previous.get(&(port, side)).copied().unwrap_or((0, 0));
-                PortTraffic {
-                    port,
-                    side,
-                    rx_bytes,
-                    tx_bytes,
-                    rx_bps: rate(rx_bytes.saturating_sub(prev_rx), elapsed),
-                    tx_bps: rate(tx_bytes.saturating_sub(prev_tx), elapsed),
-                    connections: open.get(&(port, side)).copied().unwrap_or(0),
-                }
-            })
-            .collect();
+        let mut rows: Vec<PortTraffic> = Vec::with_capacity(self.charged.len());
+        for (&key, &(rx_bytes, tx_bytes)) in &self.charged {
+            let (prev_rx, prev_tx) = self.previous.get(&key).copied().unwrap_or((0, 0));
+            let rx_bps = rate(rx_bytes.saturating_sub(prev_rx), elapsed);
+            let tx_bps = rate(tx_bytes.saturating_sub(prev_tx), elapsed);
+            let (rx_hist, tx_hist) = self
+                .history
+                .entry(key)
+                .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
+            push_capped(rx_hist, rx_bps as f32, HISTORY_SAMPLES);
+            push_capped(tx_hist, tx_bps as f32, HISTORY_SAMPLES);
+            let (port, side) = key;
+            rows.push(PortTraffic {
+                port,
+                side,
+                rx_bytes,
+                tx_bytes,
+                rx_bps,
+                tx_bps,
+                connections: open.get(&key).copied().unwrap_or(0),
+                rx_hist: rx_hist.clone(),
+                tx_hist: tx_hist.clone(),
+            });
+        }
         self.previous = self.charged.clone();
+        self.forget_quietest(&open);
 
         rows.sort_by_key(|r| {
             std::cmp::Reverse((r.rx_bps + r.tx_bps, r.rx_bytes + r.tx_bytes, r.port))
         });
         rows.truncate(MAX_TRAFFIC_PORTS);
         rows
+    }
+
+    /// Drop the ports carrying the least, once too many are remembered.
+    ///
+    /// Anything with a socket open right now is kept regardless of how little
+    /// it has moved, so a brand new connection is never forgotten mid-flight.
+    fn forget_quietest(&mut self, open: &HashMap<(u16, PortSide), u32>) {
+        if self.charged.len() <= MAX_TRACKED_PORTS {
+            return;
+        }
+        let mut ranked: Vec<((u16, PortSide), u64)> = self
+            .charged
+            .iter()
+            .map(|(&key, &(rx, tx))| (key, rx.saturating_add(tx)))
+            .collect();
+        ranked.sort_by_key(|&(_, total)| std::cmp::Reverse(total));
+        let keep: HashSet<(u16, PortSide)> = ranked
+            .into_iter()
+            .take(MAX_TRACKED_PORTS)
+            .map(|(key, _)| key)
+            .chain(open.keys().copied())
+            .collect();
+        self.charged.retain(|key, _| keep.contains(key));
+        self.previous.retain(|key, _| keep.contains(key));
+        self.history.retain(|key, _| keep.contains(key));
     }
 }

@@ -154,8 +154,8 @@ fn port_traffic_rows(ui: &Ui, focused: bool, lines: &mut Vec<Line<'static>>) {
     )));
     lines.push(Line::from(vec![
         pipe(&format!("  {:>5} {:<4}", "PORT", "DIR"), &ui.theme),
-        pipe(&format!("{:>11}", "RX/s"), &ui.theme),
-        pipe(&format!("{:>11}", "TX/s"), &ui.theme),
+        pipe(&format!("{:<10} {:>10}", "", "RX/s"), &ui.theme),
+        pipe(&format!("{:<10} {:>10}", "", "TX/s"), &ui.theme),
         pipe(&format!("{:>12}", "TOTAL RX"), &ui.theme),
         pipe(&format!("{:>12}", "TOTAL TX"), &ui.theme),
         pipe(&format!("{:>7}", "CONNS"), &ui.theme),
@@ -172,11 +172,19 @@ fn port_traffic_rows(ui: &Ui, focused: bool, lines: &mut Vec<Line<'static>>) {
             ),
             Span::styled(format!(" {dir:<4}"), Style::default().fg(dir_color)),
             Span::styled(
-                format!("{:>11}", format!("{}/s", short_bytes(p.rx_bps))),
+                format!(
+                    "{:<10} {:>10}",
+                    sparkline(&p.rx_hist, 10, None),
+                    format!("{}/s", short_bytes(p.rx_bps))
+                ),
                 Style::default().fg(ui.theme.accent),
             ),
             Span::styled(
-                format!("{:>11}", format!("{}/s", short_bytes(p.tx_bps))),
+                format!(
+                    "{:<10} {:>10}",
+                    sparkline(&p.tx_hist, 10, None),
+                    format!("{}/s", short_bytes(p.tx_bps))
+                ),
                 Style::default().fg(ui.theme.yellow),
             ),
             Span::styled(

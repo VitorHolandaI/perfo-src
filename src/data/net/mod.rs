@@ -11,6 +11,14 @@ pub use monitor::NetMonitor;
 use serde::Serialize;
 use std::collections::VecDeque;
 
+/// Push into a capped ring buffer, dropping the oldest sample when full.
+pub(super) fn push_capped(q: &mut VecDeque<f32>, v: f32, cap: usize) {
+    q.push_back(v);
+    if q.len() > cap {
+        q.pop_front();
+    }
+}
+
 #[derive(Clone, Serialize, Default)]
 pub struct NetInfo {
     pub name: String,
@@ -86,7 +94,7 @@ pub enum PortSide {
 
 /// Bytes charged to one port. TCP only: the kernel keeps no cumulative byte
 /// counter for UDP sockets, so QUIC, DNS and WireGuard are not counted here.
-#[derive(Clone, Serialize, Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Serialize, Default, PartialEq, Debug)]
 pub struct PortTraffic {
     pub port: u16,
     pub side: PortSide,
@@ -97,6 +105,11 @@ pub struct PortTraffic {
     pub tx_bps: u64,
     /// Sockets currently open on this port.
     pub connections: u32,
+    /// rx/tx rate rings (newest last) for the port sparklines.
+    #[serde(skip)]
+    pub rx_hist: VecDeque<f32>,
+    #[serde(skip)]
+    pub tx_hist: VecDeque<f32>,
 }
 
 /// A listening port with the process serving it.
@@ -317,6 +330,21 @@ mod tests {
         assert_eq!(row.rx_bps, 1500);
         assert_eq!(row.tx_bps, 400);
         assert_eq!(row.connections, 1);
+    }
+
+    #[test]
+    fn tracker_rings_grow_one_sample_per_refresh() {
+        let mut tracker = PortTrafficTracker::default();
+        let listening = HashSet::new();
+
+        tracker.observe(&one(vec![sample(7, 40000, 443, 1000, 0)]), &listening, 1.0);
+        let rows = tracker.observe(&one(vec![sample(7, 40000, 443, 3000, 0)]), &listening, 1.0);
+
+        let row = rows.iter().find(|r| r.port == 443).expect("port 443 row");
+        assert_eq!(row.rx_hist.len(), 2);
+        // The ring carries rates, so the newest sample is the last delta.
+        assert_eq!(row.rx_hist.back().copied(), Some(2000.0));
+        assert_eq!(row.tx_hist.len(), 2);
     }
 
     #[test]

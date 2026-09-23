@@ -8,6 +8,7 @@ use crate::data::disk::rate;
 use super::inet_diag::tcp_socket_samples;
 use super::parse::{link_state, netdev_from, tcp_stats_from, DevCounters};
 use super::ports::PortTrafficTracker;
+use super::push_capped;
 use super::sockets::{listening_ports, proc_sockets, socket_inode_owners};
 use super::{NetInfo, NetSnapshot, NetTotals};
 
@@ -205,13 +206,5 @@ impl NetMonitor {
 
     pub fn snapshot(&self) -> NetSnapshot {
         self.snapshot.clone()
-    }
-}
-
-/// Push into a capped ring buffer.
-fn push_capped(q: &mut VecDeque<f32>, v: f32, cap: usize) {
-    q.push_back(v);
-    if q.len() > cap {
-        q.pop_front();
     }
 }
