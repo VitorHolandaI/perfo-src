@@ -8,8 +8,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::data::net::PortSide;
+
 use super::format::{block, human_bytes, pipe, short_bytes, sparkline, truncate};
 use super::{Pane, Ui};
+
+/// How many port rows fit the pane without pushing the listening table off.
+const MAX_PORT_ROWS: usize = 12;
 
 /// Full-pane network view (menu 3 -> NET): per-interface rx/tx rates and
 /// packet/error/drop counters plus TCP retransmissions and connections.
@@ -101,6 +106,70 @@ fn socket_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
                 ),
             ]));
         }
+    }
+}
+
+/// Which ports are moving bytes, listening or not. Fullscreen only.
+///
+/// TCP only, and labelled as such: the kernel keeps no cumulative byte
+/// counter for UDP sockets, so QUIC, DNS and WireGuard never show up here.
+fn port_traffic_rows(ui: &Ui, focused: bool, lines: &mut Vec<Line<'static>>) {
+    let busy: Vec<_> = ui
+        .snap
+        .net
+        .ports
+        .iter()
+        .filter(|p| p.rx_bytes + p.tx_bytes > 0)
+        .take(MAX_PORT_ROWS)
+        .collect();
+    if !focused || busy.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "PORT TRAFFIC (TCP only)",
+        Style::default().fg(ui.theme.accent),
+    )));
+    lines.push(Line::from(vec![
+        pipe(&format!("  {:>5} {:<4}", "PORT", "DIR"), &ui.theme),
+        pipe(&format!("{:>11}", "RX/s"), &ui.theme),
+        pipe(&format!("{:>11}", "TX/s"), &ui.theme),
+        pipe(&format!("{:>12}", "TOTAL RX"), &ui.theme),
+        pipe(&format!("{:>12}", "TOTAL TX"), &ui.theme),
+        pipe(&format!("{:>7}", "CONNS"), &ui.theme),
+    ]));
+    for p in busy {
+        let (dir, dir_color) = match p.side {
+            PortSide::Local => ("in", ui.theme.green),
+            PortSide::Remote => ("out", ui.theme.muted),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:>5}", p.port),
+                Style::default().fg(ui.theme.yellow),
+            ),
+            Span::styled(format!(" {dir:<4}"), Style::default().fg(dir_color)),
+            Span::styled(
+                format!("{:>11}", format!("{}/s", short_bytes(p.rx_bps))),
+                Style::default().fg(ui.theme.accent),
+            ),
+            Span::styled(
+                format!("{:>11}", format!("{}/s", short_bytes(p.tx_bps))),
+                Style::default().fg(ui.theme.yellow),
+            ),
+            Span::styled(
+                format!("{:>12}", human_bytes(p.rx_bytes)),
+                Style::default().fg(ui.theme.fg),
+            ),
+            Span::styled(
+                format!("{:>12}", human_bytes(p.tx_bytes)),
+                Style::default().fg(ui.theme.fg),
+            ),
+            Span::styled(
+                format!("{:>7}", p.connections),
+                Style::default().fg(ui.theme.muted),
+            ),
+        ]));
     }
 }
 
@@ -203,6 +272,7 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
     ]));
     interface_rows(ui, &mut lines);
     socket_process_rows(ui, inner, &mut lines);
+    port_traffic_rows(ui, focused, &mut lines);
     listening_port_rows(ui, focused, inner, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
 }

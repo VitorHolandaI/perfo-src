@@ -1,11 +1,13 @@
 //! Per-interface rate tracking across refreshes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
 use crate::data::disk::rate;
 
+use super::inet_diag::tcp_socket_samples;
 use super::parse::{link_state, netdev_from, tcp_stats_from, DevCounters};
+use super::ports::PortTrafficTracker;
 use super::sockets::{listening_ports, proc_sockets, socket_inode_owners};
 use super::{NetInfo, NetSnapshot, NetTotals};
 
@@ -15,6 +17,8 @@ pub struct NetMonitor {
     prev: HashMap<String, DevCounters>,
     prev_retrans: u64,
     prev_proc_bytes: HashMap<u32, (u64, u64)>,
+    /// Per-port byte totals, which have to outlive the sockets that earned them.
+    port_traffic: PortTrafficTracker,
     /// Per-interface rx/tx rate rings for the sparklines.
     history: HashMap<String, (VecDeque<f32>, VecDeque<f32>)>,
     rx_history: VecDeque<f32>,
@@ -36,6 +40,7 @@ impl NetMonitor {
             prev: HashMap::new(),
             prev_retrans: 0,
             prev_proc_bytes: HashMap::new(),
+            port_traffic: PortTrafficTracker::default(),
             history: HashMap::new(),
             rx_history: VecDeque::new(),
             tx_history: VecDeque::new(),
@@ -48,6 +53,7 @@ impl NetMonitor {
                 tx_history: VecDeque::new(),
                 proc_net: Vec::new(),
                 listening: Vec::new(),
+                ports: Vec::new(),
             },
         }
     }
@@ -153,10 +159,28 @@ impl NetMonitor {
         } else {
             HashMap::new()
         };
+        // One netlink dump feeds the per-process counters and the per-port
+        // table; both need every socket's bytes, so it is taken once.
+        let samples = if processes || listeners {
+            tcp_socket_samples()
+        } else {
+            HashMap::new()
+        };
         let proc_net = if processes {
-            proc_sockets(&mut self.prev_proc_bytes, elapsed, &owners)
+            proc_sockets(&mut self.prev_proc_bytes, elapsed, &owners, &samples)
         } else {
             self.prev_proc_bytes.clear();
+            Vec::new()
+        };
+        let listening = if listeners {
+            listening_ports(&owners)
+        } else {
+            Vec::new()
+        };
+        let ports = if listeners {
+            let served: HashSet<u16> = listening.iter().map(|l| l.port).collect();
+            self.port_traffic.observe(&samples, &served, elapsed)
+        } else {
             Vec::new()
         };
         self.snapshot = NetSnapshot {
@@ -172,11 +196,8 @@ impl NetMonitor {
             rx_history: self.rx_history.clone(),
             tx_history: self.tx_history.clone(),
             proc_net,
-            listening: if listeners {
-                listening_ports(&owners)
-            } else {
-                Vec::new()
-            },
+            listening,
+            ports,
         };
         self.prev = cur;
         self.last_refresh = Some(now);
