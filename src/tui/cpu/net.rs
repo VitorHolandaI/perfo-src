@@ -8,13 +8,12 @@ use ratatui::{
     Frame,
 };
 
-use crate::data::net::{NetInfo, PortSide};
+use crate::data::net::NetInfo;
 
-use super::format::{block, human_bytes, pipe, short_bytes, sparkline, truncate};
+use super::format::{block, human_bytes, pipe, short_bytes, sparkline_recent, truncate};
+use super::port_table::port_traffic_rows;
 use super::{Pane, Ui};
 
-/// How many port rows fit the pane without pushing the listening table off.
-const MAX_PORT_ROWS: usize = 12;
 /// How many interface rows the full pane draws before summarising the rest.
 const MAX_INTERFACE_ROWS: usize = 8;
 
@@ -63,7 +62,7 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
-                    sparkline(&i.rx_hist, 10, None),
+                    sparkline_recent(&i.rx_hist, 10, None),
                     format!("{}/s", short_bytes(i.rx_bps))
                 ),
                 Style::default().fg(ui.theme.accent),
@@ -72,7 +71,7 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
-                    sparkline(&i.tx_hist, 10, None),
+                    sparkline_recent(&i.tx_hist, 10, None),
                     format!("{}/s", short_bytes(i.tx_bps))
                 ),
                 Style::default().fg(ui.theme.yellow),
@@ -99,10 +98,25 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
     }
 }
 
+/// The note under the process table about what this user cannot see.
+///
+/// Says nothing when the view is complete, so a machine where every socket is
+/// accounted for stays quiet.
+fn hidden_sockets_note(unowned: u32) -> Option<String> {
+    if unowned == 0 {
+        return None;
+    }
+    let plural = if unowned == 1 { "socket" } else { "sockets" };
+    Some(format!(
+        "  +{unowned} {plural} held by other users (run as root to see them)"
+    ))
+}
+
 /// Processes holding sockets — the ones this user can see, as `ss -p` shows.
 fn socket_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
+    let note = hidden_sockets_note(ui.snap.net.unowned_sockets);
     // Processes with open sockets (own + readable under yama), like `ss -p`.
-    if !ui.snap.net.proc_net.is_empty() {
+    if !ui.snap.net.proc_net.is_empty() || note.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "NETWORK PROCESSES (tcp est | listen | udp)",
@@ -128,78 +142,12 @@ fn socket_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
                 ),
             ]));
         }
-    }
-}
-
-/// Which ports are moving bytes, listening or not. Fullscreen only.
-///
-/// TCP only, and labelled as such: the kernel keeps no cumulative byte
-/// counter for UDP sockets, so QUIC, DNS and WireGuard never show up here.
-fn port_traffic_rows(ui: &Ui, focused: bool, lines: &mut Vec<Line<'static>>) {
-    let busy: Vec<_> = ui
-        .snap
-        .net
-        .ports
-        .iter()
-        .filter(|p| p.rx_bytes + p.tx_bytes > 0)
-        .take(MAX_PORT_ROWS)
-        .collect();
-    if !focused || busy.is_empty() {
-        return;
-    }
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "PORT TRAFFIC (TCP only)",
-        Style::default().fg(ui.theme.accent),
-    )));
-    lines.push(Line::from(vec![
-        pipe(&format!("  {:>5} {:<4}", "PORT", "DIR"), &ui.theme),
-        pipe(&format!("{:<10} {:>10}", "", "RX/s"), &ui.theme),
-        pipe(&format!("{:<10} {:>10}", "", "TX/s"), &ui.theme),
-        pipe(&format!("{:>12}", "TOTAL RX"), &ui.theme),
-        pipe(&format!("{:>12}", "TOTAL TX"), &ui.theme),
-        pipe(&format!("{:>7}", "CONNS"), &ui.theme),
-    ]));
-    for p in busy {
-        let (dir, dir_color) = match p.side {
-            PortSide::Local => ("in", ui.theme.green),
-            PortSide::Remote => ("out", ui.theme.muted),
-        };
-        lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {:>5}", p.port),
-                Style::default().fg(ui.theme.yellow),
-            ),
-            Span::styled(format!(" {dir:<4}"), Style::default().fg(dir_color)),
-            Span::styled(
-                format!(
-                    "{:<10} {:>10}",
-                    sparkline(&p.rx_hist, 10, None),
-                    format!("{}/s", short_bytes(p.rx_bps))
-                ),
-                Style::default().fg(ui.theme.accent),
-            ),
-            Span::styled(
-                format!(
-                    "{:<10} {:>10}",
-                    sparkline(&p.tx_hist, 10, None),
-                    format!("{}/s", short_bytes(p.tx_bps))
-                ),
-                Style::default().fg(ui.theme.yellow),
-            ),
-            Span::styled(
-                format!("{:>12}", human_bytes(p.rx_bytes)),
-                Style::default().fg(ui.theme.fg),
-            ),
-            Span::styled(
-                format!("{:>12}", human_bytes(p.tx_bytes)),
-                Style::default().fg(ui.theme.fg),
-            ),
-            Span::styled(
-                format!("{:>7}", p.connections),
+        if let Some(note) = note {
+            lines.push(Line::from(Span::styled(
+                note,
                 Style::default().fg(ui.theme.muted),
-            ),
-        ]));
+            )));
+        }
     }
 }
 
@@ -313,7 +261,7 @@ pub(super) fn draw_net_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
 
 #[cfg(test)]
 mod tests {
-    use super::{busiest_interfaces, NetInfo};
+    use super::{busiest_interfaces, hidden_sockets_note, NetInfo};
 
     fn iface(name: &str, rx_bps: u64, tx_bps: u64) -> NetInfo {
         NetInfo {
@@ -338,6 +286,13 @@ mod tests {
             ["wg0", "eth0"]
         );
         assert_eq!(hidden, 1);
+    }
+
+    #[test]
+    fn hidden_sockets_note_only_speaks_when_something_is_hidden() {
+        assert_eq!(hidden_sockets_note(0), None);
+        assert!(hidden_sockets_note(1).unwrap().contains("1 socket held"));
+        assert!(hidden_sockets_note(43).unwrap().contains("43 sockets held"));
     }
 
     #[test]

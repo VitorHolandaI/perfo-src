@@ -207,6 +207,26 @@ pub(crate) fn sparkline(samples: &VecDeque<f32>, width: usize, fixed_max: Option
     }
 }
 
+/// Trend graph over the newest `width` samples, one sample per column.
+///
+/// `sparkline` averages the whole ring into `width` buckets, so a 120-sample
+/// ring drawn 10 columns wide makes each column a 12 refresh average that only
+/// changes once every 12 ticks, with bucket boundaries anchored to the ring's
+/// head so a full ring reshuffles every column at once. The narrow per-row
+/// rate graphs want the opposite: one refresh per column, so the line scrolls
+/// a step on every tick and a one second burst survives as a bar.
+pub(crate) fn sparkline_recent(
+    samples: &VecDeque<f32>,
+    width: usize,
+    fixed_max: Option<f32>,
+) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let recent: VecDeque<f32> = samples.iter().rev().take(width).rev().copied().collect();
+    sparkline(&recent, width, fixed_max)
+}
+
 /// NVMe/SATA temperature color: green <55°C, yellow 55-70, red >70
 /// (drives throttle around 80°C).
 pub(crate) fn temp_color(temp_c: Option<f32>, t: &Theme) -> Color {

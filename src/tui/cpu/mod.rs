@@ -5,6 +5,7 @@ mod io;
 mod net;
 mod overlay;
 mod panes;
+mod port_table;
 
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -318,6 +319,45 @@ mod tests {
     fn sparkline_auto_scales_rates_without_percent_saturation() {
         let q = VecDeque::from([0.0, 842_000_000.0, 0.0]);
         assert_eq!(sparkline(&q, 3, None), "⡀⣿⡀");
+    }
+
+    #[test]
+    fn sparkline_recent_shows_a_burst_the_ring_bucketing_dilutes() {
+        // 120-sample ring drawn 10 wide: each column averages 12 refreshes, so
+        // a one second burst is divided by 12 before it becomes a character.
+        let mut q: VecDeque<f32> = VecDeque::from(vec![0.0; 119]);
+        q.push_back(1200.0);
+        assert_eq!(
+            sparkline(&q, 10, Some(1200.0)),
+            "⡀⡀⡀⡀⡀⡀⡀⡀⡀⡀",
+            "bucketing the whole ring flattens the burst"
+        );
+        assert_eq!(sparkline_recent(&q, 10, Some(1200.0)), "⡀⡀⡀⡀⡀⡀⡀⡀⡀⣿");
+    }
+
+    #[test]
+    fn sparkline_recent_scrolls_one_column_per_sample() {
+        let mut q: VecDeque<f32> = VecDeque::from(vec![0.0; 120]);
+        q.pop_front();
+        q.push_back(1200.0);
+        let before = sparkline_recent(&q, 10, Some(1200.0));
+        q.pop_front();
+        q.push_back(0.0);
+        let after = sparkline_recent(&q, 10, Some(1200.0));
+        assert_eq!(before, "⡀⡀⡀⡀⡀⡀⡀⡀⡀⣿");
+        assert_eq!(after, "⡀⡀⡀⡀⡀⡀⡀⡀⣿⡀", "the burst must slide one column left");
+    }
+
+    #[test]
+    fn sparkline_recent_keeps_only_the_newest_samples() {
+        let mut q: VecDeque<f32> = VecDeque::from(vec![999.0; 117]);
+        for v in [0.0, 60.0, 120.0] {
+            q.push_back(v);
+        }
+        // Only the newest 3 are drawn; the 999s would saturate every column.
+        assert_eq!(sparkline_recent(&q, 3, Some(120.0)), "⡀⣇⣿");
+        assert_eq!(sparkline_recent(&q, 0, None), "");
+        assert_eq!(sparkline_recent(&VecDeque::new(), 4, None), "    ");
     }
 
     #[test]
