@@ -11,9 +11,14 @@ const STAT_READ_BUF: usize = 256;
 /// after the closing `)` of the comm field.
 pub(crate) const LAST_CPU_STAT_FIELD: usize = 36;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Default)]
 pub struct ProcessInfo {
     pub pid: u32,
+    /// Seconds since the epoch, from /proc/<pid>/stat field 22 plus btime
+    /// (sysinfo::Process::start_time). Together with the pid it identifies a
+    /// process across time: a pid on its own can be reused. sysinfo uses the
+    /// same field for exactly this check (sysinfo-0.39.6 linux/process.rs:273).
+    pub start_time: u64,
     /// Kernel process name, independent of command-line arguments.
     pub name: String,
     pub ppid: Option<u32>,

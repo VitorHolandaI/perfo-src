@@ -2,6 +2,40 @@
 
 use std::time::Instant;
 
+/// Process depths the picker cycles through. `0` means every process the
+/// snapshot carries, which on this class of machine is a few hundred.
+///
+/// htop has no top-N at all -- it draws the whole list and you scroll -- so
+/// the ceiling here is a size decision, not a fidelity one: the process table
+/// is ~99% of a recorded sample's bytes.
+pub const PROCESS_DEPTHS: [usize; 5] = [8, 30, 50, 100, 0];
+
+/// Picker rows: six subsystem checkboxes, the process-depth stepper, the
+/// duration stepper, then START and CANCEL.
+pub const DEPTH_ROW_IDX: usize = 6;
+pub const DURATION_ROW_IDX: usize = 7;
+pub const START_BUTTON_IDX: usize = 8;
+pub const CANCEL_BUTTON_IDX: usize = 9;
+pub const RECORD_MODAL_SLOTS: usize = 10;
+
+/// The depth a recording starts at, overridable so the widget and the TUI can
+/// be pointed at the same value from one place.
+pub fn default_process_depth() -> usize {
+    std::env::var("PERFO_RECORD_DEPTH")
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(30)
+}
+
+/// How a depth reads in the picker and in the saved recording's focus label.
+pub fn process_depth_label(depth: usize) -> String {
+    if depth == 0 {
+        "all".to_string()
+    } else {
+        depth.to_string()
+    }
+}
+
 use super::HistorySample;
 use super::HistoryState;
 
@@ -16,7 +50,14 @@ impl HistoryState {
         let dur = self.session_record_buffer.len() as u64;
         let val = serde_json::to_value(&self.session_record_buffer)
             .unwrap_or(serde_json::Value::Array(Vec::new()));
-        let focus = self.recording_mask.summary();
+        // The depth belongs in the focus label: two recordings of the same
+        // subsystems are not comparable if one kept 8 processes and the other
+        // kept every one.
+        let focus = format!(
+            "{} @{}p",
+            self.recording_mask.summary(),
+            process_depth_label(self.record_process_depth)
+        );
         match crate::recordings::save_session_data(val, dur, &focus) {
             Ok(meta) => {
                 let rec_id = meta.id.clone();
@@ -47,15 +88,33 @@ impl HistoryState {
     }
 
     pub fn record_modal_next(&mut self) {
-        self.record_modal_idx = (self.record_modal_idx + 1) % 8;
+        self.record_modal_idx = (self.record_modal_idx + 1) % RECORD_MODAL_SLOTS;
     }
 
     pub fn record_modal_prev(&mut self) {
         self.record_modal_idx = if self.record_modal_idx == 0 {
-            7
+            RECORD_MODAL_SLOTS - 1
         } else {
             self.record_modal_idx - 1
         };
+    }
+
+    /// Steps to the next depth preset, wrapping. A depth that came from
+    /// `PERFO_RECORD_DEPTH` and is not one of the presets enters the list at
+    /// the first preset above it, so cycling never silently loses it.
+    pub fn cycle_process_depth(&mut self, forward: bool) {
+        let current = PROCESS_DEPTHS
+            .iter()
+            .position(|d| *d == self.record_process_depth);
+        let next = match (current, forward) {
+            (Some(i), true) => (i + 1) % PROCESS_DEPTHS.len(),
+            (Some(i), false) => (i + PROCESS_DEPTHS.len() - 1) % PROCESS_DEPTHS.len(),
+            (None, _) => PROCESS_DEPTHS
+                .iter()
+                .position(|d| *d > self.record_process_depth)
+                .unwrap_or(0),
+        };
+        self.record_process_depth = PROCESS_DEPTHS[next];
     }
 
     pub fn toggle_record_mask_item(&mut self, idx: usize) {
@@ -74,13 +133,29 @@ impl HistoryState {
         }
     }
 
+    /// Starts recording for the picked duration. An invalid custom duration
+    /// keeps the picker open on the duration row and says what is wrong.
     pub fn start_session_recording(&mut self) {
+        let target = match self.chosen_record_samples() {
+            Ok(target) => target,
+            Err(e) => {
+                self.record_modal_idx = DURATION_ROW_IDX;
+                self.export_status = Some((e, Instant::now()));
+                return;
+            }
+        };
+        self.target_record_seconds = target;
         self.record_modal = false;
         self.is_session_recording = true;
         self.session_record_buffer.clear();
         let summary = self.recording_mask.summary();
         self.export_status = Some((
-            format!("Recording session [{}] started...", summary),
+            format!(
+                "Recording session [{} @{}p, {} min] started...",
+                summary,
+                process_depth_label(self.record_process_depth),
+                target / 60
+            ),
             Instant::now(),
         ));
     }

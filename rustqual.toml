@@ -1,0 +1,22 @@
+# Thresholds follow CLAUDE.md, this project's own code-style rules, rather than
+# the tool's defaults. Where CLAUDE.md is silent the default stands.
+#
+# Two knobs are deliberately looser than the tool ships with:
+#
+#   file_length        300 -> 500   CLAUDE.md: "Files: under 500 lines."
+#   max_function_lines  ~60 -> 80   CLAUDE.md: "Functions: 80 lines is the
+#                                   ceiling, not the target."
+#
+# CLAUDE.md also says, in the same rule, not to split a function when doing so
+# only scatters one continuous piece of reasoning — a match arm table or a
+# widget laid out row by row reads better top to bottom. The complexity knobs
+# below are left at the tool's defaults so those cases still surface; they are
+# judged one by one rather than silenced.
+
+max_suppression_ratio = 0.05
+
+[complexity]
+max_function_lines = 80
+
+[srp]
+file_length = 500

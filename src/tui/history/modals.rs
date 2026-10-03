@@ -8,6 +8,10 @@ use ratatui::{
     Frame,
 };
 
+use super::duration::{record_duration_label, RecordDuration, MAX_CUSTOM_MINUTES};
+use super::session::{
+    process_depth_label, CANCEL_BUTTON_IDX, DEPTH_ROW_IDX, DURATION_ROW_IDX, START_BUTTON_IDX,
+};
 use super::HistoryState;
 use crate::tui::cpu::Ui;
 
@@ -17,17 +21,13 @@ const MODAL_MARGIN: u16 = 4;
 const SESSIONS_MODAL_WIDTH: u16 = 82;
 const SESSIONS_MODAL_HEIGHT: u16 = 16;
 const RECORD_MODAL_WIDTH: u16 = 58;
-const RECORD_MODAL_HEIGHT: u16 = 13;
+const RECORD_MODAL_HEIGHT: u16 = 15;
 /// Below this the modal has no room for even one row, so it is not drawn.
 const MODAL_MIN_HEIGHT: u16 = 4;
 const MODAL_MIN_WIDTH: u16 = 20;
 /// The record picker needs a little more room than the session list.
 const RECORD_MODAL_MIN_HEIGHT: u16 = 6;
 const RECORD_MODAL_MIN_WIDTH: u16 = 24;
-/// Index of each button in the picker.
-const START_BUTTON_IDX: usize = 6;
-const CANCEL_BUTTON_IDX: usize = 7;
-
 /// Column widths of the saved-sessions list.
 const COL_SESSION_ID: u16 = 26;
 const COL_DURATION: u16 = 12;
@@ -228,6 +228,89 @@ fn subsystem_rows(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>)
     }
 }
 
+/// The process-depth stepper, between the checkboxes and the buttons.
+///
+/// It sits in the recording picker rather than in a settings screen because
+/// depth is what decides a recording's size: the process table is ~99% of a
+/// sample's bytes, so this row is where the cost of the recording you are
+/// about to start is actually set.
+fn depth_row(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
+    let is_selected = state.record_modal_idx == DEPTH_ROW_IDX;
+    let prefix = if is_selected { "> " } else { "  " };
+    let label_style = if is_selected {
+        Style::default()
+            .fg(ui.theme.fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ui.theme.fg)
+    };
+    lines.push(Line::from(vec![
+        Span::styled(
+            prefix,
+            if is_selected {
+                Style::default().fg(ui.theme.accent)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::styled("    d. Depth   ", label_style),
+        Span::styled(
+            format!("< {} >", process_depth_label(state.record_process_depth)),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" processes per sample", Style::default().fg(ui.theme.muted)),
+    ]));
+}
+
+/// The duration stepper: presets, then a custom field typed in minutes.
+///
+/// While "custom" is selected the value turns red until it is a valid number
+/// of minutes, so the reason START refuses is visible inside the picker and
+/// not only in the status line the modal covers.
+fn duration_row(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
+    let is_selected = state.record_modal_idx == DURATION_ROW_IDX;
+    let prefix = if is_selected { "> " } else { "  " };
+    let label_style = if is_selected {
+        Style::default()
+            .fg(ui.theme.fg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(ui.theme.fg)
+    };
+    let value_color = if state.chosen_record_samples().is_ok() {
+        ui.theme.accent
+    } else {
+        ui.theme.red
+    };
+    let hint = match state.record_duration {
+        RecordDuration::Custom => format!(" type 1-{} min", MAX_CUSTOM_MINUTES),
+        RecordDuration::Preset(_) => " then stop and save".to_string(),
+    };
+    lines.push(Line::from(vec![
+        Span::styled(
+            prefix,
+            if is_selected {
+                Style::default().fg(ui.theme.accent)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::styled("    t. Time    ", label_style),
+        Span::styled(
+            format!(
+                "< {} >",
+                record_duration_label(state.record_duration, &state.record_custom_minutes)
+            ),
+            Style::default()
+                .fg(value_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(hint, Style::default().fg(ui.theme.muted)),
+    ]));
+}
+
 /// The START / CANCEL buttons at the foot of the picker.
 fn record_modal_buttons(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'static>>) {
     let btn_start_selected = state.record_modal_idx == START_BUTTON_IDX;
@@ -261,7 +344,7 @@ fn record_modal_buttons(state: &HistoryState, ui: &Ui, lines: &mut Vec<Line<'sta
 
     lines.push(Line::from(""));
     lines.push(Line::from(vec![Span::styled(
-        "  Space/Enter: Toggle  1-6: Direct Toggle  Esc: Cancel",
+        "  Enter: Toggle  1-6: Subsys  d: Depth  t: Time  Esc",
         Style::default().fg(ui.theme.muted),
     )]));
 }
@@ -300,6 +383,8 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
 
     let mut lines = Vec::new();
     subsystem_rows(state, ui, &mut lines);
+    depth_row(state, ui, &mut lines);
+    duration_row(state, ui, &mut lines);
     record_modal_buttons(state, ui, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
 }

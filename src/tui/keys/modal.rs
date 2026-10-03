@@ -3,10 +3,13 @@
 
 use crossterm::event::KeyCode;
 
-/// The recording picker lists six subsystems, then the two buttons.
+/// The recording picker lists six subsystems, the depth and duration
+/// steppers, then the two buttons.
 const LAST_SUBSYSTEM_IDX: usize = 5;
-const START_BUTTON_IDX: usize = 6;
-const CANCEL_BUTTON_IDX: usize = 7;
+use crate::tui::history::duration::RecordDuration;
+use crate::tui::history::session::{
+    CANCEL_BUTTON_IDX, DEPTH_ROW_IDX, DURATION_ROW_IDX, START_BUTTON_IDX,
+};
 
 use super::super::{State, HELP_LAST_PAGE};
 use super::{send_signal, toggle_lang};
@@ -37,7 +40,27 @@ pub(super) fn handle_sessions_modal_key(state: &mut State, code: KeyCode) {
     }
 }
 
+/// Digits and Backspace edit the custom duration while its field is focused.
+/// Returns whether the key was spent there, so `1`-`6` only toggle subsystems
+/// when the user is not typing minutes.
+fn edit_custom_duration(state: &mut State, code: KeyCode) -> bool {
+    let typing = state.history.record_modal_idx == DURATION_ROW_IDX
+        && state.history.record_duration == RecordDuration::Custom;
+    if !typing {
+        return false;
+    }
+    match code {
+        KeyCode::Char(c) if c.is_ascii_digit() => state.history.push_custom_minutes_digit(c),
+        KeyCode::Backspace => state.history.pop_custom_minutes_digit(),
+        _ => return false,
+    }
+    true
+}
+
 pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
+    if edit_custom_duration(state, code) {
+        return;
+    }
     match code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
             state.history.close_record_modal();
@@ -52,14 +75,30 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             state.history.record_modal_next();
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if state.history.record_modal_idx == CANCEL_BUTTON_IDX {
+            if state.history.record_modal_idx == DEPTH_ROW_IDX {
+                state.history.cycle_process_depth(false);
+            } else if state.history.record_modal_idx == DURATION_ROW_IDX {
+                state.history.cycle_record_duration(false);
+            } else if state.history.record_modal_idx == CANCEL_BUTTON_IDX {
                 state.history.record_modal_idx = START_BUTTON_IDX;
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if state.history.record_modal_idx == START_BUTTON_IDX {
+            if state.history.record_modal_idx == DEPTH_ROW_IDX {
+                state.history.cycle_process_depth(true);
+            } else if state.history.record_modal_idx == DURATION_ROW_IDX {
+                state.history.cycle_record_duration(true);
+            } else if state.history.record_modal_idx == START_BUTTON_IDX {
                 state.history.record_modal_idx = CANCEL_BUTTON_IDX;
             }
+        }
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            state.history.record_modal_idx = DEPTH_ROW_IDX;
+            state.history.cycle_process_depth(true);
+        }
+        KeyCode::Char('t') | KeyCode::Char('T') => {
+            state.history.record_modal_idx = DURATION_ROW_IDX;
+            state.history.cycle_record_duration(true);
         }
         KeyCode::Char('1') => state.history.toggle_record_mask_item(0),
         KeyCode::Char('2') => state.history.toggle_record_mask_item(1),
@@ -71,16 +110,20 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
             0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
-            6 => state.history.start_session_recording(),
-            7 => state.history.close_record_modal(),
+            DEPTH_ROW_IDX => state.history.cycle_process_depth(true),
+            DURATION_ROW_IDX => state.history.cycle_record_duration(true),
+            START_BUTTON_IDX => state.history.start_session_recording(),
+            CANCEL_BUTTON_IDX => state.history.close_record_modal(),
             _ => {}
         },
         KeyCode::Enter => match state.history.record_modal_idx {
             0..=LAST_SUBSYSTEM_IDX => state
                 .history
                 .toggle_record_mask_item(state.history.record_modal_idx),
-            6 => state.history.start_session_recording(),
-            7 => state.history.close_record_modal(),
+            DEPTH_ROW_IDX => state.history.cycle_process_depth(true),
+            DURATION_ROW_IDX => state.history.cycle_record_duration(true),
+            START_BUTTON_IDX => state.history.start_session_recording(),
+            CANCEL_BUTTON_IDX => state.history.close_record_modal(),
             _ => {}
         },
         _ => {}
@@ -293,5 +336,80 @@ mod tests {
             None,
         );
         assert!(!state.history.is_session_recording);
+    }
+
+    /// Presses each key in `keys` with no modifiers.
+    fn press_record_keys(state: &mut State, keys: &[KeyCode]) {
+        for code in keys {
+            handle_key(state, &[], *code, KeyModifiers::empty(), None);
+        }
+    }
+
+    /// `t` walks the presets to "custom"; there digits type minutes instead of
+    /// toggling subsystems, and START records for what was typed.
+    #[test]
+    fn record_picker_types_a_custom_duration() {
+        let mut state = State {
+            fullscreen: true,
+            pane: Pane::History,
+            ..Default::default()
+        };
+        press_record_keys(&mut state, &[KeyCode::Char('r')]);
+        press_record_keys(&mut state, &[KeyCode::Char('t'); 4]);
+        assert_eq!(state.history.record_duration, RecordDuration::Custom);
+        assert_eq!(state.history.record_modal_idx, DURATION_ROW_IDX);
+
+        press_record_keys(
+            &mut state,
+            &[
+                KeyCode::Char('2'),
+                KeyCode::Char('5'),
+                KeyCode::Char('9'),
+                KeyCode::Backspace,
+            ],
+        );
+        assert_eq!(state.history.record_custom_minutes, "25");
+        assert!(
+            state.history.recording_mask.mem,
+            "'2' typed minutes, it must not toggle Memory"
+        );
+
+        press_record_keys(&mut state, &[KeyCode::Char('r')]);
+        assert!(state.history.is_session_recording);
+        assert_eq!(state.history.target_record_seconds, 25 * 60);
+    }
+
+    /// An empty custom field must not start a recording that stops at 0 samples.
+    #[test]
+    fn record_picker_refuses_an_empty_custom_duration() {
+        let mut state = State {
+            fullscreen: true,
+            pane: Pane::History,
+            ..Default::default()
+        };
+        press_record_keys(&mut state, &[KeyCode::Char('r')]);
+        state.history.record_duration = RecordDuration::Custom;
+        state.history.record_modal_idx = START_BUTTON_IDX;
+
+        press_record_keys(&mut state, &[KeyCode::Enter]);
+        assert!(!state.history.is_session_recording);
+        assert!(state.history.record_modal);
+        assert_eq!(state.history.record_modal_idx, DURATION_ROW_IDX);
+    }
+
+    /// Left/Right step the duration row like they step depth.
+    #[test]
+    fn record_picker_arrows_step_the_duration_presets() {
+        let mut state = State {
+            fullscreen: true,
+            pane: Pane::History,
+            ..Default::default()
+        };
+        press_record_keys(&mut state, &[KeyCode::Char('r')]);
+        state.history.record_modal_idx = DURATION_ROW_IDX;
+        press_record_keys(&mut state, &[KeyCode::Right, KeyCode::Right]);
+        assert_eq!(state.history.record_duration, RecordDuration::Preset(2));
+        press_record_keys(&mut state, &[KeyCode::Left]);
+        assert_eq!(state.history.record_duration, RecordDuration::Preset(1));
     }
 }

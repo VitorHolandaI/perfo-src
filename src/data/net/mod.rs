@@ -1,7 +1,9 @@
 //! Network interface, socket and per-process traffic collection.
 
+mod inet_diag;
 mod monitor;
 mod parse;
+mod ports;
 mod sockets;
 
 pub use monitor::NetMonitor;
@@ -9,7 +11,15 @@ pub use monitor::NetMonitor;
 use serde::Serialize;
 use std::collections::VecDeque;
 
-#[derive(Clone, Serialize)]
+/// Push into a capped ring buffer, dropping the oldest sample when full.
+pub(super) fn push_capped(q: &mut VecDeque<f32>, v: f32, cap: usize) {
+    q.push_back(v);
+    if q.len() > cap {
+        q.pop_front();
+    }
+}
+
+#[derive(Clone, Serialize, Default)]
 pub struct NetInfo {
     pub name: String,
     pub rx_bps: u64,
@@ -53,6 +63,11 @@ pub struct NetSnapshot {
     pub proc_net: Vec<ProcNet>,
     /// Listening ports with the serving process.
     pub listening: Vec<ListeningPort>,
+    /// Ports carrying TCP traffic, listening or not.
+    pub ports: Vec<PortTraffic>,
+    /// IP sockets held by processes this user cannot inspect, so the viewer
+    /// can tell a quiet machine from an unprivileged view of a busy one.
+    pub unowned_sockets: u32,
 }
 
 /// Per-process socket counts (TCP established/listening, UDP) and network byte transfer.
@@ -68,6 +83,38 @@ pub struct ProcNet {
     pub tx_bps: u64,
 }
 
+/// Which side of a connection the charged port sits on.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PortSide {
+    /// A port this machine listens on: it names the local service.
+    Local,
+    /// The peer's port on an outbound connection, where the local port is
+    /// ephemeral and says nothing.
+    #[default]
+    Remote,
+}
+
+/// Bytes charged to one port. TCP only: the kernel keeps no cumulative byte
+/// counter for UDP sockets, so QUIC, DNS and WireGuard are not counted here.
+#[derive(Clone, Serialize, Default, PartialEq, Debug)]
+pub struct PortTraffic {
+    pub port: u16,
+    pub side: PortSide,
+    /// Bytes charged since the monitor started.
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub rx_bps: u64,
+    pub tx_bps: u64,
+    /// Sockets currently open on this port.
+    pub connections: u32,
+    /// rx/tx rate rings (newest last) for the port sparklines.
+    #[serde(skip)]
+    pub rx_hist: VecDeque<f32>,
+    #[serde(skip)]
+    pub tx_hist: VecDeque<f32>,
+}
+
 /// A listening port with the process serving it.
 #[derive(Clone, Serialize)]
 pub struct ListeningPort {
@@ -79,8 +126,13 @@ pub struct ListeningPort {
 
 #[cfg(test)]
 mod tests {
+    use super::inet_diag::{inet_diag_sample, SocketSample};
     use super::parse::{netdev_from, tcp_stats_from};
+    use super::ports::{charged_port, counter_delta, PortTrafficTracker};
     use super::sockets::{base_proto, socket_line, Sock};
+    use super::PortSide;
+
+    use std::collections::{HashMap, HashSet};
 
     use crate::data::disk::rate;
 
@@ -135,6 +187,202 @@ mod tests {
         assert_eq!(socket_line("garbage", false), None);
     }
 
+    /// One inet_diag reply message: the 72-byte header followed by a
+    /// TCP_INFO rtattr holding the byte counters.
+    fn diag_msg(inode: u32, sport: u16, dport: u16, rx: u64, tx: u64) -> Vec<u8> {
+        diag_msg_to(inode, sport, dport, rx, tx, [93, 184, 216, 34])
+    }
+
+    /// The same message, with the peer's IPv4 address spelled out.
+    fn diag_msg_to(inode: u32, sport: u16, dport: u16, rx: u64, tx: u64, peer: [u8; 4]) -> Vec<u8> {
+        let mut info = vec![0u8; 208];
+        info[128..136].copy_from_slice(&rx.to_ne_bytes());
+        info[200..208].copy_from_slice(&tx.to_ne_bytes());
+
+        let mut msg = vec![0u8; 72];
+        msg[0] = libc::AF_INET as u8;
+        msg[24..28].copy_from_slice(&peer);
+        msg[4..6].copy_from_slice(&sport.to_be_bytes());
+        msg[6..8].copy_from_slice(&dport.to_be_bytes());
+        msg[68..72].copy_from_slice(&inode.to_ne_bytes());
+
+        msg.extend_from_slice(&((info.len() + 4) as u16).to_ne_bytes());
+        msg.extend_from_slice(&2u16.to_ne_bytes()); // INET_DIAG_INFO
+        msg.extend_from_slice(&info);
+        msg
+    }
+
+    #[test]
+    fn inet_diag_sample_reads_ports_as_big_endian() {
+        let sample = inet_diag_sample(&diag_msg(4242, 54321, 443, 900, 100)).unwrap();
+        assert_eq!(sample.inode, 4242);
+        assert_eq!(sample.local_port, 54321);
+        assert_eq!(sample.remote_port, 443);
+        assert_eq!(sample.rx_bytes, 900);
+        assert_eq!(sample.tx_bytes, 100);
+    }
+
+    #[test]
+    fn inet_diag_sample_drops_unattached_sockets() {
+        assert!(inet_diag_sample(&diag_msg(0, 1, 2, 3, 4)).is_none());
+    }
+
+    fn sample(inode: u64, local_port: u16, remote_port: u16, rx: u64, tx: u64) -> SocketSample {
+        SocketSample {
+            inode,
+            local_port,
+            remote_port,
+            remote_is_loopback: false,
+            rx_bytes: rx,
+            tx_bytes: tx,
+        }
+    }
+
+    #[test]
+    fn charged_port_names_the_service_on_an_inbound_socket() {
+        let listening = HashSet::from([22u16]);
+        let inbound = sample(1, 22, 51000, 0, 0);
+        assert_eq!(
+            charged_port(&inbound, &listening),
+            Some((22, PortSide::Local))
+        );
+    }
+
+    #[test]
+    fn charged_port_names_the_peer_on_an_outbound_socket() {
+        let listening = HashSet::from([22u16]);
+        let outbound = sample(1, 54321, 443, 0, 0);
+        assert_eq!(
+            charged_port(&outbound, &listening),
+            Some((443, PortSide::Remote))
+        );
+    }
+
+    #[test]
+    fn inet_diag_sample_marks_a_loopback_peer() {
+        let remote = inet_diag_sample(&diag_msg(1, 40000, 443, 0, 0)).unwrap();
+        assert!(!remote.remote_is_loopback);
+        let local = inet_diag_sample(&diag_msg_to(2, 40000, 8080, 0, 0, [127, 0, 0, 1])).unwrap();
+        assert!(local.remote_is_loopback);
+    }
+
+    #[test]
+    fn charged_port_skips_the_client_end_of_a_loopback_connection() {
+        // Both ends of a loopback connection are in the dump. Charging both
+        // would count the same bytes twice on the same port number.
+        let listening = HashSet::from([8080u16]);
+        let client = SocketSample {
+            remote_is_loopback: true,
+            ..sample(1, 54321, 8080, 900, 100)
+        };
+        assert_eq!(charged_port(&client, &listening), None);
+
+        let server = sample(2, 8080, 54321, 100, 900);
+        assert_eq!(
+            charged_port(&server, &listening),
+            Some((8080, PortSide::Local))
+        );
+    }
+
+    #[test]
+    fn charged_port_keeps_a_remote_peer_that_reuses_a_local_port_number() {
+        // A remote host answering on 8080 is not the local 8080 service.
+        let listening = HashSet::from([8080u16]);
+        let outbound = sample(1, 54321, 8080, 0, 0);
+        assert_eq!(
+            charged_port(&outbound, &listening),
+            Some((8080, PortSide::Remote))
+        );
+    }
+
+    #[test]
+    fn counter_delta_counts_a_first_sighting_in_full() {
+        // A socket that opened and finished between two refreshes is still
+        // seen once, and everything it moved has to land on its port.
+        assert_eq!(counter_delta(0, 5000), 5000);
+    }
+
+    #[test]
+    fn counter_delta_treats_a_backwards_counter_as_a_reused_inode() {
+        assert_eq!(counter_delta(9000, 120), 120);
+    }
+
+    fn one(samples: Vec<SocketSample>) -> HashMap<u64, SocketSample> {
+        samples.into_iter().map(|s| (s.inode, s)).collect()
+    }
+
+    #[test]
+    fn tracker_accumulates_across_refreshes() {
+        let mut tracker = PortTrafficTracker::default();
+        let listening = HashSet::new();
+
+        tracker.observe(
+            &one(vec![sample(7, 40000, 443, 1000, 200)]),
+            &listening,
+            1.0,
+        );
+        let rows = tracker.observe(
+            &one(vec![sample(7, 40000, 443, 2500, 600)]),
+            &listening,
+            1.0,
+        );
+
+        let row = rows.iter().find(|r| r.port == 443).expect("port 443 row");
+        assert_eq!(row.rx_bytes, 2500);
+        assert_eq!(row.tx_bytes, 600);
+        assert_eq!(row.rx_bps, 1500);
+        assert_eq!(row.tx_bps, 400);
+        assert_eq!(row.connections, 1);
+    }
+
+    #[test]
+    fn tracker_rings_grow_one_sample_per_refresh() {
+        let mut tracker = PortTrafficTracker::default();
+        let listening = HashSet::new();
+
+        tracker.observe(&one(vec![sample(7, 40000, 443, 1000, 0)]), &listening, 1.0);
+        let rows = tracker.observe(&one(vec![sample(7, 40000, 443, 3000, 0)]), &listening, 1.0);
+
+        let row = rows.iter().find(|r| r.port == 443).expect("port 443 row");
+        assert_eq!(row.rx_hist.len(), 2);
+        // The ring carries rates, so the newest sample is the last delta.
+        assert_eq!(row.rx_hist.back().copied(), Some(2000.0));
+        assert_eq!(row.tx_hist.len(), 2);
+    }
+
+    #[test]
+    fn tracker_keeps_a_closed_socket_total_and_drops_its_connection() {
+        let mut tracker = PortTrafficTracker::default();
+        let listening = HashSet::new();
+
+        tracker.observe(&one(vec![sample(7, 40000, 443, 3000, 0)]), &listening, 1.0);
+        let rows = tracker.observe(&one(vec![]), &listening, 1.0);
+
+        let row = rows.iter().find(|r| r.port == 443).expect("port 443 row");
+        assert_eq!(row.rx_bytes, 3000);
+        assert_eq!(row.rx_bps, 0);
+        assert_eq!(row.connections, 0);
+    }
+
+    #[test]
+    fn tracker_sums_every_socket_charged_to_the_same_port() {
+        let mut tracker = PortTrafficTracker::default();
+        let listening = HashSet::new();
+        let rows = tracker.observe(
+            &one(vec![
+                sample(1, 40000, 443, 100, 10),
+                sample(2, 40001, 443, 400, 40),
+            ]),
+            &listening,
+            1.0,
+        );
+
+        let row = rows.iter().find(|r| r.port == 443).expect("port 443 row");
+        assert_eq!(row.rx_bytes, 500);
+        assert_eq!(row.tx_bytes, 50);
+        assert_eq!(row.connections, 2);
+    }
+
     #[test]
     fn rate_zero_elapsed_is_safe() {
         assert_eq!(rate(100, 0.0), 0);
@@ -146,5 +394,57 @@ mod tests {
         assert_eq!(base_proto("tcp"), "tcp");
         assert_eq!(base_proto("tcp6"), "tcp");
         assert_eq!(base_proto("udp6"), "udp");
+    }
+
+    #[test]
+    fn usernames_by_uid_reads_the_passwd_columns() {
+        let raw = "root:x:0:0::/root:/usr/bin/bash\n\
+                   avahi:x:969:969:Avahi mDNS/DNS-SD daemon:/:/usr/bin/nologin\n\
+                   # a comment\n\
+                   broken-line-without-enough-colons\n\
+                   zerotier-one:x:948:948:ZeroTier One user:/:/usr/bin/nologin\n";
+        let names = super::sockets::usernames_by_uid(raw);
+        assert_eq!(names.get(&0).map(String::as_str), Some("root"));
+        assert_eq!(names.get(&969).map(String::as_str), Some("avahi"));
+        assert_eq!(names.get(&948).map(String::as_str), Some("zerotier-one"));
+        assert_eq!(names.len(), 3, "malformed lines must be skipped");
+    }
+
+    #[test]
+    fn socket_owner_label_names_the_users_behind_an_unreadable_pid() {
+        let mut names = std::collections::HashMap::new();
+        names.insert(0u32, "root".to_string());
+        names.insert(974u32, "systemd-resolve".to_string());
+        // Port 53 carries sockets from two different users at once.
+        assert_eq!(
+            super::sockets::socket_owner_label(&[0, 974], &names),
+            "(root, systemd-resolve)"
+        );
+        // A uid with no passwd entry keeps the number, so nothing is invented.
+        assert_eq!(
+            super::sockets::socket_owner_label(&[31337], &names),
+            "(uid 31337)"
+        );
+    }
+
+    #[test]
+    fn unowned_sockets_counts_what_the_process_table_cannot_show() {
+        use super::sockets::unowned_sockets;
+        use std::collections::HashMap;
+        let inodes = HashMap::from([
+            (10u64, Sock::TcpEst),
+            (11u64, Sock::TcpListen),
+            (12u64, Sock::Udp),
+            (13u64, Sock::TcpEst),
+        ]);
+        // Only inode 10 belongs to a process whose /proc/<pid>/fd we can read.
+        let owners = HashMap::from([(10u64, 4278u32)]);
+        assert_eq!(unowned_sockets(&inodes, &owners), 3);
+
+        // An owner we hold for an inode that is gone from /proc/net must not
+        // push the count negative.
+        let stale = HashMap::from([(10u64, 4278u32), (99u64, 1u32)]);
+        assert_eq!(unowned_sockets(&inodes, &stale), 3);
+        assert_eq!(unowned_sockets(&HashMap::new(), &owners), 0);
     }
 }

@@ -91,6 +91,27 @@ write-capable publication job.
 The dedicated `.github/workflows/security.yml` runs the advisory and policy
 checks.
 
+## Port-level traffic
+
+Byte counters come from `tcp_info` in the sock_diag netlink dump, which the
+per-process socket view already collects; the port table reuses that one dump
+rather than taking its own. Two consequences shape what the table can say.
+
+The counters live and die with each socket, so per-port totals are accumulated
+across refreshes instead of read from the kernel. A socket is counted in full
+the first time it is seen, which keeps a short connection that opened and
+closed between two refreshes from vanishing; a connection never sampled at all
+cannot be recovered. A counter that moves backwards means the kernel reused
+the inode, and the current value is the new socket's whole history.
+
+Both ends of a loopback connection appear in the dump as separate sockets. The
+client end of a connection to a local service is skipped, because the serving
+socket reports the same bytes and charging both would double the port's total.
+
+Because the totals outlive their sockets, the tracked set only grows. Past 256
+ports the quietest are forgotten, while any port holding an open socket is
+kept regardless of how little it has moved.
+
 ## Current gaps
 
 - Fake hwmon fixture trees covering multiple notebook shapes are not yet in
@@ -100,3 +121,8 @@ checks.
   and power fields remain backend-dependent.
 - QML validation currently checks manifest references; a full Quickshell runtime
   test is not available on the CI runner.
+- Port traffic is TCP only. `UDP_DIAG` reports queue depth rather than bytes
+  moved, so QUIC, DNS and WireGuard carry no byte counters and never appear in
+  the port table. The pane header says so rather than implying a total.
+- The port table exists in the TUI only; the `ports` field ships in the JSON
+  snapshot, but the Quickshell widget does not draw it yet.

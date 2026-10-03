@@ -48,6 +48,7 @@ pub struct RecordingPayload {
     pub samples: Value,
 }
 
+// qual:allow(test_quality, untested) reason: "subcommand router; every branch it calls is tested on its own"
 pub fn dispatch(subcmd: &str, args: &[String]) -> io::Result<()> {
     match subcmd {
         "list" => list_recordings(),

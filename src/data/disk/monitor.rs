@@ -52,19 +52,10 @@ impl DiskMonitor {
         self.refresh_with_details(false);
     }
 
-    fn refresh_with_details(&mut self, details: bool) {
-        // refresh(false) refreshes everything, including the io_usage deltas
-        // that Disk::usage() reports as "since the last refresh".
-        self.disks.refresh(false);
-        let now = Instant::now();
-        let elapsed = self
-            .last_refresh
-            .map(|t| t.elapsed().as_secs_f32())
-            .unwrap_or(0.0);
-        let raw = std::fs::read_to_string("/proc/diskstats").unwrap_or_default();
-        let cur = diskstats_from(&raw);
-        self.usage_rates = self
-            .disks
+    /// Read/write byte rates as sysinfo reports them, keyed by bare device
+    /// name so they line up with the diskstats table.
+    fn sysinfo_usage_rates(&self, elapsed: f32) -> HashMap<String, (u64, u64)> {
+        self.disks
             .list()
             .iter()
             .map(|disk| {
@@ -79,26 +70,72 @@ impl DiskMonitor {
                     ),
                 )
             })
-            .collect();
-        // device-mapper devices show as dm-N; resolve to the friendly name
-        // (e.g. dm-0 -> "root") so they match sysinfo's /dev/mapper/root.
-        let mut dm_aliases = HashMap::new();
-        let cur: HashMap<String, RawCounters> = cur
+            .collect()
+    }
+
+    /// Rekeys device-mapper entries from `dm-N` to their friendly name, so
+    /// they match what sysinfo calls them (`/dev/mapper/root` -> `root`).
+    ///
+    /// Returns the rekeyed counters and the reverse map, which temperature
+    /// lookups need: only `dm-N` exists under /sys/block.
+    fn resolve_dm_names(
+        counters: HashMap<String, RawCounters>,
+    ) -> (HashMap<String, RawCounters>, HashMap<String, String>) {
+        let mut aliases = HashMap::new();
+        let rekeyed = counters
             .into_iter()
             .map(|(dev, counters)| {
-                let key = if let Some(n) = dev.strip_prefix("dm-") {
-                    let friendly = std::fs::read_to_string(format!("/sys/block/dm-{n}/dm/name"))
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or(dev.clone());
-                    dm_aliases.insert(friendly.clone(), dev.clone());
-                    friendly
-                } else {
-                    dev.clone()
+                let Some(n) = dev.strip_prefix("dm-") else {
+                    return (dev, counters);
                 };
-                (key, counters)
+                let friendly = std::fs::read_to_string(format!("/sys/block/dm-{n}/dm/name"))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| dev.clone());
+                aliases.insert(friendly.clone(), dev);
+                (friendly, counters)
             })
             .collect();
+        (rekeyed, aliases)
+    }
+
+    /// Advances the per-device sparkline rings from the diskstats deltas.
+    ///
+    /// These come from diskstats rather than sysinfo because sysinfo's usage
+    /// lags a refresh behind the table columns beside them.
+    fn push_history(&mut self, cur: &HashMap<String, RawCounters>, elapsed: f32) {
+        let seconds = elapsed.max(crate::units::MIN_ELAPSED_SECS);
+        for (name, c) in cur {
+            let Some(p) = self.prev_stats.get(name) else {
+                continue;
+            };
+            let rb = d_sectors(p.sectors_read, c.sectors_read) * BYTES_PER_SECTOR;
+            let wb = d_sectors(p.sectors_written, c.sectors_written) * BYTES_PER_SECTOR;
+            let (rq, wq) = self
+                .history
+                .entry(name.clone())
+                .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
+            push_capped(rq, rb as f32 / seconds, HISTORY_SAMPLES);
+            push_capped(wq, wb as f32 / seconds, HISTORY_SAMPLES);
+        }
+        self.history.retain(|name, _| cur.contains_key(name));
+    }
+
+    fn refresh_with_details(&mut self, details: bool) {
+        // refresh(false) refreshes everything, including the io_usage deltas
+        // that Disk::usage() reports as "since the last refresh".
+        self.disks.refresh(false);
+        let now = Instant::now();
+        let elapsed = self
+            .last_refresh
+            .map(|t| t.elapsed().as_secs_f32())
+            .unwrap_or(0.0);
+
+        self.usage_rates = self.sysinfo_usage_rates(elapsed);
+
+        let raw = std::fs::read_to_string("/proc/diskstats").unwrap_or_default();
+        let (cur, dm_aliases) = Self::resolve_dm_names(diskstats_from(&raw));
         self.dm_aliases = dm_aliases;
+
         self.io_stats = if details {
             cur.iter()
                 .filter_map(|(name, c)| {
@@ -110,36 +147,16 @@ impl DiskMonitor {
         } else {
             HashMap::new()
         };
-        // Byte-rate history for the sparklines, from the same diskstats
-        // deltas as the table columns (not sysinfo, which lags a refresh).
+
         if details {
-            for (name, c) in cur.iter() {
-                if let Some(p) = self.prev_stats.get(name) {
-                    let rb = d_sectors(p.sectors_read, c.sectors_read) * BYTES_PER_SECTOR;
-                    let wb = d_sectors(p.sectors_written, c.sectors_written) * BYTES_PER_SECTOR;
-                    let (rq, wq) = self
-                        .history
-                        .entry(name.clone())
-                        .or_insert_with(|| (VecDeque::new(), VecDeque::new()));
-                    push_capped(
-                        rq,
-                        rb as f32 / elapsed.max(crate::units::MIN_ELAPSED_SECS),
-                        HISTORY_SAMPLES,
-                    );
-                    push_capped(
-                        wq,
-                        wb as f32 / elapsed.max(crate::units::MIN_ELAPSED_SECS),
-                        HISTORY_SAMPLES,
-                    );
-                }
-            }
-            self.history.retain(|name, _| cur.contains_key(name));
+            self.push_history(&cur, elapsed);
             let (p10, p60, p300) = psi::some("io");
             self.io_pressure = [p10, p60, p300];
         } else {
             self.history.clear();
             self.io_pressure = [0.0; crate::units::PSI_WINDOWS];
         }
+
         self.prev_stats = cur;
         self.last_refresh = Some(now);
     }

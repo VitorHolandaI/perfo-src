@@ -7,6 +7,7 @@ use std::path::Path;
 
 use super::paths::get_home_dir;
 
+// qual:allow(test_quality, untested) reason: "consumes the process's real stdin; the payload shape is covered by the store tests"
 pub fn export_from_stdin(basename: &str) -> io::Result<(String, String)> {
     let mut buf = String::new();
     let n = io::stdin().read_line(&mut buf)?;

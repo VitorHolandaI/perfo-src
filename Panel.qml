@@ -21,6 +21,31 @@ Panel {
   property alias historyPageComp: historyPageComp
   readonly property bool isSessionRecording: (typeof historyPageComp !== "undefined" && historyPageComp) ? historyPageComp.isSessionRecording : false
 
+  // How many processes a saved recording carries per sample. Same knob and
+  // same env var as the TUI's recording picker (src/tui/history/session.rs,
+  // default_process_depth), so a widget recording and a TUI recording of the
+  // same machine replay at the same depth. 0 means every process the
+  // collector sends.
+  readonly property int recordProcessDepth: {
+    var override = parseInt(Quickshell.env("PERFO_RECORD_DEPTH"))
+    return (!isNaN(override) && override >= 0) ? override : 30
+  }
+  // The live buffer stays shallow: it only feeds this panel's sparklines and
+  // is kept for up to maxHistorySamples ticks.
+  readonly property int liveProcessDepth: 8
+
+  // A process merged in for its GPU or its sockets is outside the top-N
+  // slice, so its start time has to come from the full snapshot. Mirrors
+  // merge_gpu_processes / merge_socket_counters in src/tui/history/record.rs.
+  function startTimeOf(pid) {
+    var all = root.snapshot && root.snapshot.processes ? root.snapshot.processes : []
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].pid === pid)
+        return Number(all[i].start_time) || 0
+    }
+    return 0
+  }
+
   onSnapshotChanged: root.recordHistorySample()
 
   onPageChanged: {
@@ -826,7 +851,13 @@ Panel {
     var procs = []
     if (root.snapshot.processes) {
       var raw = root.snapshot.processes
-      for (var i = 0; i < Math.min(raw.length, 8); i++) {
+      // A saved recording has to carry the same process depth the TUI's own
+      // recorder writes, or replaying a widget recording in the TUI shows a
+      // table 8 rows deep and looks broken.
+      var procLimit = root.isSessionRecording ? root.recordProcessDepth : root.liveProcessDepth
+      if (procLimit === 0)
+        procLimit = raw.length
+      for (var i = 0; i < Math.min(raw.length, procLimit); i++) {
         var p = raw[i]
         var gpuMatch = null
         for (var gi = 0; gi < gpuProcs.length; gi++) {
@@ -846,6 +877,10 @@ Panel {
         if (cmdStr.length > 160) cmdStr = cmdStr.substring(0, 159) + "…"
         procs.push({
           pid: p.pid,
+          // A pid alone does not identify a process across time; the TUI's
+          // replay pairs it with the start time to tell "still running" from
+          // "pid reused". See src/tui/history/traceable.rs.
+          start_time: Number(p.start_time) || 0,
           name: p.name || "",
           cmd: cmdStr,
           cpu_percent: Number(p.cpu_percent) || 0,
@@ -879,6 +914,7 @@ Panel {
       if (!alreadyIn) {
         procs.push({
           pid: gpItem.pid,
+          start_time: root.startTimeOf(gpItem.pid),
           name: "",
           cmd: "",
           cpu_percent: 0,
@@ -921,6 +957,7 @@ Panel {
         }
         procs.push({
           pid: npSock.pid,
+          start_time: root.startTimeOf(npSock.pid),
           name: matchedCmd,
           cmd: matchedCmd,
           cpu_percent: 0,

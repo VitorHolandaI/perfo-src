@@ -8,8 +8,27 @@ use ratatui::{
     Frame,
 };
 
-use super::format::{block, human_bytes, pipe, short_bytes, sparkline, truncate};
+use crate::data::net::NetInfo;
+
+use super::format::{block, human_bytes, pipe, short_bytes, sparkline_recent, truncate};
+use super::port_table::port_traffic_rows;
 use super::{Pane, Ui};
+
+/// How many interface rows the full pane draws before summarising the rest.
+const MAX_INTERFACE_ROWS: usize = 8;
+
+/// The interfaces worth a row, busiest first, and how many were left out.
+///
+/// A machine running containers has dozens of idle `veth` and bridge links.
+/// Drawing them all fills the pane and pushes the tables underneath off the
+/// screen, so only the ones actually moving bytes earn a row.
+fn busiest_interfaces(ifaces: &[NetInfo], max: usize) -> (Vec<&NetInfo>, usize) {
+    let mut ranked: Vec<&NetInfo> = ifaces.iter().collect();
+    ranked.sort_by_key(|i| std::cmp::Reverse(i.rx_bps + i.tx_bps));
+    let hidden = ranked.len().saturating_sub(max);
+    ranked.truncate(max);
+    (ranked, hidden)
+}
 
 /// Full-pane network view (menu 3 -> NET): per-interface rx/tx rates and
 /// packet/error/drop counters plus TCP retransmissions and connections.
@@ -19,7 +38,8 @@ use super::{Pane, Ui};
 /// every `│` lines up across the three rows.
 /// One row per interface: link state, speed and current rates.
 fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
-    for i in &ui.snap.net.ifaces {
+    let (shown, hidden) = busiest_interfaces(&ui.snap.net.ifaces, MAX_INTERFACE_ROWS);
+    for i in shown {
         let link = match (i.link_mbps, i.link_up) {
             (Some(m), true) => format!("{m}M up"),
             (Some(m), false) => format!("{m}M down"),
@@ -42,7 +62,7 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
-                    sparkline(&i.rx_hist, 10, None),
+                    sparkline_recent(&i.rx_hist, 10, None),
                     format!("{}/s", short_bytes(i.rx_bps))
                 ),
                 Style::default().fg(ui.theme.accent),
@@ -51,7 +71,7 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             Span::styled(
                 format!(
                     "{:<10} {:>9}",
-                    sparkline(&i.tx_hist, 10, None),
+                    sparkline_recent(&i.tx_hist, 10, None),
                     format!("{}/s", short_bytes(i.tx_bps))
                 ),
                 Style::default().fg(ui.theme.yellow),
@@ -70,12 +90,33 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             Span::styled(format!("{:>14}", link), Style::default().fg(ui.theme.fg)),
         ]));
     }
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(" +{hidden} idle or slower interfaces"),
+            Style::default().fg(ui.theme.muted),
+        )));
+    }
+}
+
+/// The note under the process table about what this user cannot see.
+///
+/// Says nothing when the view is complete, so a machine where every socket is
+/// accounted for stays quiet.
+fn hidden_sockets_note(unowned: u32) -> Option<String> {
+    if unowned == 0 {
+        return None;
+    }
+    let plural = if unowned == 1 { "socket" } else { "sockets" };
+    Some(format!(
+        "  +{unowned} {plural} held by other users (run as root to see them)"
+    ))
 }
 
 /// Processes holding sockets — the ones this user can see, as `ss -p` shows.
 fn socket_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
+    let note = hidden_sockets_note(ui.snap.net.unowned_sockets);
     // Processes with open sockets (own + readable under yama), like `ss -p`.
-    if !ui.snap.net.proc_net.is_empty() {
+    if !ui.snap.net.proc_net.is_empty() || note.is_some() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             "NETWORK PROCESSES (tcp est | listen | udp)",
@@ -100,6 +141,12 @@ fn socket_process_rows(ui: &Ui, inner: Rect, lines: &mut Vec<Line<'static>>) {
                     Style::default().fg(ui.theme.fg),
                 ),
             ]));
+        }
+        if let Some(note) = note {
+            lines.push(Line::from(Span::styled(
+                note,
+                Style::default().fg(ui.theme.muted),
+            )));
         }
     }
 }
@@ -203,10 +250,56 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
     ]));
     interface_rows(ui, &mut lines);
     socket_process_rows(ui, inner, &mut lines);
+    port_traffic_rows(ui, focused, &mut lines);
     listening_port_rows(ui, focused, inner, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
 pub(super) fn draw_net_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
     crate::tui::net_summary::draw(frame, area, ui);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{busiest_interfaces, hidden_sockets_note, NetInfo};
+
+    fn iface(name: &str, rx_bps: u64, tx_bps: u64) -> NetInfo {
+        NetInfo {
+            name: name.to_string(),
+            rx_bps,
+            tx_bps,
+            ..NetInfo::default()
+        }
+    }
+
+    #[test]
+    fn busiest_interfaces_ranks_by_both_directions() {
+        // An upload-only link beats a quieter one that happens to receive.
+        let ifaces = vec![
+            iface("lo", 10, 10),
+            iface("wg0", 0, 900),
+            iface("eth0", 30, 0),
+        ];
+        let (shown, hidden) = busiest_interfaces(&ifaces, 2);
+        assert_eq!(
+            shown.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            ["wg0", "eth0"]
+        );
+        assert_eq!(hidden, 1);
+    }
+
+    #[test]
+    fn hidden_sockets_note_only_speaks_when_something_is_hidden() {
+        assert_eq!(hidden_sockets_note(0), None);
+        assert!(hidden_sockets_note(1).unwrap().contains("1 socket held"));
+        assert!(hidden_sockets_note(43).unwrap().contains("43 sockets held"));
+    }
+
+    #[test]
+    fn busiest_interfaces_hides_nothing_when_they_all_fit() {
+        let ifaces = vec![iface("eth0", 1, 1)];
+        let (shown, hidden) = busiest_interfaces(&ifaces, 8);
+        assert_eq!(shown.len(), 1);
+        assert_eq!(hidden, 0);
+    }
 }

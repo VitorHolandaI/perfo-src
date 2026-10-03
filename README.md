@@ -24,6 +24,7 @@ the JSON commands remain usable.
 - Interactive replay scrubber with step, jump, play/pause, and return to live stream.
 - Saved sessions manager modal to inspect, load, and delete recorded flight sessions.
 - Process-level network socket monitoring via Netlink TCP diagnostics (RX/TX bytes and transfer rates).
+- Port-level traffic accounting: bytes and rates charged to the port carrying them, established connections included, not only the ports being listened on.
 - CPU, per-core usage, load, memory, swap, pressure (PSI), disk I/O and network throughput.
 - Process list with short process names, full command lines, tree view, and live sorting in the TUI.
 - Read-only fan RPM and temperature discovery through Linux hwmon.
@@ -271,6 +272,20 @@ The standalone terminal interface (`perfo` or `perfo tui`) provides zero-latency
 
 #### Pane 3: Network Bandwidth & Sockets (`3:NET`)
 ![Terminal Network](docs/images/terminalpage3.png)
+
+Below the interface table the pane lists network processes, then `PORT
+TRAFFIC (TCP only)`: every port moving bytes, with its current rates, its
+totals since the monitor started, how many sockets are open on it, and a rate
+sparkline per direction so a port that just went quiet reads differently from
+one that was never busy. A port
+is marked `in` when it is one this machine listens on, and `out` when the row
+names the peer's port on an outbound connection — so HTTPS traffic reads as
+`443` instead of as the ephemeral local port the kernel picked. `LISTENING
+PORTS` follows, with the serving process.
+
+The interface table draws the eight busiest links and counts the rest in one
+line; a host running containers has dozens of idle `veth` and bridge
+interfaces that would otherwise fill the pane.
 
 #### Pane 4: Memory & Swap Hierarchy (`4:MEM`)
 ![Terminal Memory](docs/images/terminalpage4.png)
