@@ -54,6 +54,7 @@ impl NetMonitor {
                 tx_history: VecDeque::new(),
                 proc_net: Vec::new(),
                 listening: Vec::new(),
+                unowned_sockets: 0,
                 ports: Vec::new(),
             },
         }
@@ -167,11 +168,11 @@ impl NetMonitor {
         } else {
             HashMap::new()
         };
-        let proc_net = if processes {
+        let (proc_net, unowned_sockets) = if processes {
             proc_sockets(&mut self.prev_proc_bytes, elapsed, &owners, &samples)
         } else {
             self.prev_proc_bytes.clear();
-            Vec::new()
+            (Vec::new(), 0)
         };
         let listening = if listeners {
             listening_ports(&owners)
@@ -199,6 +200,7 @@ impl NetMonitor {
             proc_net,
             listening,
             ports,
+            unowned_sockets,
         };
         self.prev = cur;
         self.last_refresh = Some(now);

@@ -27,7 +27,10 @@ interface and turns cumulative counters into rates.
 - **`sockets.rs`** — the `/proc/net/{tcp,udp}` side: socket classes, the
   inode → pid map from `/proc/<pid>/fd`, per-process rollup (`proc_sockets`)
   and the listening-port table (`listening_ports`). Takes the netlink samples
-  as an argument rather than fetching them, so the dump happens once.
+  as an argument rather than fetching them, so the dump happens once. Also
+  owns what to do when that map comes up empty: `usernames_by_uid` and
+  `socket_owner_label` name the user behind a socket whose PID is unreadable,
+  and `unowned_sockets` counts the ones left out entirely.
 - **`ports.rs`** — per-port byte accounting. The kernel's counters die with
   each socket, so `PortTrafficTracker` accumulates every socket's delta into
   the port it is charged to and keeps the total after the socket closes.
@@ -39,11 +42,21 @@ interface and turns cumulative counters into rates.
 → `/proc/net/dev` → `parse::netdev_from` → per-interface rates
 → `sockets::socket_inode_owners()` (one `/proc/<pid>/fd` walk, the expensive step)
 → `inet_diag::tcp_socket_samples()` (one netlink dump)
-→ `sockets::proc_sockets(…, &samples)` → `ProcNet` rows
+→ `sockets::proc_sockets(…, &samples)` → `ProcNet` rows + the unowned count
 → `sockets::listening_ports(&owners)` → `ListeningPort` rows, which also give
   the set of served ports
 → `ports::PortTrafficTracker::observe(&samples, &served, elapsed)` → `PortTraffic` rows
 → `NetSnapshot`
+
+## Why most of the machine is invisible
+
+`/proc/<pid>/fd` is `dr-x------` owned by the process's user, so the inode →
+pid link only resolves for this user's own processes. Everything running as
+root or as a service account is missing from `proc_net`, which made the table
+look empty rather than restricted. `NetSnapshot::unowned_sockets` carries the
+count of IP sockets with no readable owner so the pane can say so, and the
+listening-port table stays complete regardless because `/proc/net/*` is world
+readable and carries the owning uid in the record itself.
 
 ## Why the port table is TCP only
 

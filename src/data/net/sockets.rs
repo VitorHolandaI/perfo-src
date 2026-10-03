@@ -113,13 +113,28 @@ pub(super) fn socket_inode_owners() -> HashMap<u64, u32> {
     owners
 }
 
+/// IP sockets whose holding process this user cannot see.
+///
+/// `/proc/<pid>/fd` is `dr-x------` owned by the process's user, so the
+/// inode -> pid link is unreadable for anything running as root or as a
+/// service account. Without this count the process table just looks short,
+/// and there is no way to tell "nothing is using the network" apart from
+/// "most of it belongs to someone else".
+pub(super) fn unowned_sockets(inodes: &HashMap<u64, Sock>, owners: &HashMap<u64, u32>) -> u32 {
+    inodes
+        .keys()
+        .filter(|inode| !owners.contains_key(inode))
+        .count() as u32
+}
+
 pub(super) fn proc_sockets(
     prev_proc_bytes: &mut HashMap<u32, (u64, u64)>,
     elapsed: f32,
     owners: &HashMap<u64, u32>,
     samples: &HashMap<u64, SocketSample>,
-) -> Vec<ProcNet> {
+) -> (Vec<ProcNet>, u32) {
     let inodes = socket_inodes();
+    let hidden = unowned_sockets(&inodes, owners);
     let mut per_pid: HashMap<u32, ProcNet> = HashMap::new();
     for (&inode, &pid) in owners {
         let Some(class) = inodes.get(&inode) else {
@@ -161,7 +176,7 @@ pub(super) fn proc_sockets(
         )
     });
     list.truncate(MAX_SOCKET_PROCESSES);
-    list
+    (list, hidden)
 }
 
 /// (inode, port, proto, uid) from listening entries across the four proc files.
@@ -214,6 +229,9 @@ pub(super) fn listening_ports(owners: &HashMap<u64, u32>) -> Vec<ListeningPort> 
     if sockets.is_empty() {
         return Vec::new();
     }
+    // Read once per refresh: the PID of a socket owned by another user is
+    // unreadable without root, so the owning user is all we can name.
+    let usernames = usernames_by_uid(&std::fs::read_to_string("/etc/passwd").unwrap_or_default());
     // Build inode → (port, proto, uid) lookup.
     let mut inode_map: HashMap<u64, (u16, String, u32)> = HashMap::new();
     for (inode, port, proto, uid) in &sockets {
@@ -251,13 +269,7 @@ pub(super) fn listening_ports(owners: &HashMap<u64, u32>) -> Vec<ListeningPort> 
                     .unwrap_or_default()
                     .replace('\0', " ")
             } else {
-                format!(
-                    "(uid {})",
-                    uids.iter()
-                        .map(u32::to_string)
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
+                socket_owner_label(&uids, &usernames)
             };
             ListeningPort {
                 port,
@@ -269,6 +281,46 @@ pub(super) fn listening_ports(owners: &HashMap<u64, u32>) -> Vec<ListeningPort> 
         .collect();
     result.sort_by_key(|p| p.port);
     result
+}
+
+/// uid -> login name, from `/etc/passwd` (`name:x:uid:gid:...`).
+///
+/// The socket tables in `/proc/net` carry the owning uid, and that uid is the
+/// only honest clue to a service whose PID the kernel will not let us read.
+/// Lines that do not have the four leading colon-separated fields, including
+/// comments, are skipped rather than guessed at.
+pub(super) fn usernames_by_uid(passwd_raw: &str) -> HashMap<u32, String> {
+    let mut names = HashMap::new();
+    for line in passwd_raw.lines() {
+        let mut fields = line.split(':');
+        let Some(name) = fields.next() else { continue };
+        let (Some(_), Some(uid)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let Ok(uid) = uid.parse::<u32>() else {
+            continue;
+        };
+        names.entry(uid).or_insert_with(|| name.to_string());
+    }
+    names
+}
+
+/// What to show instead of a command line when the PID is unreadable.
+///
+/// Naming the users is what turns `(uid 0,974)` into something a person can
+/// act on. A uid with no passwd entry keeps its number: better an opaque
+/// number than an invented name.
+pub(super) fn socket_owner_label(uids: &[u32], names: &HashMap<u32, String>) -> String {
+    let labelled: Vec<String> = uids
+        .iter()
+        .map(|uid| {
+            names
+                .get(uid)
+                .cloned()
+                .unwrap_or_else(|| format!("uid {uid}"))
+        })
+        .collect();
+    format!("({})", labelled.join(", "))
 }
 
 pub(super) fn base_proto(proto: &str) -> String {

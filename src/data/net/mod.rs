@@ -65,6 +65,9 @@ pub struct NetSnapshot {
     pub listening: Vec<ListeningPort>,
     /// Ports carrying TCP traffic, listening or not.
     pub ports: Vec<PortTraffic>,
+    /// IP sockets held by processes this user cannot inspect, so the viewer
+    /// can tell a quiet machine from an unprivileged view of a busy one.
+    pub unowned_sockets: u32,
 }
 
 /// Per-process socket counts (TCP established/listening, UDP) and network byte transfer.
@@ -391,5 +394,57 @@ mod tests {
         assert_eq!(base_proto("tcp"), "tcp");
         assert_eq!(base_proto("tcp6"), "tcp");
         assert_eq!(base_proto("udp6"), "udp");
+    }
+
+    #[test]
+    fn usernames_by_uid_reads_the_passwd_columns() {
+        let raw = "root:x:0:0::/root:/usr/bin/bash\n\
+                   avahi:x:969:969:Avahi mDNS/DNS-SD daemon:/:/usr/bin/nologin\n\
+                   # a comment\n\
+                   broken-line-without-enough-colons\n\
+                   zerotier-one:x:948:948:ZeroTier One user:/:/usr/bin/nologin\n";
+        let names = super::sockets::usernames_by_uid(raw);
+        assert_eq!(names.get(&0).map(String::as_str), Some("root"));
+        assert_eq!(names.get(&969).map(String::as_str), Some("avahi"));
+        assert_eq!(names.get(&948).map(String::as_str), Some("zerotier-one"));
+        assert_eq!(names.len(), 3, "malformed lines must be skipped");
+    }
+
+    #[test]
+    fn socket_owner_label_names_the_users_behind_an_unreadable_pid() {
+        let mut names = std::collections::HashMap::new();
+        names.insert(0u32, "root".to_string());
+        names.insert(974u32, "systemd-resolve".to_string());
+        // Port 53 carries sockets from two different users at once.
+        assert_eq!(
+            super::sockets::socket_owner_label(&[0, 974], &names),
+            "(root, systemd-resolve)"
+        );
+        // A uid with no passwd entry keeps the number, so nothing is invented.
+        assert_eq!(
+            super::sockets::socket_owner_label(&[31337], &names),
+            "(uid 31337)"
+        );
+    }
+
+    #[test]
+    fn unowned_sockets_counts_what_the_process_table_cannot_show() {
+        use super::sockets::unowned_sockets;
+        use std::collections::HashMap;
+        let inodes = HashMap::from([
+            (10u64, Sock::TcpEst),
+            (11u64, Sock::TcpListen),
+            (12u64, Sock::Udp),
+            (13u64, Sock::TcpEst),
+        ]);
+        // Only inode 10 belongs to a process whose /proc/<pid>/fd we can read.
+        let owners = HashMap::from([(10u64, 4278u32)]);
+        assert_eq!(unowned_sockets(&inodes, &owners), 3);
+
+        // An owner we hold for an inode that is gone from /proc/net must not
+        // push the count negative.
+        let stale = HashMap::from([(10u64, 4278u32), (99u64, 1u32)]);
+        assert_eq!(unowned_sockets(&inodes, &stale), 3);
+        assert_eq!(unowned_sockets(&HashMap::new(), &owners), 0);
     }
 }
