@@ -180,6 +180,15 @@ Objetivo: distinguir trafego agregado de trafego por interface.
 - `loss%` na tabela e `perdidos / (entregues + perdidos)` da pior direcao,
   contando erro e descarte juntos: uma interface pode acumular milhares de um
   e nenhum do outro.
+- O painel do widget tem a mesma coluna, mas alimentada pelo campo `net_loss`
+  do snapshot de summary, nao pelo snapshot completo. O coletor de detalhe do
+  widget tem `running: needsDetails`, entao ele nasce quando o painel abre e a
+  janela dele seria os poucos segundos que alguem passa olhando. O de summary
+  roda em segundo plano, e por isso a janela e "desde que o painel fechou pela
+  ultima vez", que e o que a legenda da coluna diz.
+- Interfaces que nao carregaram pacote nenhum nao entram em `net_loss` e
+  aparecem como `--`: um bridge ocioso descarta tudo que recebe e esta
+  honestamente em 100%, e seria a unica coisa na tela.
 - Interfaces virtuais como `lo`, `veth` e `virbr` podem ter taxa valida, mas
   normalmente nao possuem velocidade ou conceito de carrier.
 

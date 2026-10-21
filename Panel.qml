@@ -57,6 +57,10 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  // Mirrors BAD_LOSS_PCT in src/tui/cpu/format.rs: a bridge with no peer
+  // piles up discards that mean nothing, so "any loss at all" is the wrong
+  // alarm, and the TUI and the widget must not disagree about the threshold.
+  readonly property real badLossPercent: 1.0
   readonly property int tableMountWidth: Style.space(220)
   readonly property int tableMetricWidth: Style.space(104)
   readonly property int metricLabelWidth: Style.space(72)
@@ -179,6 +183,37 @@ Panel {
   function interfaces() {
     return root.snapshot && root.snapshot.net && root.snapshot.net.ifaces
       ? root.snapshot.net.ifaces.slice(0, 5) : []
+  }
+
+  // Loss comes from the summary collector, never from the detail one. The
+  // detail collector has `running: needsDetails`, so it is born when this
+  // panel opens: its window would be the few seconds someone spends looking,
+  // and would read 0% every time. The summary collector runs in the
+  // background and answers what was lost while nobody was watching.
+  function interfaceLoss(name) {
+    var all = root.hostWidget && root.hostWidget.summarySnapshot
+      ? root.hostWidget.summarySnapshot.net_loss : null
+    if (!all) return null
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].name === name) return all[i]
+    }
+    return null
+  }
+
+  // Interfaces that carried no packet at all are absent from net_loss: an
+  // idle bridge discards every frame it is handed and is honestly at 100%,
+  // which would be the only thing on screen.
+  function lossLabel(name) {
+    var entry = root.interfaceLoss(name)
+    if (!entry) return "--"
+    if (entry.lost === 0) return "0"
+    return entry.lost + " / " + Number(entry.loss_pct).toFixed(1) + "%"
+  }
+
+  function lossColor(name) {
+    var entry = root.interfaceLoss(name)
+    if (!entry || entry.lost === 0) return root.foreground
+    return entry.loss_pct >= root.badLossPercent ? Color.urgent : root.foreground
   }
 
   function fans() {
@@ -578,6 +613,7 @@ Panel {
              PlainText { width: root.metricLabelWidth; text: "TX"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
              PlainText { width: root.metricValueWidth; text: root.snapshot ? root.formatRate(root.snapshot.net.totals.tx_bps) : "--"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
            }
+          PlainText { text: "INTERFACES / LOST SINCE THIS PANEL WAS LAST CLOSED"; color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
            Repeater {
              model: root.interfaces()
              delegate: Row {
@@ -585,6 +621,7 @@ Panel {
                PlainText { width: root.tableMountWidth; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
                PlainText { width: root.tableMetricWidth; text: "RX " + root.formatRate(modelData.rx_bps); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                PlainText { width: root.tableMetricWidth; text: "TX " + root.formatRate(modelData.tx_bps); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+               PlainText { width: root.tableMetricWidth; text: root.lossLabel(modelData.name); color: root.lossColor(modelData.name); font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
              }
            }
         }

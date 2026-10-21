@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::data::disk::rate;
 
 use super::inet_diag::tcp_socket_samples;
+use super::loss::LossBaseline;
 use super::parse::{link_state, netdev_from, tcp_stats_from, DevCounters};
 use super::ports::PortTrafficTracker;
 use super::push_capped;
@@ -19,7 +20,7 @@ pub struct NetMonitor {
     /// Counter values when this session started, subtracted out so the loss
     /// figures describe this run of the binary and not everything since boot.
     /// Cleared by `reset_loss`, which re-baselines on the next refresh.
-    loss_baseline: HashMap<String, DevCounters>,
+    loss_baseline: LossBaseline,
     prev_retrans: u64,
     prev_proc_bytes: HashMap<u32, (u64, u64)>,
     /// Per-port byte totals, which have to outlive the sockets that earned them.
@@ -43,7 +44,7 @@ impl NetMonitor {
         Self {
             last_refresh: None,
             prev: HashMap::new(),
-            loss_baseline: HashMap::new(),
+            loss_baseline: LossBaseline::default(),
             prev_retrans: 0,
             prev_proc_bytes: HashMap::new(),
             port_traffic: PortTrafficTracker::default(),
@@ -69,23 +70,6 @@ impl NetMonitor {
         self.refresh_with_details(true, true);
     }
 
-    /// This interface's baseline, seeded on first sight and moved forward
-    /// when the kernel's counters restart.
-    ///
-    /// An interface that goes down and comes back up starts its counters at
-    /// zero, which would make every subtraction against the old baseline
-    /// underflow. The new, lower values become the baseline instead.
-    fn baseline_for(&mut self, name: &str, cur: &DevCounters) -> DevCounters {
-        let base = self
-            .loss_baseline
-            .entry(name.to_string())
-            .or_insert_with(|| *cur);
-        if counters_restarted(base, cur) {
-            *base = *cur;
-        }
-        *base
-    }
-
     /// Zero the loss figures from here on, so what the viewer reads next
     /// describes only what happened after they asked for it.
     pub fn reset_loss(&mut self) {
@@ -106,7 +90,7 @@ impl NetMonitor {
         for (name, c) in cur {
             // An interface with no previous sample has no delta to report, so
             // it only appears from the second refresh on.
-            let base = self.baseline_for(name, c);
+            let base = self.loss_baseline.of(name, c);
             let Some(p) = self.prev.get(name) else {
                 continue;
             };
@@ -251,17 +235,6 @@ impl NetMonitor {
     }
 }
 
-/// Whether any counter this monitor subtracts went backwards, which only
-/// happens when the interface was torn down and brought back.
-fn counters_restarted(base: &DevCounters, cur: &DevCounters) -> bool {
-    cur.1 < base.1
-        || cur.2 < base.2
-        || cur.3 < base.3
-        || cur.5 < base.5
-        || cur.6 < base.6
-        || cur.7 < base.7
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -389,7 +362,7 @@ mod tests {
         let mut monitor = seeded(counters(5_000, 0, 40, 0, 0, 0));
         monitor
             .loss_baseline
-            .insert("wg0".to_string(), counters(4_000, 0, 30, 0, 0, 0));
+            .of("wg0", &counters(4_000, 0, 30, 0, 0, 0));
         let iface = sample(&mut monitor, counters(12, 0, 0, 0, 0, 0), 1.0);
         assert_eq!(iface.rx_drops, 0, "a restart is not a burst of loss");
         assert_eq!(iface.session_rx_drops, 0);

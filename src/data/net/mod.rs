@@ -1,12 +1,16 @@
 //! Network interface, socket and per-process traffic collection.
 
 mod inet_diag;
+mod loss;
 mod monitor;
 mod parse;
 mod ports;
 mod sockets;
 
+pub use loss::{InterfaceLoss, NetLossMonitor};
 pub use monitor::NetMonitor;
+
+use loss::loss_pct;
 
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -79,20 +83,6 @@ impl NetInfo {
             self.session_tx_errs + self.session_tx_drops,
         )
     }
-}
-
-/// `lost / (delivered + lost)`, in percent.
-///
-/// /proc/net/dev counts delivered packets and lost ones in separate columns,
-/// so the lost ones are added back to get a denominator that covers
-/// everything the interface was handed. Errors and drops are both counted as
-/// loss: an interface can carry thousands of one and none of the other.
-fn loss_pct(delivered: u64, lost: u64) -> f32 {
-    let handled = delivered.saturating_add(lost);
-    if handled == 0 {
-        return 0.0;
-    }
-    lost as f32 * 100.0 / handled as f32
 }
 
 #[derive(Clone, Serialize, Default)]

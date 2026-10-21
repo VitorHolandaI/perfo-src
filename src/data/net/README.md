@@ -21,8 +21,17 @@ interface and turns cumulative counters into rates.
   `PortTrafficTracker`. `refresh_with_details` is the entry point: it reads
   `/proc/net/dev`, calls `parse`, takes one `/proc/<pid>/fd` walk and one
   netlink dump, and lends both to `sockets` and `ports`.
+- **`loss.rs`** — packet loss on its own. Owns `LossBaseline`, the window
+  rule both monitors share, and `NetLossMonitor`, which reads `/proc/net/dev`
+  and nothing else. That second monitor exists for the widget's always-on
+  collector: the full `NetMonitor` also dumps sockets over netlink and walks
+  `/proc/<pid>/fd`, far too much to pay for continuously just to know whether
+  a link is dropping. The baseline lives here rather than in `monitor.rs` so
+  a restarted interface cannot be handled one way in the TUI and another in
+  the widget. `loss_pct` is here too, and `mod.rs` imports it for
+  `NetInfo::{rx,tx}_loss_pct`.
 - **`parse.rs`** — pure text parsing of `/proc/net/dev` and `/proc/net/snmp`
-  into counters. No I/O, no state; called only by `monitor.rs`.
+  into counters. No I/O, no state; called by `monitor.rs` and `loss.rs`.
 
   Errors and discards leave `monitor.rs` as plain counts, not per-second
   rates: dividing one discard by the elapsed second truncated it to zero, so
@@ -30,8 +39,9 @@ interface and turns cumulative counters into rates.
   `session_*` running totals, because a rate alone reads as zero on a quiet
   second and hides a link that has been bleeding all day.
 
-  Those totals are relative to `NetMonitor::loss_baseline`, captured when an
-  interface is first seen and dropped by `reset_loss`. The kernel's columns
+  Those totals are relative to `NetMonitor::loss_baseline`, a `LossBaseline`
+  from `loss.rs`, captured when an interface is first seen and dropped by
+  `reset_loss`. The kernel's columns
   run from boot, which is the wrong window: an idle bridge that discarded
   every frame days ago would otherwise sit at 100% for as long as the host is
   up. `counters_restarted` moves the baseline forward when an interface is
