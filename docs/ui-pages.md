@@ -282,7 +282,10 @@ build atual, antes de concluir que o hardware nao tem fan legivel.
 
 Objetivo: monitorar aceleracao grafica e neural, motores 3D/computacao, uso de memoria e consumo de energia quando disponivel.
 - Suporte Intel via DRM fdinfo engine times (`render`, `blt`, `video`).
-- Suporte NVIDIA via NVML carregado dinamicamente (utilizacao de GPU, memoria dedicada, temperatura e potencia em Watts).
+- Suporte NVIDIA por dois caminhos: NVML carregado dinamicamente, ou o
+  `nvidia-smi` do driver quando o binario e estatico e o `dlopen` nao
+  funciona. Ambos dao utilizacao de GPU, memoria dedicada, temperatura e
+  potencia em Watts; so o NVML da utilizacao por processo.
 - Processos de GPU associados com metricas de computacao e memoria por PID.
 - NPU Intel via `intel_vpu`: uso calculado pelo delta de `npu_busy_time_us`, frequencia atual/maxima e memoria alocada, sem `sudo` ou ferramenta externa.
 - Potencia, temperatura e utilizacao NPU por processo nao sao fabricadas quando o sysfs sem privilegios nao fornece essas metricas.

@@ -6,5 +6,6 @@ pub mod mem;
 pub mod net;
 pub mod npu;
 mod nvidia;
+mod nvidia_smi;
 pub mod psi;
 pub mod summary;

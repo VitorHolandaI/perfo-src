@@ -28,7 +28,8 @@ the JSON commands remain usable.
 - CPU, per-core usage, load, memory, swap, pressure (PSI), disk I/O and network throughput.
 - Process list with short process names, full command lines, tree view, and live sorting in the TUI.
 - Read-only fan RPM and temperature discovery through Linux hwmon.
-- Optional GPU data (Intel DRM fdinfo, NVIDIA NVML, AMD sysfs) when available.
+- Optional GPU data (Intel DRM fdinfo, NVIDIA NVML or `nvidia-smi`, AMD sysfs)
+  when available.
 - Native Intel NPU utilization, frequency, and allocated memory from `intel_vpu` sysfs; no `intel-npu-smi` or root access required.
 - High-performance JSON stream (`perfo stream --json`) and snapshot (`perfo cpu --json`) for external scripts.
 - Built-in syscall tracing with `ptrace`; no `strace` dependency.
@@ -191,9 +192,14 @@ which ships inside the plugin tree.
   (`bin/perfo`).
 - Linux `/proc` and `/sys` interfaces for system and process metrics; no
   separate `lm_sensors` package or daemon is required.
-- Optional NVIDIA driver NVML library (`libnvidia-ml.so.1` or
-  `libnvidia-ml.so`) for NVIDIA utilization, VRAM, temperature, power, and
-  process metrics. Intel and AMD support uses kernel DRM/sysfs interfaces.
+- Optional NVIDIA support, by either of two paths. A dynamically linked build
+  loads the driver's NVML library (`libnvidia-ml.so.1` or `libnvidia-ml.so`)
+  and gets utilization, VRAM, temperature, power and per-process metrics. The
+  released binary is statically linked against musl, whose `dlopen` always
+  returns NULL, so it queries the `nvidia-smi` the driver installs instead:
+  the same figures except per-process GPU utilization, which that query
+  interface does not expose. Intel and AMD support uses kernel DRM/sysfs
+  interfaces.
 
 The Rust crates listed in `Release Scope` are build-time dependencies compiled
 into the `perfo` binary. Plugin users do not install those crates separately.
@@ -309,7 +315,8 @@ Perfo reads standard Linux interfaces before using a syscall:
 - `/sys/class/drm` and driver sysfs files for supported GPU values.
 - `/sys/class/accel/accel*/device` for Intel NPU busy time, frequency, and allocated memory.
 - DRM fdinfo engine times for Intel i915 utilization.
-- dynamically loaded NVML for NVIDIA utilization, VRAM, temperature, and power.
+- dynamically loaded NVML for NVIDIA utilization, VRAM, temperature and
+  power, or `nvidia-smi` for the same figures in the static release build.
 
 The monitor is read-only. It does not write PWM or EC files, load kernel
 modules, install daemons, require `lm_sensors`, or execute `intel-npu-smi`.

@@ -16,7 +16,9 @@ when the metric has no file equivalent. Current examples are:
 - sysfs/hwmon for fans, temperatures, and optional hardware values.
 - DRM sysfs for AMD GPU values.
 - DRM `/proc/<pid>/fdinfo` engine times for Intel i915 utilization.
-- dynamically loaded NVML for NVIDIA GPU values when the driver is available.
+- dynamically loaded NVML for NVIDIA GPU values when the driver is available,
+  or `nvidia-smi` as a child process in the static release build, where
+  `dlopen` cannot work.
 - Intel `intel_vpu` sysfs counters for NPU utilization, frequency, and memory.
 
 This follows the project data map and the Linux interfaces documented in
@@ -116,7 +118,8 @@ kept regardless of how little it has moved.
 
 - Fake hwmon fixture trees covering multiple notebook shapes are not yet in
   the repository.
-- NVIDIA GPU support is optional and uses dynamically loaded NVML.
+- NVIDIA GPU support is optional. It uses dynamically loaded NVML where that
+  is possible, and `nvidia-smi` in the statically linked release build.
 - GPU values are exposed in JSON and the widget GPU page; richer device memory
   and power fields remain backend-dependent.
 - QML validation currently checks manifest references; a full Quickshell runtime

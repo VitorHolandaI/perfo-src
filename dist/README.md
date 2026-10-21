@@ -45,9 +45,10 @@ but the plugin needs neither.
 - Linux on x86_64. `bin/perfo` is statically linked, so no runtime library,
   package or daemon has to be installed for it.
 - `/proc` and `/sys`, which is where every metric comes from.
-- Optional: the NVIDIA NVML library (`libnvidia-ml.so.1`) for NVIDIA
-  utilization, VRAM, temperature and power. Intel and AMD GPUs use kernel
-  DRM/sysfs interfaces and need nothing extra.
+- Optional: the NVIDIA driver, for NVIDIA utilization, VRAM, temperature and
+  power. Those come from the `nvidia-smi` the driver installs, since a
+  statically linked binary cannot load `libnvidia-ml.so.1` at runtime. Intel
+  and AMD GPUs use kernel DRM/sysfs interfaces and need nothing extra.
 
 ## What it does not do
 
