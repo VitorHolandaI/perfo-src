@@ -52,6 +52,10 @@ struct State {
     /// False = dashboard aggregates CPU + mem + disks + the active pane.
     fullscreen: bool,
     paused: bool,
+    /// Set by the reset key and cleared by the loop once the monitor has
+    /// re-baselined: the key handler never sees the monitor, which lives in
+    /// `app::run_loop`.
+    reset_net_loss: bool,
     use_system_theme: bool,
     lang: Lang,
     help: bool,
@@ -84,6 +88,7 @@ impl Default for State {
             pane: Pane::Cpu,
             fullscreen: false,
             paused: false,
+            reset_net_loss: false,
             use_system_theme: true,
             lang: Lang::default(),
             help: false,

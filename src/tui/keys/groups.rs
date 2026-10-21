@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 use super::super::cpu::{Pane, SortKey};
 use super::super::State;
-use super::{move_core, start_trace, toggle_core_filter, toggle_lang};
+use super::{move_core, request_loss_reset, start_trace, toggle_core_filter, toggle_lang};
 
 /// `1`-`7` jump straight to a fullscreen pane.
 pub(super) fn pane_for_digit(digit: char) -> Option<Pane> {
@@ -96,6 +96,10 @@ pub(super) fn handle_toggle_key(state: &mut State, code: KeyCode) -> Option<bool
         }
         KeyCode::Char('H') => {
             state.show_threads = !state.show_threads;
+            Some(false)
+        }
+        KeyCode::Char('X') => {
+            request_loss_reset(state);
             Some(false)
         }
         KeyCode::Char('K') => {

@@ -199,6 +199,15 @@ fn run_loop(
     let mut trace_thread: Option<std::thread::JoinHandle<()>> = None;
 
     loop {
+        // The key handler cannot reach the monitor, so it leaves a flag here.
+        if state.reset_net_loss {
+            monitor.reset_net_loss();
+            state.reset_net_loss = false;
+            // Show the zeroed figures at once, even while paused, so the key
+            // visibly does something.
+            force_refresh = true;
+            last_tick = Instant::now() - TICK;
+        }
         if last_tick.elapsed() >= TICK && (!state.paused || force_refresh) {
             snap = Some(sample_tick(monitor, &mut state, active_plan, full_tick));
             full_tick = !full_tick;

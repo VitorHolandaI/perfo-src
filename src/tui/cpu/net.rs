@@ -10,7 +10,10 @@ use ratatui::{
 
 use crate::data::net::NetInfo;
 
-use super::format::{block, human_bytes, pipe, short_bytes, sparkline_recent, truncate};
+use super::format::{
+    block, human_bytes, loss_level, pipe, short_bytes, short_count, sparkline_recent, truncate,
+    LossLevel,
+};
 use super::port_table::port_traffic_rows;
 use super::{Pane, Ui};
 
@@ -36,6 +39,31 @@ fn busiest_interfaces(ifaces: &[NetInfo], max: usize) -> (Vec<&NetInfo>, usize) 
 /// Column cells (fixed): IFACE(10) | RX/s(9) | TX/s(9) | PPS(17) |
 /// ERR/DROP(13) | LINK(14). The legend line uses the SAME cell widths so
 /// every `│` lines up across the three rows.
+/// Packets this interface never managed to carry since perfo opened, or
+/// since the viewer pressed X. Errors and discards both count: a link can
+/// pile up thousands of one and none of the other.
+fn session_lost(iface: &NetInfo) -> u64 {
+    iface.session_rx_errs + iface.session_rx_drops + iface.session_tx_errs + iface.session_tx_drops
+}
+
+fn worst_loss_pct(iface: &NetInfo) -> f32 {
+    iface.rx_loss_pct().max(iface.tx_loss_pct())
+}
+
+/// The loss cell, in exactly 13 columns so the legend's separators keep
+/// lining up with the rows below it.
+///
+/// Shows the session total rather than this refresh's count, because a link
+/// that has been losing packets for minutes reports nothing on a quiet
+/// second.
+fn loss_cell(iface: &NetInfo) -> String {
+    format!(
+        "{:>6} {:>5.1}%",
+        short_count(session_lost(iface)),
+        worst_loss_pct(iface)
+    )
+}
+
 /// One row per interface: link state, speed and current rates.
 fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
     let (shown, hidden) = busiest_interfaces(&ui.snap.net.ifaces, MAX_INTERFACE_ROWS);
@@ -46,12 +74,10 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             (None, true) => "up".to_string(),
             (None, false) => "-".to_string(),
         };
-        let errs = i.rx_errs_s + i.tx_errs_s;
-        let drops = i.rx_drops_s + i.tx_drops_s;
-        let bad_color = if errs + drops > 0 {
-            ui.theme.red
-        } else {
-            ui.theme.muted
+        let bad_color = match loss_level(session_lost(i), worst_loss_pct(i)) {
+            LossLevel::Clean => ui.theme.muted,
+            LossLevel::Minor => ui.theme.yellow,
+            LossLevel::Bad => ui.theme.red,
         };
         lines.push(Line::from(vec![
             Span::styled(
@@ -83,7 +109,7 @@ fn interface_rows(ui: &Ui, lines: &mut Vec<Line<'static>>) {
             ),
             pipe("│", &ui.theme),
             Span::styled(
-                format!("{:>13}", format!("{} err {} drop", errs, drops)),
+                format!("{:>13}", loss_cell(i)),
                 Style::default().fg(bad_color),
             ),
             pipe("│", &ui.theme),
@@ -244,7 +270,7 @@ pub(super) fn draw_net(frame: &mut Frame, area: Rect, ui: &Ui) {
         pipe("│", &ui.theme),
         pipe(&format!("{:>17}", "rx pps / tx pps"), &ui.theme),
         pipe("│", &ui.theme),
-        pipe(&format!("{:>13}", "err / drop"), &ui.theme),
+        pipe(&format!("{:>13}", "lost  loss%"), &ui.theme),
         pipe("│", &ui.theme),
         pipe(&format!("{:>14}", "LINK"), &ui.theme),
     ]));
@@ -261,7 +287,9 @@ pub(super) fn draw_net_summary(frame: &mut Frame, area: Rect, ui: &Ui) {
 
 #[cfg(test)]
 mod tests {
-    use super::{busiest_interfaces, hidden_sockets_note, NetInfo};
+    use super::{
+        busiest_interfaces, hidden_sockets_note, loss_cell, session_lost, worst_loss_pct, NetInfo,
+    };
 
     fn iface(name: &str, rx_bps: u64, tx_bps: u64) -> NetInfo {
         NetInfo {
@@ -301,5 +329,39 @@ mod tests {
         let (shown, hidden) = busiest_interfaces(&ifaces, 8);
         assert_eq!(shown.len(), 1);
         assert_eq!(hidden, 0);
+    }
+
+    #[test]
+    fn loss_cell_keeps_the_column_width_whatever_the_counters_say() {
+        assert_eq!(loss_cell(&NetInfo::default()).chars().count(), 13);
+
+        let wrecked = NetInfo {
+            session_tx_packets: 7813,
+            session_tx_errs: 944,
+            ..NetInfo::default()
+        };
+        let cell = loss_cell(&wrecked);
+        assert_eq!(cell.chars().count(), 13, "{cell:?}");
+        assert!(cell.contains("944"), "{cell:?}");
+        assert!(cell.contains("10.8%"), "{cell:?}");
+
+        let absurd = NetInfo {
+            session_rx_drops: u64::MAX,
+            ..NetInfo::default()
+        };
+        assert_eq!(loss_cell(&absurd).chars().count(), 13);
+    }
+
+    #[test]
+    fn a_bridge_with_no_peer_reports_every_frame_as_lost() {
+        // A bridge whose only port is down: everything handed to it is
+        // discarded, so 100% is the honest figure for the row. The machine
+        // wide headline filters these out, in `net_summary::network_loss`.
+        let bridge = NetInfo {
+            session_tx_drops: 718,
+            ..NetInfo::default()
+        };
+        assert_eq!(session_lost(&bridge), 718);
+        assert_eq!(worst_loss_pct(&bridge), 100.0);
     }
 }

@@ -11,7 +11,11 @@ interface and turns cumulative counters into rates.
 - **`mod.rs`** — the public surface: `NetInfo`, `NetTotals`, `ProcNet`,
   `ListeningPort`, `PortTraffic`/`PortSide` and the `NetSnapshot` that holds
   them, plus the unit tests for the whole folder. Re-exports `NetMonitor`, the
-  only thing callers outside `data::net` touch.
+  only thing callers outside `data::net` touch. Also owns `loss_pct` and the
+  `NetInfo::{rx,tx}_loss_pct` it backs: the share of everything an interface
+  was handed that it failed to carry, counting errors and discards together.
+  It reads the `session_*` fields, never the kernel's own totals, so the
+  figure describes this run of the binary.
 - **`monitor.rs`** — `NetMonitor`, the one stateful piece. Owns the previous
   sample of every counter, so it is what turns deltas into rates, and owns the
   `PortTrafficTracker`. `refresh_with_details` is the entry point: it reads
@@ -19,6 +23,20 @@ interface and turns cumulative counters into rates.
   netlink dump, and lends both to `sockets` and `ports`.
 - **`parse.rs`** — pure text parsing of `/proc/net/dev` and `/proc/net/snmp`
   into counters. No I/O, no state; called only by `monitor.rs`.
+
+  Errors and discards leave `monitor.rs` as plain counts, not per-second
+  rates: dividing one discard by the elapsed second truncated it to zero, so
+  isolated loss never reached the UI at all. Alongside each count go the
+  `session_*` running totals, because a rate alone reads as zero on a quiet
+  second and hides a link that has been bleeding all day.
+
+  Those totals are relative to `NetMonitor::loss_baseline`, captured when an
+  interface is first seen and dropped by `reset_loss`. The kernel's columns
+  run from boot, which is the wrong window: an idle bridge that discarded
+  every frame days ago would otherwise sit at 100% for as long as the host is
+  up. `counters_restarted` moves the baseline forward when an interface is
+  torn down and brought back, since its counters restart at zero and the
+  subtraction would underflow.
 - **`inet_diag.rs`** — the sock_diag netlink ABI, isolated because it is raw
   byte offsets into kernel structs. `tcp_socket_samples()` does one dump per
   address family and returns inode → `SocketSample` (ports, loopback flag,

@@ -23,12 +23,7 @@ pub(super) fn draw(frame: &mut Frame, area: ratatui::layout::Rect, ui: &Ui) {
 
 fn summary_lines(width: u16, height: u16, ui: &Ui) -> Vec<Line<'static>> {
     let n = &ui.snap.net;
-    let (errors, drops) = total_errors(n);
-    let mut lines = vec![
-        totals_line(n, ui),
-        session_line(n, ui),
-        health_line(errors, drops, n, ui),
-    ];
+    let mut lines = vec![totals_line(n, ui), session_line(n, ui), health_line(n, ui)];
     lines.push(Line::from(Span::styled(
         "ACTIVE INTERFACES (top 6)",
         Style::default().fg(ui.theme.accent),
@@ -58,18 +53,51 @@ fn totals_line(n: &NetSnapshot, ui: &Ui) -> Line<'static> {
     ])
 }
 
-fn health_line(errors: u64, drops: u64, n: &NetSnapshot, ui: &Ui) -> Line<'static> {
-    let color = if errors + drops > 0 {
-        ui.theme.red
-    } else {
-        ui.theme.green
+/// Packets lost across every interface: the lifetime count, how many went
+/// missing in this refresh alone, and the worst single interface's share.
+///
+/// The lifetime count is what answers "is this machine losing packets",
+/// which the old per-second-only line could not: a link bleeding all day
+/// still reports zero on a quiet second.
+fn network_loss(n: &NetSnapshot) -> (u64, u64, f32) {
+    let lifetime = n
+        .ifaces
+        .iter()
+        .map(|i| i.session_rx_errs + i.session_rx_drops + i.session_tx_errs + i.session_tx_drops)
+        .sum();
+    let this_refresh = n
+        .ifaces
+        .iter()
+        .map(|i| i.rx_errs + i.rx_drops + i.tx_errs + i.tx_drops)
+        .sum();
+    // Only links that actually delivered something get a say in the worst
+    // percentage. An idle docker bridge discards every frame it is handed and
+    // is honestly at 100%, but letting that set the machine-wide figure buries
+    // the link that is really bleeding: this host has eleven such bridges and
+    // one wg0 at 5%.
+    let worst = n
+        .ifaces
+        .iter()
+        .filter(|i| i.session_rx_packets + i.session_tx_packets > 0)
+        .map(|i| i.rx_loss_pct().max(i.tx_loss_pct()))
+        .fold(0.0f32, f32::max);
+    (lifetime, this_refresh, worst)
+}
+
+fn health_line(n: &NetSnapshot, ui: &Ui) -> Line<'static> {
+    let (lifetime, this_refresh, worst) = network_loss(n);
+    let color = match cpu::loss_level(lifetime, worst) {
+        cpu::LossLevel::Clean => ui.theme.green,
+        cpu::LossLevel::Minor => ui.theme.yellow,
+        cpu::LossLevel::Bad => ui.theme.red,
     };
     Line::from(vec![Span::styled(
         format!(
-            "retrans {:>5}/s  errors {:>4}  drops {:>4}  ports {:>2}",
+            "retrans {:>5}/s  lost {:>5} ({:.1}% worst)  now {:>3}  ports {:>2}",
             n.totals.tcp_retrans_s,
-            errors,
-            drops,
+            cpu::short_count(lifetime),
+            worst,
+            this_refresh,
             n.listening.len()
         ),
         Style::default().fg(color),
@@ -188,13 +216,6 @@ fn history_line(width: u16, n: &NetSnapshot, ui: &Ui) -> Line<'static> {
     ])
 }
 
-fn total_errors(n: &NetSnapshot) -> (u64, u64) {
-    (
-        n.ifaces.iter().map(|i| i.rx_errs_s + i.tx_errs_s).sum(),
-        n.ifaces.iter().map(|i| i.rx_drops_s + i.tx_drops_s).sum(),
-    )
-}
-
 fn link_label(iface: &NetInfo) -> String {
     match (iface.link_mbps, iface.link_up) {
         (Some(mbps), true) => format!("UP {mbps}M"),
@@ -207,25 +228,13 @@ fn link_label(iface: &NetInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::VecDeque;
 
     fn iface(link_mbps: Option<u64>, link_up: bool) -> NetInfo {
         NetInfo {
             name: "eth0".into(),
-            rx_bps: 0,
-            tx_bps: 0,
-            rx_pps: 0,
-            tx_pps: 0,
-            rx_errs_s: 0,
-            tx_errs_s: 0,
-            rx_drops_s: 0,
-            tx_drops_s: 0,
             link_mbps,
             link_up,
-            total_rx_bytes: 0,
-            total_tx_bytes: 0,
-            rx_hist: VecDeque::new(),
-            tx_hist: VecDeque::new(),
+            ..NetInfo::default()
         }
     }
 
@@ -234,5 +243,63 @@ mod tests {
         assert_eq!(link_label(&iface(Some(1000), true)), "UP 1000M");
         assert_eq!(link_label(&iface(Some(1000), false)), "DOWN 1000M");
         assert_eq!(link_label(&iface(None, false)), "virtual");
+    }
+
+    #[test]
+    fn network_loss_reports_the_lifetime_count_on_a_quiet_refresh() {
+        // wg0 as it stands on this machine: 944 transmit errors on the
+        // counter and nothing new in the last second.
+        let snap = NetSnapshot {
+            ifaces: vec![NetInfo {
+                name: "wg0".into(),
+                session_tx_packets: 7813,
+                session_tx_errs: 944,
+                ..NetInfo::default()
+            }],
+            ..NetSnapshot::default()
+        };
+        let (lifetime, this_refresh, worst) = network_loss(&snap);
+        assert_eq!(lifetime, 944);
+        assert_eq!(this_refresh, 0, "nothing new happened");
+        assert!((worst - 10.78).abs() < 0.01, "got {worst}");
+    }
+
+    #[test]
+    fn network_loss_is_silent_on_a_clean_machine() {
+        let snap = NetSnapshot {
+            ifaces: vec![NetInfo {
+                name: "eth0".into(),
+                session_rx_packets: 50_000,
+                session_tx_packets: 40_000,
+                ..NetInfo::default()
+            }],
+            ..NetSnapshot::default()
+        };
+        assert_eq!(network_loss(&snap), (0, 0, 0.0));
+    }
+
+    #[test]
+    fn idle_bridges_do_not_set_the_machine_wide_worst_percentage() {
+        // Eleven docker bridges at a literal 100%, and the one link that
+        // carries traffic losing 5%. The headline has to be 5%.
+        let mut ifaces = vec![NetInfo {
+            name: "wg0".into(),
+            session_tx_packets: 28_681,
+            session_tx_errs: 1_572,
+            ..NetInfo::default()
+        }];
+        ifaces.extend((0..11).map(|n| NetInfo {
+            name: format!("br-{n}"),
+            session_tx_drops: 1_293,
+            ..NetInfo::default()
+        }));
+        let snap = NetSnapshot {
+            ifaces,
+            ..NetSnapshot::default()
+        };
+
+        let (lifetime, _, worst) = network_loss(&snap);
+        assert_eq!(lifetime, 1_572 + 11 * 1_293, "every discard still counts");
+        assert!((worst - 5.19).abs() < 0.01, "got {worst}");
     }
 }

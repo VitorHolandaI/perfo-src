@@ -87,6 +87,15 @@ impl CpuMonitor {
 
     /// Full refresh: CPU + memory + all process stats + last-run CPU map.
     /// Expensive (tens of thousands of /proc reads); call sparingly (~every 2s).
+    /// Zero the per-interface packet loss figures from here on.
+    ///
+    /// The kernel's own counters run from boot, so the numbers a viewer opens
+    /// perfo to read start at whatever happened before they arrived. This is
+    /// how they ask for a clean slate.
+    pub fn reset_net_loss(&mut self) {
+        self.net.reset_loss();
+    }
+
     pub fn refresh(&mut self) {
         self.refresh_needs(CollectionNeeds::full(), true);
     }

@@ -167,8 +167,19 @@ Objetivo: distinguir trafego agregado de trafego por interface.
 
 - A lista mostra ate cinco interfaces, ordenadas por RX atual.
 - Para cada interface, `rx_bps` e `tx_bps` sao deltas de `rx_bytes` e `tx_bytes`.
-- O coletor tambem calcula packets/s, erros/s, drops/s, link Mbps e estado do
-  carrier; a UI atual mostra somente RX e TX.
+- O coletor tambem calcula packets/s, link Mbps e estado do carrier; a UI
+  atual mostra somente RX e TX.
+- Erros e descartes nao sao taxas: cada refresh devolve a contagem bruta
+  (`rx_errs`, `tx_drops`, ...), porque dividir um descarte isolado pelo
+  segundo decorrido truncava para zero e o evento desaparecia.
+- Os campos `session_*` acumulam pacotes, erros e descartes desde que o
+  binario abriu, nao desde o boot. Os contadores do kernel guardam horas de
+  historico que ninguem esta mais olhando: um bridge ocioso que descartou
+  tudo dias atras ficaria em 100% enquanto a maquina estiver ligada. A tecla
+  `X` rebaseia e zera essa janela.
+- `loss%` na tabela e `perdidos / (entregues + perdidos)` da pior direcao,
+  contando erro e descarte juntos: uma interface pode acumular milhares de um
+  e nenhum do outro.
 - Interfaces virtuais como `lo`, `veth` e `virbr` podem ter taxa valida, mas
   normalmente nao possuem velocidade ou conceito de carrier.
 
