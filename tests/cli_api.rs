@@ -54,6 +54,11 @@ fn widget_summary_contains_only_bar_metrics() {
         keys.cloned().collect::<std::collections::BTreeSet<_>>(),
         [
             "gpu".to_string(),
+            // Per-interface packet loss. The detail collector only lives
+            // while the widget's panel is open, so its loss window would be
+            // the seconds someone spends looking; this one runs all session.
+            // It costs one 3 KB read of /proc/net/dev per refresh.
+            "net_loss".to_string(),
             "npu".to_string(),
             "overall_percent".to_string(),
             "total_mem_bytes".to_string(),
