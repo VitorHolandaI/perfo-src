@@ -56,6 +56,10 @@ Column {
   readonly property bool isCustomZoom: zoomLabel === "CUSTOM"
   readonly property var activeHistory: isSessionRecording ? sessionRecordBuffer : (loadedSessionId.length > 0 ? loadedHistory : history)
   property int activeHistoryLength: 0
+  /// Mirrors TIMELINE_SCHEMA in src/recordings/timeline.rs. A sidecar written
+  /// by an older reducer is ignored rather than drawn as three flat lines.
+  readonly property int timelineSchema: 2
+
   readonly property string perfoBinPath: {
     var p = String(Qt.resolvedUrl("bin/perfo"))
     if (p.indexOf("file://") === 0) p = p.substring(7)
@@ -2514,7 +2518,11 @@ Column {
     if (str && str.length > 0) {
       try {
         var data = JSON.parse(str)
-        if (data && data.samples && data.samples.length > 0) {
+        // The schema has to match: a sidecar from an older reducer parses fine
+        // but holds a flat zero for cpu, mem and gpu. Mirrors TIMELINE_SCHEMA
+        // in src/recordings/timeline.rs.
+        if (data && data.schema === historyPage.timelineSchema
+            && data.samples && data.samples.length > 0) {
           return applyLoadedTimeline(data, recPath, recId, autoPlay, scrubToEnd)
         }
       } catch(e) {

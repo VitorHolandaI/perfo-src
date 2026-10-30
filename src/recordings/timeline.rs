@@ -16,6 +16,27 @@ fn timeline_cache_path(path: &Path) -> PathBuf {
     cache
 }
 
+/// Bumped whenever the reduced series change shape, so a sidecar written by an
+/// older build is rebuilt instead of served. Version 2 is the first that reads
+/// the float series and the `top_procs` key the TUI writes; version 1 sidecars
+/// hold a flat zero for cpu, mem and gpu.
+const TIMELINE_SCHEMA: u64 = 2;
+
+/// True while `sidecar` was written by this build's reducer.
+///
+/// A sidecar from an older schema is stale however recent it is: the bad one
+/// is always newer than the recording it derives from, so mtime alone would
+/// serve it forever.
+fn sidecar_schema_is_current(sidecar: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(sidecar) else {
+        return false;
+    };
+    serde_json::from_str::<Value>(&text)
+        .ok()
+        .and_then(|v| v.get("schema").and_then(|s| s.as_u64()))
+        .is_some_and(|v| v == TIMELINE_SCHEMA)
+}
+
 /// True while `sidecar` is at least as new as the file it derives from.
 ///
 /// An older sidecar describes content that has since changed, and a missing or
@@ -32,7 +53,7 @@ fn sidecar_is_current(source: &Path, sidecar: &Path) -> bool {
 
 /// The cached timeline, but only while its sidecar is still current.
 fn fresh_cached_timeline(path: &Path, cache_path: &Path) -> Option<String> {
-    if !sidecar_is_current(path, cache_path) {
+    if !sidecar_is_current(path, cache_path) || !sidecar_schema_is_current(cache_path) {
         return None;
     }
     fs::read_to_string(cache_path).ok()
@@ -45,12 +66,47 @@ fn str_field(val: &Value, key: &str, fallback: &str) -> String {
         .to_string()
 }
 
+/// A percentage series, read through `as_f64` so it survives both producers:
+/// the TUI writes `f32`, the widget writes a rounded integer, and `as_i64`
+/// answered `None` to every float the TUI recorded.
+///
+/// Rounded to one decimal because the panel concatenates these values straight
+/// into its status line, where full `f32` precision is noise.
+fn percent_field(sample: &Value, key: &str) -> f64 {
+    let raw = sample.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    if raw.is_finite() {
+        (raw * 10.0).round() / 10.0
+    } else {
+        0.0
+    }
+}
+
+/// A bytes-per-second series. Also read through `as_f64`, since a rate derived
+/// from a delta is not always written as a whole number; a negative one is
+/// clamped rather than wrapped to `u64::MAX`.
+fn rate_field(sample: &Value, key: &str) -> u64 {
+    let raw = sample.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+    if raw.is_finite() && raw > 0.0 {
+        raw.round() as u64
+    } else {
+        0
+    }
+}
+
+/// The recorded process list. `HistorySample` serialises it as `top_procs` and
+/// takes `processes` only as a deserialisation alias, so both names reach this
+/// code and reading just one of them loses the whole table.
+fn process_list(sample: &Value) -> Option<&Vec<Value>> {
+    sample
+        .get("top_procs")
+        .or_else(|| sample.get("processes"))
+        .and_then(|v| v.as_array())
+}
+
 /// One recorded sample reduced to the series the timeline draws, plus the name
 /// of whichever process led that sample.
 fn timeline_sample(sample: &Value) -> Value {
-    let top_process = sample
-        .get("processes")
-        .and_then(|v| v.as_array())
+    let top_process = process_list(sample)
         .and_then(|procs| procs.first())
         .map(|first| {
             first
@@ -64,15 +120,15 @@ fn timeline_sample(sample: &Value) -> Value {
 
     serde_json::json!({
         "timestamp": str_field(sample, "timestamp", ""),
-        "cpu": sample.get("cpu").and_then(|v| v.as_i64()).unwrap_or(0),
-        "mem": sample.get("mem").and_then(|v| v.as_i64()).unwrap_or(0),
+        "cpu": percent_field(sample, "cpu"),
+        "mem": percent_field(sample, "mem"),
         "io_mb": sample.get("io_mb").and_then(|v| v.as_f64()).unwrap_or(0.0),
-        "gpu": sample.get("gpu").and_then(|v| v.as_i64()).unwrap_or(0),
-        "read_bps": sample.get("read_bps").and_then(|v| v.as_u64()).unwrap_or(0),
-        "write_bps": sample.get("write_bps").and_then(|v| v.as_u64()).unwrap_or(0),
-        "net_rx_bps": sample.get("net_rx_bps").and_then(|v| v.as_u64()).unwrap_or(0),
-        "net_tx_bps": sample.get("net_tx_bps").and_then(|v| v.as_u64()).unwrap_or(0),
-        "net_rate": sample.get("net_rate").and_then(|v| v.as_u64()).unwrap_or(0),
+        "gpu": percent_field(sample, "gpu"),
+        "read_bps": rate_field(sample, "read_bps"),
+        "write_bps": rate_field(sample, "write_bps"),
+        "net_rx_bps": rate_field(sample, "net_rx_bps"),
+        "net_tx_bps": rate_field(sample, "net_tx_bps"),
+        "net_rate": rate_field(sample, "net_rate"),
         "top_process": top_process,
     })
 }
@@ -91,6 +147,7 @@ fn timeline_document(path: &Path, val: &Value) -> Value {
         .unwrap_or_default();
 
     serde_json::json!({
+        "schema": TIMELINE_SCHEMA,
         "id": str_field(val, "id", ""),
         "filename": str_field(val, "filename", ""),
         "path": path.to_string_lossy().to_string(),
@@ -297,9 +354,8 @@ pub fn inspect_recording(target: &str, index: usize, window: usize) -> io::Resul
                 let mut out_slices = Vec::with_capacity(parsed.len());
                 for (i, s) in (start..=end).zip(parsed) {
                     let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-                    let procs = s
-                        .get("processes")
-                        .cloned()
+                    let procs = process_list(&s)
+                        .map(|p| Value::Array(p.clone()))
                         .unwrap_or_else(|| Value::Array(Vec::new()));
                     out_slices.push(serde_json::json!({
                         "index": i,
@@ -343,9 +399,8 @@ fn legacy_inspect_slices(path: &Path, start: usize, end: usize) -> io::Result<Ve
     for i in start..=end {
         if let Some(s) = samples.get(i) {
             let ts = s.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
-            let procs = s
-                .get("processes")
-                .cloned()
+            let procs = process_list(s)
+                .map(|p| Value::Array(p.clone()))
                 .unwrap_or_else(|| Value::Array(Vec::new()));
             slices.push(serde_json::json!({
                 "index": i,
@@ -484,10 +539,18 @@ mod tests {
         assert_eq!(reduced["timestamp"], "t0");
         // A sample recorded before a series existed must still draw as a gap
         // at zero rather than break the chart with a null.
-        for key in ["cpu", "mem", "gpu", "read_bps", "net_rate"] {
+        for key in [
+            "read_bps",
+            "write_bps",
+            "net_rx_bps",
+            "net_tx_bps",
+            "net_rate",
+        ] {
             assert_eq!(reduced[key], 0, "{key} should default to 0");
         }
-        assert_eq!(reduced["io_mb"], 0.0);
+        for key in ["cpu", "mem", "gpu", "io_mb"] {
+            assert_eq!(reduced[key], 0.0, "{key} should default to 0.0");
+        }
         assert_eq!(reduced["top_process"], "");
     }
 
@@ -544,6 +607,32 @@ mod tests {
         assert_eq!(doc["sample_count"], 0);
     }
 
+    /// Every recording made before this fix has a sidecar holding a flat zero
+    /// for cpu, mem and gpu, and that sidecar is newer than the recording it
+    /// came from, so mtime alone would serve the broken reduction forever.
+    #[test]
+    fn a_sidecar_from_an_older_schema_is_rebuilt_however_recent_it_is() {
+        let (rec, _) = recording_fixture("sidecar-schema", r#"{"samples":[]}"#);
+        let cache = timeline_cache_path(&rec);
+
+        fs::write(&cache, "{\"id\":\"rec\",\"samples\":[]}").expect("write v1 cache");
+        assert!(sidecar_is_current(&rec, &cache));
+        assert!(!sidecar_schema_is_current(&cache));
+        assert!(fresh_cached_timeline(&rec, &cache).is_none());
+
+        fs::write(&cache, "{\"schema\":1}").expect("write v1 cache");
+        assert!(!sidecar_schema_is_current(&cache));
+
+        fs::write(&cache, "not json at all").expect("write junk");
+        assert!(!sidecar_schema_is_current(&cache));
+    }
+
+    #[test]
+    fn a_timeline_document_carries_the_schema_it_was_reduced_with() {
+        let doc = timeline_document(Path::new("/store/rec.json"), &serde_json::json!({}));
+        assert_eq!(doc["schema"], TIMELINE_SCHEMA);
+    }
+
     #[test]
     fn a_sidecar_older_than_its_source_is_not_current() {
         let (rec, _) = recording_fixture("sidecar-age", r#"{"samples":[]}"#);
@@ -554,11 +643,11 @@ mod tests {
         assert!(!sidecar_is_current(&rec, &cache));
         assert!(fresh_cached_timeline(&rec, &cache).is_none());
 
-        fs::write(&cache, "{\"cached\":true}").expect("write cache");
+        fs::write(&cache, "{\"schema\":2,\"cached\":true}").expect("write cache");
         assert!(sidecar_is_current(&rec, &cache));
         assert_eq!(
             fresh_cached_timeline(&rec, &cache).as_deref(),
-            Some("{\"cached\":true}")
+            Some("{\"schema\":2,\"cached\":true}")
         );
 
         filetime_set(
@@ -582,5 +671,81 @@ mod tests {
 
         let err = legacy_inspect_slices(&rec, 0, 1).expect_err("missing samples must fail");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// The TUI serialises `cpu`, `mem` and `gpu` from `f32`, so they reach the
+    /// reducer as JSON floats. Reading them as integers silently dropped every
+    /// one of them and the replay drew three flat lines at zero.
+    #[test]
+    fn timeline_sample_keeps_the_float_series_the_tui_records() {
+        let reduced = timeline_sample(&serde_json::json!({
+            "cpu": 1.2512030601501465_f64,
+            "mem": 60.941959381103516_f64,
+            "gpu": 37.5_f64,
+            "io_mb": 3742.72_f64,
+        }));
+
+        // Rounded to one decimal: the panel concatenates these straight into
+        // its status line, where full f32 precision is unreadable.
+        assert_eq!(reduced["cpu"], 1.3);
+        assert_eq!(reduced["mem"], 60.9);
+        assert_eq!(reduced["gpu"], 37.5);
+        assert_eq!(reduced["io_mb"], 3742.72);
+    }
+
+    /// The widget rounds its own samples before writing them, so the same
+    /// series arrives as integers from that producer.
+    #[test]
+    fn timeline_sample_keeps_the_integer_series_the_widget_records() {
+        let reduced = timeline_sample(&serde_json::json!({"cpu": 10, "mem": 61, "gpu": 0}));
+
+        assert_eq!(reduced["cpu"], 10.0);
+        assert_eq!(reduced["mem"], 61.0);
+        assert_eq!(reduced["gpu"], 0.0);
+    }
+
+    /// `HistorySample` serialises the list as `top_procs` and only accepts
+    /// `processes` as a deserialisation alias, so the reducer has to know both
+    /// names or it never finds the leading process of a TUI recording.
+    #[test]
+    fn timeline_sample_names_the_leading_process_under_either_key() {
+        let from_tui = timeline_sample(&serde_json::json!({
+            "top_procs": [{"name": "cargo", "cmd": "/usr/bin/cargo"}]
+        }));
+        assert_eq!(from_tui["top_process"], "cargo");
+
+        let from_widget = timeline_sample(&serde_json::json!({
+            "processes": [{"name": "firefox"}]
+        }));
+        assert_eq!(from_widget["top_process"], "firefox");
+    }
+
+    /// A rate written as a float still has to land as a whole number of bytes
+    /// per second rather than default to zero.
+    #[test]
+    fn timeline_sample_rounds_a_rate_written_as_a_float() {
+        let reduced = timeline_sample(&serde_json::json!({
+            "read_bps": 1024.7_f64,
+            "net_rx_bps": -5.0_f64,
+        }));
+
+        assert_eq!(reduced["read_bps"], 1025);
+        // A negative rate is not a thing; clamping beats wrapping to u64::MAX.
+        assert_eq!(reduced["net_rx_bps"], 0);
+    }
+
+    #[test]
+    fn legacy_slices_carry_the_process_list_under_either_key() {
+        let (rec, _) = recording_fixture(
+            "either-key",
+            r#"{"samples":[
+                {"timestamp":"t0","top_procs":[{"pid":1},{"pid":2}]},
+                {"timestamp":"t1","processes":[{"pid":3}]}
+            ]}"#,
+        );
+
+        let slices = legacy_inspect_slices(&rec, 0, 1).expect("slice the recording");
+        assert_eq!(slices[0]["processes"].as_array().expect("array").len(), 2);
+        assert_eq!(slices[1]["processes"].as_array().expect("array").len(), 1);
     }
 }
