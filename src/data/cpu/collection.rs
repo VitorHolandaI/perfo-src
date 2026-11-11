@@ -349,13 +349,20 @@ impl RecordingMask {
             process_affinity: self.cpu,
             memory: self.mem,
             process_memory: self.mem,
-            disks: self.io,
+            // Disk and GPU temperatures ride along with their device lists, so
+            // ticking Thermal without IO or GPU has to enumerate them anyway
+            // or those two readings record as `null` on a machine that has
+            // them.
+            disks: self.io || self.temp,
             process_io: self.io,
             network: self.net,
             network_processes: self.net,
-            gpu: self.gpu,
+            gpu: self.gpu || self.temp,
             gpu_processes: self.gpu,
             npu: self.npu,
+            cpu_temperatures: self.temp,
+            disk_temperatures: self.temp,
+            fans: self.temp,
             ..CollectionNeeds::default()
         }
     }

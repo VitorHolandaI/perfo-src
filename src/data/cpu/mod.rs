@@ -301,6 +301,46 @@ mod tests {
         assert!(!hist_needs.gpu);
     }
 
+    /// The recording path replaces the History profile's own needs with the
+    /// mask's, so a thermal flag that `to_needs` forgets is never collected no
+    /// matter what `CollectionProfile::History` asks for.
+    #[test]
+    fn a_thermal_mask_collects_the_thermal_sensors() {
+        let mask = RecordingMask {
+            temp: true,
+            ..RecordingMask::NONE
+        };
+        let needs =
+            CollectionPlan::with_recording_mask(CollectionProfile::History, true, mask).needs();
+        assert!(needs.cpu_temperatures);
+        assert!(needs.disk_temperatures);
+        assert!(needs.fans);
+        // Both readings come off a device list, so Thermal has to pull the
+        // lists in even when the user left IO and GPU unticked.
+        assert!(needs.disks);
+        assert!(needs.gpu);
+        // What it must NOT drag in: Thermal is not an excuse to walk every
+        // process.
+        assert!(!needs.processes);
+        assert!(!needs.process_io);
+        assert!(!needs.network);
+    }
+
+    /// Dropping the thermal box has to switch the sensors off again, otherwise
+    /// the mask stops being the thing that decides what a recording costs.
+    #[test]
+    fn a_mask_without_temp_leaves_the_thermal_sensors_alone() {
+        let mask = RecordingMask {
+            cpu: true,
+            ..RecordingMask::NONE
+        };
+        let needs =
+            CollectionPlan::with_recording_mask(CollectionProfile::History, true, mask).needs();
+        assert!(!needs.cpu_temperatures);
+        assert!(!needs.disk_temperatures);
+        assert!(!needs.fans);
+    }
+
     #[test]
     fn last_cpu_from_stat_reads_field_39() {
         let stat = "123 (my app (worker) v2) S 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 7 38";

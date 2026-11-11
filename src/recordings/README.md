@@ -84,7 +84,7 @@ Replaying in the widget: `record timeline` for the chart, then one
 
 ## Changing what a sample holds
 
-Adding a series touches five places, and missing one of them fails quietly
+Adding a series touches seven places, and missing one of them fails quietly
 rather than loudly:
 
 1. `HistorySample` in `src/tui/history/mod.rs` — the field, with
@@ -92,9 +92,18 @@ rather than loudly:
 2. `HistoryState::record_snapshot` in `src/tui/history/record.rs` — filling it,
    and zeroing it when its `RecordingMask` flag is off.
 3. `CollectionProfile::History` in `src/data/cpu/collection.rs` — the collector
-   flag, if the data is gated. Without it the recording keeps whatever the
-   visible page happened to collect.
-4. `timeline_sample` here, plus a `TIMELINE_SCHEMA` bump and the matching
+   flag, if the data is gated. Without it the *live* History page keeps
+   whatever the visible page happened to collect.
+4. `RecordingMask::to_needs`, in the same file, and this one is the trap: while
+   `plan.recording` is on, `CollectionPlan::needs` throws History's own needs
+   away and uses the mask's instead. A flag that only item 3 sets is never
+   collected during a recording, which is the one case it was added for. Check
+   whether the reading rides on a device list, too: disk and GPU temperatures
+   need `disks` and `gpu` on, so `to_needs` turns those on for `temp`.
+5. `recordingMask` in `BarWidget.qml` — the widget's picker reaches the
+   collector only through this string, and the collector ignores a name it does
+   not know, so an omission here reads as "the user unticked it".
+6. `timeline_sample` here, plus a `TIMELINE_SCHEMA` bump and the matching
    `timelineSchema` in `HistoryPage.qml`.
-5. `sampleFromSnapshot` in `Panel.qml`, so widget-made recordings carry it too.
+7. `sampleFromSnapshot` in `Panel.qml`, so widget-made recordings carry it too.
    The two producers disagree on shape already; do not widen the gap.
