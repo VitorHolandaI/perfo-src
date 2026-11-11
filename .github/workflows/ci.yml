@@ -42,45 +42,51 @@ jobs:
         run: |
           # Lint against the Qt that Omarchy actually ships, not the one the
           # runner image happens to carry. Omarchy is Arch, so an Arch
-          # container is the Qt its users run: quickshell 0.3.2 here links
+          # container is the Qt its users run: quickshell 0.3.2 links
           # libQt6Core.so.6.12.0, while ubuntu-latest carried 6.10.2. Linting
-          # on the older one masks anything the newer parser rejects.
+          # on the older parser masks whatever the newer one rejects.
           #
-          # This follows Arch rolling on purpose. A Qt bump that breaks the
-          # plugin then fails here instead of in the field, which is the whole
-          # point; the cost is that CI can change without a commit.
+          # This follows Arch rolling on purpose. A Qt bump that would break
+          # the plugin fails here instead of in the field; the cost is that CI
+          # can change without a commit.
           #
           # quickshell itself is deliberately NOT installed. Measured on a
           # machine that has it: qmllint reports no import diagnostics either
-          # way, even with --import forced to warning, so pulling it from
-          # Omarchy's package repository would mean trusting a third-party
+          # way, even with --import forced to warning, so pulling it from the
+          # Omarchy package repository would mean trusting a third-party
           # signing key in CI for no detection gain.
-          docker run --rm -v "$PWD:/src:ro" -w /src archlinux:base bash -euo pipefail -c '
-            # -Syu, not -Sy: a partial upgrade installs the new Qt against
-            # the image's older openssl, and qmllint then dies on a missing
-            # libcrypto.so.4 before it reads a single file.
-            pacman -Syu --noconfirm --needed qt6-declarative >/dev/null 2>&1
-            qmllint_bin=/usr/lib/qt6/bin/qmllint
-            test -x "$qmllint_bin"
-            "$qmllint_bin" --version
+          #
+          # The script goes in on stdin through a quoted heredoc rather than
+          # inside `bash -c '...'`: an apostrophe in a comment closed that
+          # quoted string and broke the whole step, which is a trap worth
+          # designing out rather than escaping around.
+          docker run --rm -i -v "$PWD:/src:ro" -w /src archlinux:base \
+            bash -euo pipefail -s <<'QMLLINT'
+          # -Syu rather than -Sy: a partial upgrade installs the new Qt
+          # against the older openssl in the image, and qmllint then dies on a
+          # missing libcrypto.so.4 before it reads a single file.
+          pacman -Syu --noconfirm --needed qt6-declarative >/dev/null
+          qmllint_bin=/usr/lib/qt6/bin/qmllint
+          test -x "$qmllint_bin"
+          "$qmllint_bin" --version
 
-            # This step checks that the QML parses. The semantic categories are
-            # turned off because Quickshell qs.* modules are absent, so type
-            # and property resolution fails on every line of a file that is
-            # valid on the target.
-            #
-            # Which categories exist moves between Qt releases: 6.10 dropped
-            # --type and --property and 6.12 has not brought them back, and the
-            # runner image picked that up silently, failing this step with
-            # "Unknown options: type, property". So ask the binary.
-            help_text="$("$qmllint_bin" --help-all 2>&1 || true)"
-            flags=()
-            for category in import type property unqualified; do
-              if printf "%s" "$help_text" | grep -q -- "--$category "; then
-                flags+=("--$category" disable)
-              fi
-            done
-            echo "qmllint categories disabled: ${flags[*]:-none available}"
-            "$qmllint_bin" "${flags[@]}" \
-              BarWidget.qml Panel.qml ProcessGrid.qml GpuPage.qml HistoryPage.qml
-          '
+          # This step checks that the QML parses. The semantic categories are
+          # turned off because the Quickshell qs.* modules are absent, so type
+          # and property resolution fails on every line of a file that is
+          # valid on the target.
+          #
+          # Which categories exist moves between Qt releases: 6.10 dropped
+          # --type and --property, 6.12 has not brought them back, and the
+          # runner image picked that up silently, failing this step with
+          # "Unknown options: type, property". So ask the binary.
+          help_text="$("$qmllint_bin" --help-all 2>&1 || true)"
+          flags=()
+          for category in import type property unqualified; do
+            if printf '%s' "$help_text" | grep -q -- "--$category "; then
+              flags+=("--$category" disable)
+            fi
+          done
+          echo "qmllint categories disabled: ${flags[*]:-none available}"
+          "$qmllint_bin" "${flags[@]}" \
+            BarWidget.qml Panel.qml ProcessGrid.qml GpuPage.qml HistoryPage.qml
+          QMLLINT
