@@ -1,12 +1,16 @@
 //! Network interface, socket and per-process traffic collection.
 
 mod inet_diag;
+mod loss;
 mod monitor;
 mod parse;
 mod ports;
 mod sockets;
 
+pub use loss::{InterfaceLoss, NetLossMonitor};
 pub use monitor::NetMonitor;
+
+use loss::loss_pct;
 
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -26,19 +30,59 @@ pub struct NetInfo {
     pub tx_bps: u64,
     pub rx_pps: u64,
     pub tx_pps: u64,
-    pub rx_errs_s: u64,
-    pub tx_errs_s: u64,
-    pub rx_drops_s: u64,
-    pub tx_drops_s: u64,
+    /// Errors and discards seen since the previous refresh, as counts rather
+    /// than per-second rates: one drop a second divided by the elapsed time
+    /// truncated to zero, which hid every isolated event.
+    pub rx_errs: u64,
+    pub tx_errs: u64,
+    pub rx_drops: u64,
+    pub tx_drops: u64,
     pub link_mbps: Option<u64>,
     pub link_up: bool,
     pub total_rx_bytes: u64,
     pub total_tx_bytes: u64,
+    /// Packets carried and lost since this monitor started, or since the
+    /// viewer last zeroed them.
+    ///
+    /// Not the kernel's own counters: those run from boot and keep hours of
+    /// history nobody is looking at any more, so a bridge that discarded
+    /// every frame last week would sit at 100% forever. A rate alone will not
+    /// do either, because a link bleeding all day reports zero on a quiet
+    /// second.
+    pub session_rx_packets: u64,
+    pub session_tx_packets: u64,
+    pub session_rx_errs: u64,
+    pub session_tx_errs: u64,
+    pub session_rx_drops: u64,
+    pub session_tx_drops: u64,
     /// rx/tx rate rings (newest last) for the network sparklines.
     #[serde(skip)]
     pub rx_hist: VecDeque<f32>,
     #[serde(skip)]
     pub tx_hist: VecDeque<f32>,
+}
+
+impl NetInfo {
+    /// Share of inbound packets this interface failed to deliver, in percent.
+    ///
+    /// ```ignore
+    /// // 1 discard out of 99 delivered plus that discard: 1.0
+    /// let pct = iface.rx_loss_pct();
+    /// ```
+    pub fn rx_loss_pct(&self) -> f32 {
+        loss_pct(
+            self.session_rx_packets,
+            self.session_rx_errs + self.session_rx_drops,
+        )
+    }
+
+    /// Share of outbound packets this interface failed to send, in percent.
+    pub fn tx_loss_pct(&self) -> f32 {
+        loss_pct(
+            self.session_tx_packets,
+            self.session_tx_errs + self.session_tx_drops,
+        )
+    }
 }
 
 #[derive(Clone, Serialize, Default)]

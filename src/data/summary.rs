@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, RefreshKind, System};
 
 use super::gpu::GpuMonitor;
+use super::net::{InterfaceLoss, NetLossMonitor};
 use super::npu::NpuMonitor;
 
 const GPU_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
@@ -34,6 +35,13 @@ pub struct WidgetSummarySnapshot {
     pub used_mem_bytes: u64,
     pub gpu: WidgetGpuSummary,
     pub npu: WidgetNpuSummary,
+    /// Packet loss per interface since this collector started.
+    ///
+    /// It belongs to the summary and not to the full snapshot because the
+    /// widget's detail collector only lives while the panel is open, so its
+    /// window would be the few seconds someone spends looking. This one runs
+    /// in the background and answers what was lost while nobody was watching.
+    pub net_loss: Vec<InterfaceLoss>,
 }
 
 pub struct WidgetSummaryMonitor {
@@ -41,6 +49,9 @@ pub struct WidgetSummaryMonitor {
     gpu: GpuMonitor,
     gpu_sampled_at: Option<Instant>,
     npu: NpuMonitor,
+    net_loss: NetLossMonitor,
+    /// Last loss sample, because `snapshot` cannot read /proc.
+    losses: Vec<InterfaceLoss>,
 }
 
 impl Default for WidgetSummaryMonitor {
@@ -63,6 +74,8 @@ impl WidgetSummaryMonitor {
             gpu,
             gpu_sampled_at: Some(Instant::now()),
             npu: NpuMonitor::new(),
+            net_loss: NetLossMonitor::new(),
+            losses: Vec::new(),
         };
         monitor.refresh();
         monitor
@@ -77,6 +90,10 @@ impl WidgetSummaryMonitor {
             self.gpu_sampled_at = Some(now);
         }
         self.npu.refresh();
+        // One 3 KB file read. The full NetMonitor also dumps sockets over
+        // netlink and walks /proc/<pid>/fd, which this collector runs for the
+        // whole session and must not pay for.
+        self.losses = self.net_loss.refresh();
     }
 
     pub fn snapshot(&self) -> WidgetSummarySnapshot {
@@ -95,6 +112,7 @@ impl WidgetSummaryMonitor {
                     })
                     .collect(),
             },
+            net_loss: self.losses.clone(),
             npu: WidgetNpuSummary {
                 devices: self
                     .npu

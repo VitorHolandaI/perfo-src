@@ -3,7 +3,7 @@
 use crate::data::cpu::CpuSnapshot;
 
 use super::format::format_local_time;
-use super::{HistoryProcess, HistorySample, HistoryState};
+use super::{HistoryProcess, HistorySample, HistoryState, SampleThermals};
 
 impl HistoryState {
     /// Total read and write rates across every disk in the snapshot.
@@ -161,6 +161,41 @@ impl HistoryState {
         procs
     }
 
+    /// The hottest reading of a device list, or `None` when no device in it
+    /// has a sensor. The hottest is what throttles; an average hides it.
+    fn hottest(readings: impl Iterator<Item = Option<f32>>) -> Option<i16> {
+        readings
+            .flatten()
+            .filter(|c| c.is_finite())
+            .fold(None, |acc: Option<f32>, c| {
+                Some(acc.map_or(c, |a| a.max(c)))
+            })
+            .map(|c| c.round() as i16)
+    }
+
+    /// Every thermal series of one snapshot, reduced to what a sample keeps.
+    pub(super) fn thermals(snap: &CpuSnapshot) -> SampleThermals {
+        SampleThermals {
+            cpu_temp_c: Self::hottest(std::iter::once(snap.cpu_temp_c)),
+            gpu_temp_c: Self::hottest(snap.gpu.devices.iter().map(|d| d.temperature_c)),
+            disk_temp_c: Self::hottest(snap.disks.iter().map(|d| d.temp_c)),
+            // A fan always answers a number, so an empty list is the only way
+            // this machine can mean "no cooler"; a stopped fan is a real 0.
+            fan_rpm: snap
+                .fans
+                .fans
+                .iter()
+                .map(|f| f.rpm)
+                .max()
+                .map(|rpm| rpm.min(u32::MAX as u64) as u32),
+            per_core_temp_c: snap
+                .per_core_temp_c
+                .iter()
+                .map(|c| Self::hottest(std::iter::once(*c)))
+                .collect(),
+        }
+    }
+
     pub fn record_snapshot(&mut self, snap: &CpuSnapshot) {
         if !self.recording {
             return;
@@ -178,6 +213,7 @@ impl HistoryState {
         let io_mb = (read_bps + write_bps) as f32 / 1_000_000.0;
         let (gpu_pct, gpu_procs) = Self::gpu_usage(snap);
         let procs = Self::top_processes(snap, &gpu_procs, self.record_process_depth);
+        let thermals = Self::thermals(snap);
 
         if self.samples.len() >= self.max_samples {
             self.samples.pop_front();
@@ -194,6 +230,11 @@ impl HistoryState {
             net_rx_bps: snap.net.totals.rx_bps,
             net_tx_bps: snap.net.totals.tx_bps,
             top_procs: procs,
+            cpu_temp_c: thermals.cpu_temp_c,
+            gpu_temp_c: thermals.gpu_temp_c,
+            disk_temp_c: thermals.disk_temp_c,
+            fan_rpm: thermals.fan_rpm,
+            per_core_temp_c: thermals.per_core_temp_c,
         };
 
         if self.is_session_recording {
@@ -215,6 +256,13 @@ impl HistoryState {
             }
             if !self.recording_mask.gpu {
                 rec_sample.gpu = 0.0;
+            }
+            if !self.recording_mask.temp {
+                rec_sample.cpu_temp_c = None;
+                rec_sample.gpu_temp_c = None;
+                rec_sample.disk_temp_c = None;
+                rec_sample.fan_rpm = None;
+                rec_sample.per_core_temp_c.clear();
             }
             for p in &mut rec_sample.top_procs {
                 if !self.recording_mask.cpu {
@@ -255,6 +303,8 @@ mod tests {
     use super::super::HistoryState;
     use crate::data::cpu::CpuSnapshot;
     use crate::data::cpu::ProcessInfo;
+    use crate::data::disk::DiskInfo;
+    use crate::data::fan::{FanInfo, FanSnapshot};
 
     /// A snapshot carrying `n` processes and nothing else, so a depth test is
     /// not also a test of GPU or socket merging.
@@ -291,5 +341,92 @@ mod tests {
     fn a_depth_above_the_process_count_keeps_what_there_is() {
         let snap = snapshot_with(12);
         assert_eq!(HistoryState::top_processes(&snap, &[], 100).len(), 12);
+    }
+
+    fn thermal_snapshot() -> CpuSnapshot {
+        CpuSnapshot {
+            cpu_temp_c: Some(61.4),
+            per_core_temp_c: vec![Some(52.0), None, Some(68.6)],
+            disks: vec![
+                DiskInfo {
+                    temp_c: Some(33.85),
+                    ..DiskInfo::default()
+                },
+                DiskInfo {
+                    temp_c: Some(41.2),
+                    ..DiskInfo::default()
+                },
+                DiskInfo {
+                    temp_c: None,
+                    ..DiskInfo::default()
+                },
+            ],
+            fans: FanSnapshot {
+                fans: vec![
+                    FanInfo {
+                        rpm: 2542,
+                        ..FanInfo::default()
+                    },
+                    FanInfo {
+                        rpm: 3100,
+                        ..FanInfo::default()
+                    },
+                ],
+            },
+            ..CpuSnapshot::default()
+        }
+    }
+
+    /// Each device list reduces to its hottest member, because the hottest is
+    /// the one that throttles; an average would hide it.
+    #[test]
+    fn thermals_keep_the_hottest_of_each_device_list() {
+        let t = HistoryState::thermals(&thermal_snapshot());
+
+        assert_eq!(t.disk_temp_c, Some(41));
+        assert_eq!(t.fan_rpm, Some(3100));
+    }
+
+    /// Whole degrees: a tenth of a degree is sensor noise, and halving the
+    /// digits matters across thousands of samples.
+    #[test]
+    fn thermals_round_to_whole_degrees() {
+        let t = HistoryState::thermals(&thermal_snapshot());
+
+        assert_eq!(t.cpu_temp_c, Some(61));
+        assert_eq!(t.disk_temp_c, Some(41));
+        assert_eq!(t.per_core_temp_c, vec![Some(52), None, Some(69)]);
+    }
+
+    /// A machine with no sensor must record `None`, never 0: this build runs on
+    /// Intel GPUs that report no temperature at all, and 0 degrees reads as a
+    /// real cold measurement.
+    #[test]
+    fn a_missing_sensor_records_none_rather_than_zero() {
+        let t = HistoryState::thermals(&CpuSnapshot::default());
+
+        assert_eq!(t.cpu_temp_c, None);
+        assert_eq!(t.gpu_temp_c, None);
+        assert_eq!(t.disk_temp_c, None);
+        assert_eq!(t.fan_rpm, None);
+        assert!(t.per_core_temp_c.is_empty());
+    }
+
+    /// A disk list where every entry lacks a sensor is the same as no list.
+    /// A fan always reports a number, so a stopped fan is a real 0 RPM and an
+    /// empty list is the only way to mean "no cooler".
+    #[test]
+    fn a_device_list_with_no_readings_records_none() {
+        let snap = CpuSnapshot {
+            disks: vec![DiskInfo::default(), DiskInfo::default()],
+            fans: FanSnapshot {
+                fans: vec![FanInfo::default()],
+            },
+            ..CpuSnapshot::default()
+        };
+
+        let t = HistoryState::thermals(&snap);
+        assert_eq!(t.disk_temp_c, None);
+        assert_eq!(t.fan_rpm, Some(0));
     }
 }

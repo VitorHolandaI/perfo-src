@@ -12,7 +12,8 @@ use super::super::clipboard::{copy_to_clipboard, get_process_full_cmd};
 use super::super::cpu::Pane;
 use super::super::{Lang, State};
 use super::{
-    focus_pane, handle_nav_key, select_menu_pane, toggle_core_filter, toggle_lang, toggle_theme,
+    focus_pane, handle_nav_key, request_loss_reset, select_menu_pane, toggle_core_filter,
+    toggle_lang, toggle_theme,
 };
 
 pub(super) fn handle_normal_key(
@@ -121,6 +122,7 @@ pub(super) fn handle_dashboard_key(
         KeyCode::Char('?') | KeyCode::F(1) | KeyCode::Char('h') => state.help = true,
         KeyCode::Char('m') => state.show_menu = !state.show_menu,
         KeyCode::Char('z') | KeyCode::Char('Z') => state.paused = !state.paused,
+        KeyCode::Char('X') => request_loss_reset(state),
         KeyCode::Char('C') => {
             toggle_theme(state, system_theme);
         }
@@ -179,6 +181,25 @@ mod tests {
         handle_key(&mut s, &[], KeyCode::Char('C'), KeyModifiers::empty(), None);
         assert!(!s.use_system_theme);
         assert_eq!(s.status_msg.as_deref(), Some("theme: default"));
+    }
+
+    #[test]
+    fn the_loss_reset_key_works_from_the_dashboard_and_from_a_pane() {
+        // Two dispatch paths reach it, and a viewer staring at the NET pane is
+        // the one most likely to want it, so both have to be wired.
+        for fullscreen in [false, true] {
+            let mut s = State {
+                fullscreen,
+                ..State::default()
+            };
+            handle_key(&mut s, &[], KeyCode::Char('X'), KeyModifiers::empty(), None);
+            assert!(s.reset_net_loss, "fullscreen={fullscreen}");
+            assert_eq!(
+                s.status_msg.as_deref(),
+                Some("Network loss counters zeroed"),
+                "fullscreen={fullscreen}"
+            );
+        }
     }
 
     #[test]

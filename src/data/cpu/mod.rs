@@ -219,6 +219,13 @@ mod tests {
         assert!(needs.gpu);
         assert!(needs.processes);
         assert!(needs.process_io);
+        // Thermal data is recorded too, and the collectors are gated: without
+        // these the recording kept whatever the visible page happened to
+        // collect, so temperature was present on the dashboard and absent on
+        // the NET page.
+        assert!(needs.cpu_temperatures);
+        assert!(needs.disk_temperatures);
+        assert!(needs.fans);
     }
 
     #[test]
@@ -267,10 +274,7 @@ mod tests {
         let mask = RecordingMask {
             cpu: true,
             mem: true,
-            io: false,
-            net: false,
-            gpu: false,
-            npu: false,
+            ..RecordingMask::NONE
         };
         assert_eq!(mask.count(), 2);
         assert_eq!(mask.summary(), "CPU,MEM");
@@ -295,6 +299,46 @@ mod tests {
         assert!(!hist_needs.network);
         assert!(!hist_needs.network_processes);
         assert!(!hist_needs.gpu);
+    }
+
+    /// The recording path replaces the History profile's own needs with the
+    /// mask's, so a thermal flag that `to_needs` forgets is never collected no
+    /// matter what `CollectionProfile::History` asks for.
+    #[test]
+    fn a_thermal_mask_collects_the_thermal_sensors() {
+        let mask = RecordingMask {
+            temp: true,
+            ..RecordingMask::NONE
+        };
+        let needs =
+            CollectionPlan::with_recording_mask(CollectionProfile::History, true, mask).needs();
+        assert!(needs.cpu_temperatures);
+        assert!(needs.disk_temperatures);
+        assert!(needs.fans);
+        // Both readings come off a device list, so Thermal has to pull the
+        // lists in even when the user left IO and GPU unticked.
+        assert!(needs.disks);
+        assert!(needs.gpu);
+        // What it must NOT drag in: Thermal is not an excuse to walk every
+        // process.
+        assert!(!needs.processes);
+        assert!(!needs.process_io);
+        assert!(!needs.network);
+    }
+
+    /// Dropping the thermal box has to switch the sensors off again, otherwise
+    /// the mask stops being the thing that decides what a recording costs.
+    #[test]
+    fn a_mask_without_temp_leaves_the_thermal_sensors_alone() {
+        let mask = RecordingMask {
+            cpu: true,
+            ..RecordingMask::NONE
+        };
+        let needs =
+            CollectionPlan::with_recording_mask(CollectionProfile::History, true, mask).needs();
+        assert!(!needs.cpu_temperatures);
+        assert!(!needs.disk_temperatures);
+        assert!(!needs.fans);
     }
 
     #[test]

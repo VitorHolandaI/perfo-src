@@ -48,6 +48,7 @@ Column {
   property bool recordIo: true
   property bool recordNet: true
   property bool recordGpu: true
+  property bool recordTemp: true
 
   signal toggleRecordingRequested()
   signal requestCapacity(int samples)
@@ -56,6 +57,10 @@ Column {
   readonly property bool isCustomZoom: zoomLabel === "CUSTOM"
   readonly property var activeHistory: isSessionRecording ? sessionRecordBuffer : (loadedSessionId.length > 0 ? loadedHistory : history)
   property int activeHistoryLength: 0
+  /// Mirrors TIMELINE_SCHEMA in src/recordings/timeline.rs. A sidecar written
+  /// by an older reducer is ignored rather than drawn as three flat lines.
+  readonly property int timelineSchema: 3
+
   readonly property string perfoBinPath: {
     var p = String(Qt.resolvedUrl("bin/perfo"))
     if (p.indexOf("file://") === 0) p = p.substring(7)
@@ -104,6 +109,14 @@ Column {
         s.net_tx_bps = 0
       }
       if (!recordGpu) s.gpu = 0.0
+      if (!recordTemp) {
+        // null, not 0: an unrecorded sensor is absent, not cold.
+        s.cpu_temp_c = null
+        s.gpu_temp_c = null
+        s.disk_temp_c = null
+        s.fan_rpm = null
+        s.per_core_temp_c = []
+      }
       if (s.top_procs && Array.isArray(s.top_procs)) {
         s.top_procs = s.top_procs.map(function(p) {
           var cp = Object.assign({}, p)
@@ -433,13 +446,13 @@ Column {
       font.bold: true
     }
 
-    // Metric selector pills: CPU, MEM, IO, NET, GPU
+    // Metric selector pills: CPU, MEM, IO, NET, GPU, TEMP
     Row {
       spacing: Style.space(3)
       anchors.verticalCenter: parent.verticalCenter
 
       Repeater {
-        model: ["CPU", "MEM", "IO", "NET", "GPU"]
+        model: ["CPU", "MEM", "IO", "NET", "GPU", "TEMP"]
         delegate: Rectangle {
           width: Style.space(30)
           height: Style.space(18)
@@ -1147,7 +1160,7 @@ Column {
         }
 
         Repeater {
-          model: ["CPU", "MEM", "IO", "NET", "GPU"]
+          model: ["CPU", "MEM", "IO", "NET", "GPU", "TEMP"]
           delegate: Rectangle {
             id: metricPillBox
             readonly property bool isChecked: historyPage.isRecordSubsystemChecked(modelData)
@@ -1180,7 +1193,7 @@ Column {
         // ALL toggle button
         Rectangle {
           id: allBtnBox
-          readonly property bool allChecked: historyPage.recordCpu && historyPage.recordMem && historyPage.recordIo && historyPage.recordNet && historyPage.recordGpu
+          readonly property bool allChecked: historyPage.recordCpu && historyPage.recordMem && historyPage.recordIo && historyPage.recordNet && historyPage.recordGpu && historyPage.recordTemp
           width: Style.space(34)
           height: Style.space(20)
           radius: Style.cornerRadius
@@ -2201,7 +2214,10 @@ Column {
   }
 
   function updateMaxMetric(peak) {
-    if (metric === "CPU" || metric === "MEM" || metric === "GPU") {
+    // TEMP is degrees, not percent, but shares the fixed 0..100 ceiling: a
+    // CPU throttles somewhere in the nineties, so a fixed scale keeps two
+    // recordings comparable. Mirrors metric_ceiling in src/tui/history/chart.rs.
+    if (metric === "CPU" || metric === "MEM" || metric === "GPU" || metric === "TEMP") {
       currentMaxMetric = 100.0
     } else if (metric === "NET") {
       currentMaxMetric = Math.max(1048576.0, peak)
@@ -2223,7 +2239,31 @@ Column {
     if (metric === "IO") return Number(sample.io_mb) || 0
     if (metric === "NET") return (Number(sample.net_rx_bps) || 0) + (Number(sample.net_tx_bps) || 0)
     if (metric === "GPU") return Number(sample.gpu) || 0
+    if (metric === "TEMP") return historyPage.hottestTemp(sample) || 0
     return 0
+  }
+
+  /// The hottest sensor of a sample, or null when it carries none. A hot disk
+  /// and a hot package are both "this machine is hot". Mirrors
+  /// HistorySample::hottest_temp_c in src/tui/history/mod.rs.
+  function hottestTemp(sample) {
+    if (!sample) return null
+    var best = null
+    var keys = ["cpu_temp_c", "gpu_temp_c", "disk_temp_c"]
+    for (var i = 0; i < keys.length; i++) {
+      var raw = sample[keys[i]]
+      if (raw === null || raw === undefined) continue
+      var n = Number(raw)
+      if (isFinite(n) && (best === null || n > best)) best = n
+    }
+    return best
+  }
+
+  /// A temperature cell, or `--` when the sensor is absent. Never 0.
+  function tempLabel(value) {
+    if (value === null || value === undefined) return "--"
+    var n = Number(value)
+    return isFinite(n) ? Math.round(n) + "\u00b0C" : "--"
   }
 
   function maxMetric(type) {
@@ -2366,6 +2406,7 @@ Column {
     if (n === "io") return recordIo
     if (n === "net") return recordNet
     if (n === "gpu") return recordGpu
+    if (n === "temp") return recordTemp
     return false
   }
 
@@ -2376,25 +2417,29 @@ Column {
     else if (n === "io") recordIo = !recordIo
     else if (n === "net") recordNet = !recordNet
     else if (n === "gpu") recordGpu = !recordGpu
+    else if (n === "temp") recordTemp = !recordTemp
 
-    var count = (recordCpu ? 1 : 0) + (recordMem ? 1 : 0) + (recordIo ? 1 : 0) + (recordNet ? 1 : 0) + (recordGpu ? 1 : 0)
+    var count = (recordCpu ? 1 : 0) + (recordMem ? 1 : 0) + (recordIo ? 1 : 0)
+      + (recordNet ? 1 : 0) + (recordGpu ? 1 : 0) + (recordTemp ? 1 : 0)
     if (count === 0) {
       if (n === "cpu") recordCpu = true
       else if (n === "mem") recordMem = true
       else if (n === "io") recordIo = true
       else if (n === "net") recordNet = true
       else if (n === "gpu") recordGpu = true
+      else if (n === "temp") recordTemp = true
     }
   }
 
   function toggleAllRecordSubsystems() {
-    var all = recordCpu && recordMem && recordIo && recordNet && recordGpu
+    var all = recordCpu && recordMem && recordIo && recordNet && recordGpu && recordTemp
     if (all) {
       recordCpu = true
       recordMem = false
       recordIo = false
       recordNet = false
       recordGpu = false
+      recordTemp = false
     } else {
       recordCpu = true
       recordMem = true
@@ -2411,7 +2456,8 @@ Column {
     if (recordIo) parts.push("IO")
     if (recordNet) parts.push("NET")
     if (recordGpu) parts.push("GPU")
-    if (parts.length === 5) return "ALL"
+    if (recordTemp) parts.push("TEMP")
+    if (parts.length === 6) return "ALL"
     if (parts.length === 0) return "NONE"
     return parts.join(",")
   }
@@ -2514,7 +2560,11 @@ Column {
     if (str && str.length > 0) {
       try {
         var data = JSON.parse(str)
-        if (data && data.samples && data.samples.length > 0) {
+        // The schema has to match: a sidecar from an older reducer parses fine
+        // but holds a flat zero for cpu, mem and gpu. Mirrors TIMELINE_SCHEMA
+        // in src/recordings/timeline.rs.
+        if (data && data.schema === historyPage.timelineSchema
+            && data.samples && data.samples.length > 0) {
           return applyLoadedTimeline(data, recPath, recId, autoPlay, scrubToEnd)
         }
       } catch(e) {
@@ -2551,6 +2601,9 @@ Column {
     if (metric === "GPU") return "GPU%"
     if (metric === "IO") return "IO READ"
     if (metric === "NET") return "IN (RX)"
+    // No process has a temperature. What the thermal page wants from the table
+    // is what was running while the machine heated up.
+    if (metric === "TEMP") return "CPU%"
     return metric
   }
 
@@ -2588,7 +2641,35 @@ Column {
       prefix = durStr + " (" + selectedSample.timestamp + "): "
     }
     var netBps = (Number(selectedSample.net_rx_bps) || 0) + (Number(selectedSample.net_tx_bps) || 0)
-    return prefix + "CPU " + selectedSample.cpu + "% │ MEM " + selectedSample.mem + "% │ IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps) + " │ NET " + formatRate(netBps) + " │ GPU " + selectedSample.gpu + "%"
+    var line = prefix + "CPU " + selectedSample.cpu + "% │ MEM " + selectedSample.mem
+      + "% │ IO " + formatRate(selectedSample.read_bps + selectedSample.write_bps)
+      + " │ NET " + formatRate(netBps) + " │ GPU " + selectedSample.gpu + "%"
+      + " │ T " + historyPage.tempLabel(historyPage.hottestTemp(selectedSample))
+    if (historyPage.metric !== "TEMP") return line
+    return line + " │ " + historyPage.thermalDetail(selectedSample)
+  }
+
+  /// The per-sensor breakdown, shown only on the TEMP page: the shared status
+  /// line has no room for four more cells. Mirrors `thermal_line` in
+  /// src/tui/history/tables.rs.
+  function thermalDetail(sample) {
+    if (!sample) return "--"
+    var parts = [
+      "CPU " + historyPage.tempLabel(sample.cpu_temp_c),
+      "GPU " + historyPage.tempLabel(sample.gpu_temp_c),
+      "DSK " + historyPage.tempLabel(sample.disk_temp_c),
+      "FAN " + (sample.fan_rpm === null || sample.fan_rpm === undefined
+        ? "--" : Number(sample.fan_rpm) + " rpm")
+    ]
+    var cores = sample.per_core_temp_c
+    if (cores && cores.length > 0) {
+      var each = []
+      for (var i = 0; i < cores.length; i++) {
+        each.push(cores[i] === null || cores[i] === undefined ? "--" : Number(cores[i]))
+      }
+      parts.push("CORES " + each.join(" "))
+    }
+    return parts.join("  ")
   }
 
   function sampleMetricsSummary() {

@@ -75,6 +75,18 @@ pub(super) fn focus_pane(state: &mut State, target: Pane) {
     }
 }
 
+/// Ask the refresh loop to zero the packet loss figures.
+///
+/// The key handlers never hold the monitor, so this leaves a flag that
+/// `app::run_loop` picks up on its next pass.
+pub(super) fn request_loss_reset(state: &mut State) {
+    state.reset_net_loss = true;
+    state.status_msg = Some(match state.lang {
+        Lang::Pt => "Perdas de rede zeradas".to_string(),
+        Lang::En => "Network loss counters zeroed".to_string(),
+    });
+}
+
 pub(super) fn toggle_lang(state: &mut State) -> bool {
     state.lang = match state.lang {
         Lang::Pt => Lang::En,

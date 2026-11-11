@@ -167,8 +167,28 @@ Objetivo: distinguir trafego agregado de trafego por interface.
 
 - A lista mostra ate cinco interfaces, ordenadas por RX atual.
 - Para cada interface, `rx_bps` e `tx_bps` sao deltas de `rx_bytes` e `tx_bytes`.
-- O coletor tambem calcula packets/s, erros/s, drops/s, link Mbps e estado do
-  carrier; a UI atual mostra somente RX e TX.
+- O coletor tambem calcula packets/s, link Mbps e estado do carrier; a UI
+  atual mostra somente RX e TX.
+- Erros e descartes nao sao taxas: cada refresh devolve a contagem bruta
+  (`rx_errs`, `tx_drops`, ...), porque dividir um descarte isolado pelo
+  segundo decorrido truncava para zero e o evento desaparecia.
+- Os campos `session_*` acumulam pacotes, erros e descartes desde que o
+  binario abriu, nao desde o boot. Os contadores do kernel guardam horas de
+  historico que ninguem esta mais olhando: um bridge ocioso que descartou
+  tudo dias atras ficaria em 100% enquanto a maquina estiver ligada. A tecla
+  `X` rebaseia e zera essa janela.
+- `loss%` na tabela e `perdidos / (entregues + perdidos)` da pior direcao,
+  contando erro e descarte juntos: uma interface pode acumular milhares de um
+  e nenhum do outro.
+- O painel do widget tem a mesma coluna, mas alimentada pelo campo `net_loss`
+  do snapshot de summary, nao pelo snapshot completo. O coletor de detalhe do
+  widget tem `running: needsDetails`, entao ele nasce quando o painel abre e a
+  janela dele seria os poucos segundos que alguem passa olhando. O de summary
+  roda em segundo plano, e por isso a janela e "desde que o painel fechou pela
+  ultima vez", que e o que a legenda da coluna diz.
+- Interfaces que nao carregaram pacote nenhum nao entram em `net_loss` e
+  aparecem como `--`: um bridge ocioso descarta tudo que recebe e esta
+  honestamente em 100%, e seria a unica coisa na tela.
 - Interfaces virtuais como `lo`, `veth` e `virbr` podem ter taxa valida, mas
   normalmente nao possuem velocidade ou conceito de carrier.
 
@@ -282,7 +302,10 @@ build atual, antes de concluir que o hardware nao tem fan legivel.
 
 Objetivo: monitorar aceleracao grafica e neural, motores 3D/computacao, uso de memoria e consumo de energia quando disponivel.
 - Suporte Intel via DRM fdinfo engine times (`render`, `blt`, `video`).
-- Suporte NVIDIA via NVML carregado dinamicamente (utilizacao de GPU, memoria dedicada, temperatura e potencia em Watts).
+- Suporte NVIDIA por dois caminhos: NVML carregado dinamicamente, ou o
+  `nvidia-smi` do driver quando o binario e estatico e o `dlopen` nao
+  funciona. Ambos dao utilizacao de GPU, memoria dedicada, temperatura e
+  potencia em Watts; so o NVML da utilizacao por processo.
 - Processos de GPU associados com metricas de computacao e memoria por PID.
 - NPU Intel via `intel_vpu`: uso calculado pelo delta de `npu_busy_time_us`, frequencia atual/maxima e memoria alocada, sem `sudo` ou ferramenta externa.
 - Potencia, temperatura e utilizacao NPU por processo nao sao fabricadas quando o sysfs sem privilegios nao fornece essas metricas.

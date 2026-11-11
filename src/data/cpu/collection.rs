@@ -135,6 +135,12 @@ impl CollectionProfile {
                 gpu: true,
                 gpu_processes: true,
                 npu: true,
+                // Thermal data costs an hwmon read a second, and a recording
+                // that cannot show whether the machine was throttling is worth
+                // a lot less than one that can.
+                cpu_temperatures: true,
+                disk_temperatures: true,
+                fans: true,
                 ..CollectionNeeds::default()
             },
         }
@@ -243,6 +249,8 @@ pub struct RecordingMask {
     pub net: bool,
     pub gpu: bool,
     pub npu: bool,
+    /// Temperatures, per-core temperatures and cooler RPM.
+    pub temp: bool,
 }
 
 impl RecordingMask {
@@ -253,10 +261,23 @@ impl RecordingMask {
         net: true,
         gpu: true,
         npu: true,
+        temp: true,
+    };
+
+    /// Nothing selected. The starting point when a caller lists the
+    /// subsystems it wants, rather than the ones it does not.
+    pub const NONE: Self = Self {
+        cpu: false,
+        mem: false,
+        io: false,
+        net: false,
+        gpu: false,
+        npu: false,
+        temp: false,
     };
 
     pub const fn is_empty(&self) -> bool {
-        !self.cpu && !self.mem && !self.io && !self.net && !self.gpu && !self.npu
+        !self.cpu && !self.mem && !self.io && !self.net && !self.gpu && !self.npu && !self.temp
     }
 
     pub const fn count(&self) -> usize {
@@ -279,11 +300,14 @@ impl RecordingMask {
         if self.npu {
             n += 1;
         }
+        if self.temp {
+            n += 1;
+        }
         n
     }
 
     pub fn summary(&self) -> String {
-        if self.count() == 6 {
+        if self.count() == 7 {
             return "ALL".to_string();
         }
         let mut parts = Vec::new();
@@ -305,6 +329,9 @@ impl RecordingMask {
         if self.npu {
             parts.push("NPU");
         }
+        if self.temp {
+            parts.push("TEMP");
+        }
         if parts.is_empty() {
             "NONE".to_string()
         } else {
@@ -322,13 +349,20 @@ impl RecordingMask {
             process_affinity: self.cpu,
             memory: self.mem,
             process_memory: self.mem,
-            disks: self.io,
+            // Disk and GPU temperatures ride along with their device lists, so
+            // ticking Thermal without IO or GPU has to enumerate them anyway
+            // or those two readings record as `null` on a machine that has
+            // them.
+            disks: self.io || self.temp,
             process_io: self.io,
             network: self.net,
             network_processes: self.net,
-            gpu: self.gpu,
+            gpu: self.gpu || self.temp,
             gpu_processes: self.gpu,
             npu: self.npu,
+            cpu_temperatures: self.temp,
+            disk_temperatures: self.temp,
+            fans: self.temp,
             ..CollectionNeeds::default()
         }
     }

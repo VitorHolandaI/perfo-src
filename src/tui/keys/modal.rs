@@ -5,7 +5,7 @@ use crossterm::event::KeyCode;
 
 /// The recording picker lists six subsystems, the depth and duration
 /// steppers, then the two buttons.
-const LAST_SUBSYSTEM_IDX: usize = 5;
+const LAST_SUBSYSTEM_IDX: usize = DEPTH_ROW_IDX - 1;
 use crate::tui::history::duration::RecordDuration;
 use crate::tui::history::session::{
     CANCEL_BUTTON_IDX, DEPTH_ROW_IDX, DURATION_ROW_IDX, START_BUTTON_IDX,
@@ -106,6 +106,7 @@ pub(super) fn handle_record_modal_key(state: &mut State, code: KeyCode) {
         KeyCode::Char('4') => state.history.toggle_record_mask_item(3),
         KeyCode::Char('5') => state.history.toggle_record_mask_item(4),
         KeyCode::Char('6') => state.history.toggle_record_mask_item(5),
+        KeyCode::Char('7') => state.history.toggle_record_mask_item(6),
         KeyCode::Char(' ') => match state.history.record_modal_idx {
             0..=LAST_SUBSYSTEM_IDX => state
                 .history

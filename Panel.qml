@@ -57,6 +57,10 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  // Mirrors BAD_LOSS_PCT in src/tui/cpu/format.rs: a bridge with no peer
+  // piles up discards that mean nothing, so "any loss at all" is the wrong
+  // alarm, and the TUI and the widget must not disagree about the threshold.
+  readonly property real badLossPercent: 1.0
   readonly property int tableMountWidth: Style.space(220)
   readonly property int tableMetricWidth: Style.space(104)
   readonly property int metricLabelWidth: Style.space(72)
@@ -179,6 +183,79 @@ Panel {
   function interfaces() {
     return root.snapshot && root.snapshot.net && root.snapshot.net.ifaces
       ? root.snapshot.net.ifaces.slice(0, 5) : []
+  }
+
+  // Loss comes from the summary collector, never from the detail one. The
+  // detail collector has `running: needsDetails`, so it is born when this
+  // panel opens: its window would be the few seconds someone spends looking,
+  // and would read 0% every time. The summary collector runs in the
+  // background and answers what was lost while nobody was watching.
+  function interfaceLoss(name) {
+    var all = root.hostWidget && root.hostWidget.summarySnapshot
+      ? root.hostWidget.summarySnapshot.net_loss : null
+    if (!all) return null
+    for (var i = 0; i < all.length; i++) {
+      if (all[i].name === name) return all[i]
+    }
+    return null
+  }
+
+  // Interfaces that carried no packet at all are absent from net_loss: an
+  // idle bridge discards every frame it is handed and is honestly at 100%,
+  // which would be the only thing on screen.
+  function lossLabel(name) {
+    var entry = root.interfaceLoss(name)
+    if (!entry) return "--"
+    if (entry.lost === 0) return "0"
+    return entry.lost + " / " + Number(entry.loss_pct).toFixed(1) + "%"
+  }
+
+  function lossColor(name) {
+    var entry = root.interfaceLoss(name)
+    if (!entry || entry.lost === 0) return root.foreground
+    return entry.loss_pct >= root.badLossPercent ? Color.urgent : root.foreground
+  }
+
+  /// Whole degrees, or null when the machine has no such sensor. Never 0:
+  /// zero degrees reads as a real cold measurement. Mirrors `temp_field` in
+  /// src/recordings/timeline.rs.
+  function wholeDegrees(raw) {
+    if (raw === null || raw === undefined) return null
+    var n = Number(raw)
+    return isFinite(n) ? Math.round(n) : null
+  }
+
+  /// The hottest reading of a device list, which is the one that throttles.
+  /// Mirrors `HistoryState::thermals` in src/tui/history/record.rs.
+  function hottestOf(list, key) {
+    if (!list || list.length === 0) return null
+    var best = null
+    for (var i = 0; i < list.length; i++) {
+      var v = root.wholeDegrees(list[i][key])
+      if (v !== null && (best === null || v > best)) best = v
+    }
+    return best
+  }
+
+  /// A fan always answers a number, so an empty list is the only way this
+  /// machine can mean "no cooler"; a stopped fan is a real 0 RPM.
+  function fastestFanRpm() {
+    var all = root.fans()
+    if (all.length === 0) return null
+    var best = 0
+    for (var i = 0; i < all.length; i++) {
+      var rpm = Number(all[i].rpm) || 0
+      if (rpm > best) best = rpm
+    }
+    return best
+  }
+
+  function perCoreDegrees() {
+    var src = root.snapshot ? root.snapshot.per_core_temp_c : null
+    if (!src) return []
+    var out = []
+    for (var i = 0; i < src.length; i++) out.push(root.wholeDegrees(src[i]))
+    return out
   }
 
   function fans() {
@@ -578,6 +655,7 @@ Panel {
              PlainText { width: root.metricLabelWidth; text: "TX"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
              PlainText { width: root.metricValueWidth; text: root.snapshot ? root.formatRate(root.snapshot.net.totals.tx_bps) : "--"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle; font.bold: true }
            }
+          PlainText { text: "INTERFACES / LOST SINCE THIS PANEL WAS LAST CLOSED"; color: root.foreground; opacity: 0.65; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
            Repeater {
              model: root.interfaces()
              delegate: Row {
@@ -585,6 +663,7 @@ Panel {
                PlainText { width: root.tableMountWidth; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; elide: Text.ElideRight }
                PlainText { width: root.tableMetricWidth; text: "RX " + root.formatRate(modelData.rx_bps); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
                PlainText { width: root.tableMetricWidth; text: "TX " + root.formatRate(modelData.tx_bps); color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+               PlainText { width: root.tableMetricWidth; text: root.lossLabel(modelData.name); color: root.lossColor(modelData.name); font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
              }
            }
         }
@@ -990,6 +1069,11 @@ Panel {
       net_rx_bps: netRx,
       net_tx_bps: netTx,
       net_rate: netRate,
+      cpu_temp_c: root.wholeDegrees(root.snapshot.cpu_temp_c),
+      gpu_temp_c: root.hottestOf(root.snapshot.gpu ? root.snapshot.gpu.devices : null, "temperature_c"),
+      disk_temp_c: root.hottestOf(root.snapshot.disks, "temp_c"),
+      fan_rpm: root.fastestFanRpm(),
+      per_core_temp_c: root.perCoreDegrees(),
       processes: procs
     }
   }

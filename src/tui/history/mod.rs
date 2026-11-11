@@ -29,6 +29,7 @@ pub enum HistoryMetric {
     Io,
     Net,
     Gpu,
+    Temp,
 }
 
 impl HistoryMetric {
@@ -39,6 +40,7 @@ impl HistoryMetric {
             Self::Io => "IO",
             Self::Net => "NET",
             Self::Gpu => "GPU",
+            Self::Temp => "TEMP",
         }
     }
 
@@ -48,7 +50,8 @@ impl HistoryMetric {
             Self::Mem => Self::Io,
             Self::Io => Self::Net,
             Self::Net => Self::Gpu,
-            Self::Gpu => Self::Cpu,
+            Self::Gpu => Self::Temp,
+            Self::Temp => Self::Cpu,
         }
     }
 }
@@ -132,7 +135,7 @@ pub struct HistoryProcess {
     pub udp: u32,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct HistorySample {
     pub timestamp: String,
     pub cpu: f32,
@@ -147,6 +150,46 @@ pub struct HistorySample {
     pub net_tx_bps: u64,
     #[serde(default, alias = "processes")]
     pub top_procs: Vec<HistoryProcess>,
+    /// Thermal readings in whole degrees Celsius. `None` means the machine has
+    /// no such sensor, which is not the same as 0 degrees: Intel GPUs report
+    /// no temperature at all, and a recording that said 0 would read as cold.
+    #[serde(default)]
+    pub cpu_temp_c: Option<i16>,
+    #[serde(default)]
+    pub gpu_temp_c: Option<i16>,
+    #[serde(default)]
+    pub disk_temp_c: Option<i16>,
+    /// Cooler speed, kept beside the temperatures because it is the machine's
+    /// response to them. Not a temperature, so it never shares their axis.
+    #[serde(default)]
+    pub fan_rpm: Option<u32>,
+    /// Per-core temperatures, which tell one hot core apart from a hot
+    /// package. Holes are cores the kernel exposes no sensor for.
+    #[serde(default)]
+    pub per_core_temp_c: Vec<Option<i16>>,
+}
+
+impl HistorySample {
+    /// The hottest sensor in this sample, which is what a thermal chart plots:
+    /// a hot disk and a hot package are both "this machine is hot". `None`
+    /// when the machine reported no temperature at all.
+    pub fn hottest_temp_c(&self) -> Option<i16> {
+        [self.cpu_temp_c, self.gpu_temp_c, self.disk_temp_c]
+            .into_iter()
+            .flatten()
+            .max()
+    }
+}
+
+/// The thermal readings one sample keeps, with each per-device list already
+/// reduced to its hottest member.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct SampleThermals {
+    pub cpu_temp_c: Option<i16>,
+    pub gpu_temp_c: Option<i16>,
+    pub disk_temp_c: Option<i16>,
+    pub fan_rpm: Option<u32>,
+    pub per_core_temp_c: Vec<Option<i16>>,
 }
 
 pub struct HistoryState {
@@ -234,7 +277,24 @@ mod tests {
         m = m.next();
         assert_eq!(m, HistoryMetric::Gpu);
         m = m.next();
-        assert_eq!(m, HistoryMetric::Cpu);
+        assert_eq!(m, HistoryMetric::Temp);
+        m = m.next();
+        assert_eq!(m, HistoryMetric::Cpu, "the cycle wraps");
+    }
+
+    /// The hottest sensor wins, and a machine with no sensor at all answers
+    /// `None` rather than a plausible-looking 0.
+    #[test]
+    fn the_hottest_sensor_drives_the_thermal_series() {
+        let hot = HistorySample {
+            cpu_temp_c: Some(61),
+            gpu_temp_c: None,
+            disk_temp_c: Some(72),
+            ..HistorySample::default()
+        };
+        assert_eq!(hot.hottest_temp_c(), Some(72));
+
+        assert_eq!(HistorySample::default().hottest_temp_c(), None);
     }
 
     #[test]
@@ -265,10 +325,9 @@ mod tests {
                 io_mb: 1.0,
                 read_bps: 100,
                 write_bps: 200,
-                gpu: 0.0,
                 net_rx_bps: 1000,
                 net_tx_bps: 2000,
-                top_procs: vec![],
+                ..HistorySample::default()
             });
         }
 
@@ -331,11 +390,7 @@ mod tests {
         // Guard: Cannot uncheck the last remaining item
         state.recording_mask = RecordingMask {
             cpu: true,
-            mem: false,
-            io: false,
-            net: false,
-            gpu: false,
-            npu: false,
+            ..RecordingMask::NONE
         };
         state.toggle_record_mask_item(0);
         assert!(state.recording_mask.cpu); // Remains true
@@ -397,11 +452,7 @@ mod tests {
         let mut state = HistoryState {
             recording_mask: RecordingMask {
                 cpu: true,
-                mem: false,
-                io: false,
-                net: false,
-                gpu: false,
-                npu: false,
+                ..RecordingMask::NONE
             },
             ..Default::default()
         };

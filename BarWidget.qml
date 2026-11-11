@@ -41,17 +41,24 @@ BarWidget {
     return (idx >= 0 && idx < pageProfiles.length) ? pageProfiles[idx] : "dash"
   }
 
+  // The mask used before the panel exists: recording can start from the bar,
+  // and a missing name there would record nothing for that subsystem.
+  readonly property string everySubsystem: "cpu,mem,io,net,gpu,npu,temp"
+
   // Subsystems the recording picker has ticked, as the collector expects them.
   readonly property string recordingMask: {
     var page = panelLoader.item ? panelLoader.item.historyPageComp : null
-    if (!page) return "cpu,mem,io,net,gpu,npu"
+    if (!page) return barWidgetRoot.everySubsystem
     var on = []
     if (page.recordCpu) on.push("cpu")
     if (page.recordMem) on.push("mem")
     if (page.recordIo) on.push("io")
     if (page.recordNet) on.push("net")
     if (page.recordGpu) on.push("gpu")
-    return on.length > 0 ? on.join(",") : "cpu,mem,io,net,gpu,npu"
+    // A name the collector does not know is ignored, so forgetting one here
+    // silently drops that subsystem from the recording rather than failing.
+    if (page.recordTemp) on.push("temp")
+    return on.length > 0 ? on.join(",") : barWidgetRoot.everySubsystem
   }
   readonly property var snapshot: needsDetails && detailSnapshot ? detailSnapshot : summarySnapshot
 

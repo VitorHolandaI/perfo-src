@@ -39,7 +39,7 @@ pub struct DiskIoStats {
     pub flush_s: u64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Default)]
 pub struct DiskInfo {
     pub name: String,
     pub mount: String,

@@ -37,6 +37,10 @@ struct ChartGeometry {
 fn metric_ceiling(state: &HistoryState, total: usize) -> f32 {
     match state.metric {
         HistoryMetric::Cpu | HistoryMetric::Mem | HistoryMetric::Gpu => 100.0f32,
+        // Degrees, not percent, but the same 0..100 ceiling: a CPU throttles
+        // somewhere in the nineties, so a fixed scale keeps two recordings
+        // comparable instead of rescaling to whatever the hottest sample was.
+        HistoryMetric::Temp => 100.0f32,
         HistoryMetric::Io => {
             let mut m = MIN_IO_SCALE;
             for idx in 0..total {
@@ -95,6 +99,9 @@ fn bar_column_spans(
                     HistoryMetric::Io => s.io_mb,
                     HistoryMetric::Net => (s.net_rx_bps + s.net_tx_bps) as f32,
                     HistoryMetric::Gpu => s.gpu,
+                    // No sensor reads as a blank column, which is what an
+                    // absent reading should look like.
+                    HistoryMetric::Temp => s.hottest_temp_c().unwrap_or(0) as f32,
                 };
                 if v > peak {
                     peak = v;

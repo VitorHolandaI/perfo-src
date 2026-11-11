@@ -205,6 +205,7 @@ fn draw_controls(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
         metric_pill(HistoryMetric::Io),
         metric_pill(HistoryMetric::Net),
         metric_pill(HistoryMetric::Gpu),
+        metric_pill(HistoryMetric::Temp),
         Span::raw("  │  "),
         Span::styled("SPAN: ", Style::default().fg(ui.theme.muted)),
         span_pill(HistorySpan::Span2m),

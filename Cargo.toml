@@ -1,6 +1,6 @@
 [package]
 name = "perfo"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "System performance monitor - htop-like CPU focus, TUI + JSON data for an Omarchy widget"
 license = "MIT"

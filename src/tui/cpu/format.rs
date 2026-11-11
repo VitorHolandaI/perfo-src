@@ -110,6 +110,60 @@ pub(crate) fn human_bytes(bytes: u64) -> String {
 }
 
 /// Compact size: 8.3G, 535M, 20K.
+/// Share of what an interface handled that has to be lost before the loss
+/// display turns red. A bridge with no peer attached piles up discards that
+/// mean nothing, so "any loss at all" is the wrong alarm.
+const BAD_LOSS_PCT: f32 = 1.0;
+
+/// Packet counts in a column too narrow for the digits. The steps are 1000
+/// and not 1024, because packets are not bytes. Never wider than 4 columns.
+///
+/// ```ignore
+/// assert_eq!(short_count(944), "944");
+/// assert_eq!(short_count(12_300), "12k");
+/// ```
+pub(crate) fn short_count(count: u64) -> String {
+    const UNITS: [&str; 7] = ["", "k", "M", "G", "T", "P", "E"];
+    const PER_UNIT: f64 = 1000.0;
+    let mut value = count as f64;
+    let mut unit = 0;
+    while value >= PER_UNIT && unit < UNITS.len() - 1 {
+        value /= PER_UNIT;
+        unit += 1;
+    }
+    if unit == 0 {
+        return format!("{count}");
+    }
+    if value >= ONE_DECIMAL_ABOVE as f64 {
+        format!("{value:.0}{}", UNITS[unit])
+    } else {
+        format!("{value:.1}{}", UNITS[unit])
+    }
+}
+
+/// How bad an interface's lifetime packet loss is, separated from the theme
+/// so the threshold can be tested on numbers alone.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LossLevel {
+    /// Nothing was ever lost.
+    Clean,
+    /// Something was lost, but too little to call the link unhealthy.
+    Minor,
+    /// At least `BAD_LOSS_PCT` of what the interface handled never made it.
+    Bad,
+}
+
+/// `lost` is the lifetime count, `worst_pct` the worse of the two directions.
+pub(crate) fn loss_level(lost: u64, worst_pct: f32) -> LossLevel {
+    if lost == 0 {
+        LossLevel::Clean
+    } else if worst_pct >= BAD_LOSS_PCT {
+        LossLevel::Bad
+    } else {
+        LossLevel::Minor
+    }
+}
+
 pub(crate) fn short_bytes(bytes: u64) -> String {
     const UNITS: [&str; 4] = ["B", "K", "M", "G"];
     let mut value = bytes as f64;
@@ -292,4 +346,34 @@ pub(crate) fn block(title: &str, focused: bool, theme: &Theme) -> Block<'static>
 /// The muted `|` that separates fields on a summary line.
 pub(crate) fn pipe(text: &str, theme: &Theme) -> Span<'static> {
     Span::styled(text.to_string(), Style::default().fg(theme.muted))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_count_stays_within_four_columns() {
+        assert_eq!(short_count(0), "0");
+        assert_eq!(short_count(944), "944");
+        assert_eq!(short_count(1_200), "1.2k");
+        assert_eq!(short_count(12_300), "12k");
+        assert_eq!(short_count(4_000_000), "4.0M");
+        // Even a garbage counter has to fit the column it is printed in.
+        assert!(
+            short_count(u64::MAX).len() <= 4,
+            "{}",
+            short_count(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn loss_level_ignores_discards_that_mean_nothing() {
+        // A bridge with no peer: 718 discards out of 718, but it never
+        // carried a packet, so there is nothing to warn about proportionally.
+        assert_eq!(loss_level(0, 0.0), LossLevel::Clean);
+        assert_eq!(loss_level(718, 0.4), LossLevel::Minor);
+        assert_eq!(loss_level(944, 10.8), LossLevel::Bad);
+        assert_eq!(loss_level(1, 1.0), LossLevel::Bad);
+    }
 }

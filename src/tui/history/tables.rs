@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::format::clean_process_name;
 use super::traceable::{trace_target, TraceTarget};
-use super::{HistoryMetric, HistoryProcess, HistoryState};
+use super::{HistoryMetric, HistoryProcess, HistorySample, HistoryState};
 use crate::tui::cpu::Ui;
 
 /// Column widths of the process tables, in the order the header lists them.
@@ -23,6 +23,62 @@ const COL_SECONDARY: u16 = 12;
 const COL_TOTALS: u16 = 22;
 const COL_RX: u16 = 18;
 const COL_NARROW: u16 = 10;
+
+/// A temperature cell, or `--` when the machine has no such sensor. Never 0:
+/// zero degrees reads as a real cold measurement.
+fn temp_cell(label: &str, value: Option<i16>) -> String {
+    match value {
+        Some(c) => format!("{label} {c}\u{b0}C  "),
+        None => format!("{label} --  "),
+    }
+}
+
+/// The thermal breakdown, shown only on the TEMP page: the shared SAMPLE strip
+/// has no room for four more cells on an 80-column terminal.
+fn thermal_line(ui: &Ui, sample: Option<&HistorySample>) -> Line<'static> {
+    let mut spans = vec![Span::styled(
+        "THERMAL: ",
+        Style::default().fg(ui.theme.muted),
+    )];
+    let Some(s) = sample else {
+        spans.push(Span::styled("--", Style::default().fg(ui.theme.muted)));
+        return Line::from(spans);
+    };
+
+    for (label, value) in [
+        ("CPU", s.cpu_temp_c),
+        ("GPU", s.gpu_temp_c),
+        ("DSK", s.disk_temp_c),
+    ] {
+        spans.push(Span::styled(
+            temp_cell(label, value),
+            Style::default().fg(ui.theme.accent),
+        ));
+    }
+    spans.push(Span::styled(
+        match s.fan_rpm {
+            Some(rpm) => format!("FAN {rpm} rpm  "),
+            None => "FAN --  ".to_string(),
+        },
+        Style::default().fg(ui.theme.fg),
+    ));
+
+    if !s.per_core_temp_c.is_empty() {
+        let cores: Vec<String> = s
+            .per_core_temp_c
+            .iter()
+            .map(|c| match c {
+                Some(v) => v.to_string(),
+                None => "--".to_string(),
+            })
+            .collect();
+        spans.push(Span::styled(
+            format!("\u{2502}  CORES {}", cores.join(" ")),
+            Style::default().fg(ui.theme.muted),
+        ));
+    }
+    Line::from(spans)
+}
 
 pub(super) fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &HistoryState) {
     let eff = state.effective_index();
@@ -96,7 +152,13 @@ pub(super) fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &His
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!("GPU {:>4.1}%", cur_gpu),
+            format!("GPU {:>4.1}%  ", cur_gpu),
+            Style::default()
+                .fg(ui.theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            temp_cell("T", sample.and_then(|s| s.hottest_temp_c())),
             Style::default()
                 .fg(ui.theme.accent)
                 .add_modifier(Modifier::BOLD),
@@ -140,8 +202,11 @@ pub(super) fn draw_stats_box(frame: &mut Frame, area: Rect, ui: &Ui, state: &His
         ),
     ]);
 
-    let par = Paragraph::new(vec![line1, line2]);
-    frame.render_widget(par, area);
+    let mut lines = vec![line1, line2];
+    if state.metric == HistoryMetric::Temp {
+        lines.push(thermal_line(ui, sample));
+    }
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 /// The NET metric gets its own table: RX, TX and connection counts instead of
@@ -248,6 +313,10 @@ pub(super) fn draw_processes_table(frame: &mut Frame, area: Rect, ui: &Ui, state
         HistoryMetric::Io => "IO RATE",
         HistoryMetric::Gpu => "GPU%",
         HistoryMetric::Net => "NET",
+        // No process has a temperature. What a thermal page wants from the
+        // table is what was running while the machine heated up, so it sorts
+        // and reads as the CPU page does.
+        HistoryMetric::Temp => "CPU%",
     };
     let secondary_hdr = match state.metric {
         HistoryMetric::Gpu => "VRAM",

@@ -142,7 +142,7 @@ pub(super) fn draw_sessions_modal(frame: &mut Frame, area: Rect, ui: &Ui, state:
 /// them: index, hotkey, label, what it costs, and whether it is on.
 fn record_modal_items(
     state: &HistoryState,
-) -> [(usize, &'static str, &'static str, &'static str, bool); 6] {
+) -> [(usize, &'static str, &'static str, &'static str, bool); 7] {
     [
         (
             0,
@@ -185,6 +185,13 @@ fn record_modal_items(
             "NPU",
             "Neural Acceleration Engine",
             state.recording_mask.npu,
+        ),
+        (
+            6,
+            "7",
+            "Thermal",
+            "CPU/GPU/Disk Temps, Cooler RPM",
+            state.recording_mask.temp,
         ),
     ]
 }
@@ -387,4 +394,61 @@ pub(super) fn draw_record_modal(frame: &mut Frame, area: Rect, ui: &Ui, state: &
     duration_row(state, ui, &mut lines);
     record_modal_buttons(state, ui, &mut lines);
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_modal_items;
+    use super::HistoryState;
+    use crate::data::cpu::RecordingMask;
+    use crate::tui::history::session::{
+        CANCEL_BUTTON_IDX, DEPTH_ROW_IDX, DURATION_ROW_IDX, RECORD_MODAL_SLOTS, START_BUTTON_IDX,
+    };
+
+    /// The picker's row indices are constants, and the checkbox rows come
+    /// first. Adding a subsystem to the mask without moving them silently
+    /// points the depth row at the new checkbox.
+    #[test]
+    fn the_picker_rows_line_up_with_the_mask_flags() {
+        let state = HistoryState::default();
+        let items = record_modal_items(&state);
+
+        assert_eq!(
+            items.len(),
+            RecordingMask::ALL.count(),
+            "one checkbox row per mask flag"
+        );
+        assert_eq!(
+            DEPTH_ROW_IDX,
+            items.len(),
+            "depth sits after the checkboxes"
+        );
+        assert_eq!(DURATION_ROW_IDX, DEPTH_ROW_IDX + 1);
+        assert_eq!(START_BUTTON_IDX, DURATION_ROW_IDX + 1);
+        assert_eq!(CANCEL_BUTTON_IDX, START_BUTTON_IDX + 1);
+        assert_eq!(RECORD_MODAL_SLOTS, CANCEL_BUTTON_IDX + 1);
+    }
+
+    /// Each row's index is its own position, and its hotkey is that position
+    /// counted from one: the number keys in `keys/modal.rs` rely on it.
+    #[test]
+    fn each_picker_row_is_numbered_by_its_position() {
+        let state = HistoryState::default();
+        for (pos, (idx, hotkey, ..)) in record_modal_items(&state).iter().enumerate() {
+            assert_eq!(*idx, pos);
+            assert_eq!(*hotkey, (pos + 1).to_string());
+        }
+    }
+
+    /// Every flag the mask carries is reachable from the picker.
+    #[test]
+    fn toggling_the_last_row_reaches_the_temperature_flag() {
+        // HistoryState::default() already starts from RecordingMask::ALL.
+        let mut state = HistoryState::default();
+
+        state.toggle_record_mask_item(DEPTH_ROW_IDX - 1);
+        assert!(!state.recording_mask.temp);
+        state.toggle_record_mask_item(DEPTH_ROW_IDX - 1);
+        assert!(state.recording_mask.temp);
+    }
 }
