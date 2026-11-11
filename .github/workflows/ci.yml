@@ -47,9 +47,22 @@ jobs:
             qmllint_bin=/usr/lib/qt6/bin/qmllint
           fi
           test -x "$qmllint_bin"
-          "$qmllint_bin" \
-            --import disable \
-            --type disable \
-            --property disable \
-            --unqualified disable \
+          # This step checks that the QML parses. Every semantic category is
+          # turned off because Quickshell's qs.* modules are not installable
+          # here, so type and property resolution fails on every line of a
+          # file that is perfectly valid on the target.
+          #
+          # Which categories exist moves between Qt releases: 6.10 dropped
+          # --type and --property, and the runner image picked it up silently,
+          # failing this step with "Unknown options: type, property" on the
+          # first run after 39 days. So ask the binary rather than assume.
+          help_text="$("$qmllint_bin" --help-all 2>&1 || true)"
+          flags=()
+          for category in import type property unqualified; do
+            if printf '%s' "$help_text" | grep -q -- "--$category "; then
+              flags+=("--$category" disable)
+            fi
+          done
+          echo "qmllint categories disabled: ${flags[*]:-none available}"
+          "$qmllint_bin" "${flags[@]}" \
             BarWidget.qml Panel.qml ProcessGrid.qml GpuPage.qml HistoryPage.qml
