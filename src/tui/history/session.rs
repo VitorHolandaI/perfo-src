@@ -10,13 +10,16 @@ use std::time::Instant;
 /// is ~99% of a recorded sample's bytes.
 pub const PROCESS_DEPTHS: [usize; 5] = [8, 30, 50, 100, 0];
 
-/// Picker rows: six subsystem checkboxes, the process-depth stepper, the
-/// duration stepper, then START and CANCEL.
-pub const DEPTH_ROW_IDX: usize = 6;
-pub const DURATION_ROW_IDX: usize = 7;
-pub const START_BUTTON_IDX: usize = 8;
-pub const CANCEL_BUTTON_IDX: usize = 9;
-pub const RECORD_MODAL_SLOTS: usize = 10;
+/// Picker rows: one checkbox per subsystem the mask carries, the
+/// process-depth stepper, the duration stepper, then START and CANCEL.
+/// `modals::tests::the_picker_rows_line_up_with_the_mask_flags` pins these to
+/// the mask, so adding a flag there fails here rather than silently pointing
+/// the depth row at the new checkbox.
+pub const DEPTH_ROW_IDX: usize = 7;
+pub const DURATION_ROW_IDX: usize = 8;
+pub const START_BUTTON_IDX: usize = 9;
+pub const CANCEL_BUTTON_IDX: usize = 10;
+pub const RECORD_MODAL_SLOTS: usize = 11;
 
 /// The depth a recording starts at, overridable so the widget and the TUI can
 /// be pointed at the same value from one place.
@@ -126,6 +129,7 @@ impl HistoryState {
             3 => &mut self.recording_mask.net,
             4 => &mut self.recording_mask.gpu,
             5 => &mut self.recording_mask.npu,
+            6 => &mut self.recording_mask.temp,
             _ => return,
         };
         if !*target || count > 1 {

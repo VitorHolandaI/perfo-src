@@ -287,7 +287,7 @@ impl HistoryState {
             HistoryMetric::Mem => {
                 list.sort_by_key(|p| std::cmp::Reverse(p.mem_bytes));
             }
-            HistoryMetric::Cpu => {
+            HistoryMetric::Cpu | HistoryMetric::Temp => {
                 list.sort_by(|a, b| {
                     b.cpu_percent
                         .partial_cmp(&a.cpu_percent)
@@ -344,7 +344,9 @@ impl HistoryState {
                     "--".to_string()
                 }
             }
-            HistoryMetric::Cpu => format!("{:.0}%", proc.cpu_percent),
+            HistoryMetric::Cpu | HistoryMetric::Temp => {
+                format!("{:.0}%", proc.cpu_percent)
+            }
         }
     }
 }

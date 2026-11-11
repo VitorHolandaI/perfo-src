@@ -2,12 +2,16 @@
 
 mod export;
 mod format;
+mod offsets;
 mod paths;
 mod store;
+#[cfg(test)]
+mod test_support;
 mod timeline;
 
 pub use export::export_from_stdin;
 pub use format::format_duration;
+pub use offsets::{inspect_recording, load_offsets, scan_sample_offsets};
 pub use paths::{
     default_recordings_dir, get_config, get_home_dir, resolve_recording_path,
     DEFAULT_MAX_RECORDINGS,
@@ -16,7 +20,7 @@ pub use store::{
     delete_recording, delete_recording_by_id, get_recording, get_recordings_list, list_recordings,
     load_recording_payload, prune_recordings, save_recording, save_session_data,
 };
-pub use timeline::{get_timeline, inspect_recording, load_offsets, scan_sample_offsets};
+pub use timeline::get_timeline;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

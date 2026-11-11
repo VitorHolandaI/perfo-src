@@ -40,17 +40,33 @@ entry point that writes a recording, so both producers get the same header;
 `prune_recordings` keeps the store at `DEFAULT_MAX_RECORDINGS`. Reads go
 through `load_recording_payload`, which the TUI replay uses.
 
-`timeline.rs` — the half that makes a long recording usable. Two jobs:
+`timeline.rs` — **reduce.** `record timeline` turns every sample into the
+handful of scalar series the chart draws, caching the result in a
+`.timeline.json` sidecar. Owns `TIMELINE_SCHEMA`: a sidecar from an older
+reducer is rebuilt even though it is newer than its source, because the broken
+one always is. `HistoryPage.qml` reads the sidecar directly and checks the same
+number in its `timelineSchema` property, so **bump both together**.
 
-1. **Reduce.** `record timeline` turns every sample into the handful of series
-   the chart draws, caching the result in a `.timeline.json` sidecar. The
-   sidecar carries `TIMELINE_SCHEMA`; a sidecar from an older reducer is
-   rebuilt even though it is newer than its source, because the broken one
-   always is. `HistoryPage.qml` reads the sidecar directly and checks the same
-   number in its `timelineSchema` property, so bump both together.
-2. **Index.** `record inspect` returns the process table around one sample.
-   `load_offsets` scans the byte offset of each sample once into a
-   `.offsets.bin` sidecar, so scrubbing seeks instead of parsing 51 MB.
+Exports `process_list` and `sidecar_is_current` to `offsets.rs`, which needs
+the same sample-shape rule and the same freshness rule.
+
+The thermal series are the exception to this file's "never a null" rule. Every
+other series defaults a missing value to 0, which draws as a gap; zero degrees
+is instead a real cold measurement, so `temp_field` and `per_core_temps` keep
+`null`. Inventing a cold machine out of an absent sensor is not a gap, it is a
+wrong reading, and Intel GPUs report no temperature at all.
+
+`offsets.rs` — **index.** `record inspect` returns the process table around one
+sample. `load_offsets` scans the byte offset of each sample once into a
+`.offsets.bin` sidecar of fixed 16-byte `(u64 start, u64 end)` pairs, so
+scrubbing seeks with `lseek` instead of parsing 51 MB. That sidecar is gated on
+mtime only, with no schema: its format has never changed, but if it ever does
+it needs the same treatment `timeline.rs` gives its own.
+
+`test_support.rs` — `#[cfg(test)]` only. A throwaway recording store on disk
+(`recording_fixture`) and a way to age a file (`filetime_set`), shared by the
+tests of `timeline.rs` and `offsets.rs` because both exercise the sidecar
+freshness checks.
 
 `export.rs` — `record export`-style reports written to the user's home from a
 JSON payload on stdin. Independent of the store: it never touches the
@@ -65,3 +81,20 @@ replays, it just rebuilds them each time.
 
 Replaying in the widget: `record timeline` for the chart, then one
 `record inspect <path> <index> 25` per scrub position for the process table.
+
+## Changing what a sample holds
+
+Adding a series touches five places, and missing one of them fails quietly
+rather than loudly:
+
+1. `HistorySample` in `src/tui/history/mod.rs` — the field, with
+   `#[serde(default)]` so older recordings still load.
+2. `HistoryState::record_snapshot` in `src/tui/history/record.rs` — filling it,
+   and zeroing it when its `RecordingMask` flag is off.
+3. `CollectionProfile::History` in `src/data/cpu/collection.rs` — the collector
+   flag, if the data is gated. Without it the recording keeps whatever the
+   visible page happened to collect.
+4. `timeline_sample` here, plus a `TIMELINE_SCHEMA` bump and the matching
+   `timelineSchema` in `HistoryPage.qml`.
+5. `sampleFromSnapshot` in `Panel.qml`, so widget-made recordings carry it too.
+   The two producers disagree on shape already; do not widen the gap.

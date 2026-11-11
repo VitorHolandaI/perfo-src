@@ -219,6 +219,13 @@ mod tests {
         assert!(needs.gpu);
         assert!(needs.processes);
         assert!(needs.process_io);
+        // Thermal data is recorded too, and the collectors are gated: without
+        // these the recording kept whatever the visible page happened to
+        // collect, so temperature was present on the dashboard and absent on
+        // the NET page.
+        assert!(needs.cpu_temperatures);
+        assert!(needs.disk_temperatures);
+        assert!(needs.fans);
     }
 
     #[test]
@@ -267,10 +274,7 @@ mod tests {
         let mask = RecordingMask {
             cpu: true,
             mem: true,
-            io: false,
-            net: false,
-            gpu: false,
-            npu: false,
+            ..RecordingMask::NONE
         };
         assert_eq!(mask.count(), 2);
         assert_eq!(mask.summary(), "CPU,MEM");

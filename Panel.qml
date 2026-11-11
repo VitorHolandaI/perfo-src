@@ -216,6 +216,48 @@ Panel {
     return entry.loss_pct >= root.badLossPercent ? Color.urgent : root.foreground
   }
 
+  /// Whole degrees, or null when the machine has no such sensor. Never 0:
+  /// zero degrees reads as a real cold measurement. Mirrors `temp_field` in
+  /// src/recordings/timeline.rs.
+  function wholeDegrees(raw) {
+    if (raw === null || raw === undefined) return null
+    var n = Number(raw)
+    return isFinite(n) ? Math.round(n) : null
+  }
+
+  /// The hottest reading of a device list, which is the one that throttles.
+  /// Mirrors `HistoryState::thermals` in src/tui/history/record.rs.
+  function hottestOf(list, key) {
+    if (!list || list.length === 0) return null
+    var best = null
+    for (var i = 0; i < list.length; i++) {
+      var v = root.wholeDegrees(list[i][key])
+      if (v !== null && (best === null || v > best)) best = v
+    }
+    return best
+  }
+
+  /// A fan always answers a number, so an empty list is the only way this
+  /// machine can mean "no cooler"; a stopped fan is a real 0 RPM.
+  function fastestFanRpm() {
+    var all = root.fans()
+    if (all.length === 0) return null
+    var best = 0
+    for (var i = 0; i < all.length; i++) {
+      var rpm = Number(all[i].rpm) || 0
+      if (rpm > best) best = rpm
+    }
+    return best
+  }
+
+  function perCoreDegrees() {
+    var src = root.snapshot ? root.snapshot.per_core_temp_c : null
+    if (!src) return []
+    var out = []
+    for (var i = 0; i < src.length; i++) out.push(root.wholeDegrees(src[i]))
+    return out
+  }
+
   function fans() {
     return root.snapshot && root.snapshot.fans && root.snapshot.fans.fans
       ? root.snapshot.fans.fans.slice(0, 6) : []
@@ -1027,6 +1069,11 @@ Panel {
       net_rx_bps: netRx,
       net_tx_bps: netTx,
       net_rate: netRate,
+      cpu_temp_c: root.wholeDegrees(root.snapshot.cpu_temp_c),
+      gpu_temp_c: root.hottestOf(root.snapshot.gpu ? root.snapshot.gpu.devices : null, "temperature_c"),
+      disk_temp_c: root.hottestOf(root.snapshot.disks, "temp_c"),
+      fan_rpm: root.fastestFanRpm(),
+      per_core_temp_c: root.perCoreDegrees(),
       processes: procs
     }
   }

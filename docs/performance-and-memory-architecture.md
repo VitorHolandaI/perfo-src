@@ -139,9 +139,13 @@ why a long recording costs RAM before it costs disk.
 
 1. **Companion Timeline Cache (`.timeline.json`)**:
    - Generated on first load via `perfo record timeline <target>`.
-   - Extracts scalar metrics (`timestamp`, `cpu`, `mem`, `gpu`, `io_mb`, `read_bps`, `write_bps`, `net_rx_bps`, `net_tx_bps`, `net_rate`, `top_process`).
+   - Extracts scalar metrics (`timestamp`, `cpu`, `mem`, `gpu`, `io_mb`, `read_bps`, `write_bps`, `net_rx_bps`, `net_tx_bps`, `net_rate`, `cpu_temp_c`, `gpu_temp_c`, `disk_temp_c`, `fan_rpm`, `per_core_temp_c`, `top_process`).
    - Strips the thousands of process entries per second, reducing 119 MB down to ~1.3 MB.
    - Subsequent loads complete in ~1 ms.
+   - The thermal series are the one exception to the "default a missing value
+     to 0" rule: zero degrees is a real cold measurement, so an absent sensor
+     stays `null` and the chart draws a gap. Intel GPUs report no temperature
+     at all, so this is the common case, not the edge one.
    - Carries `TIMELINE_SCHEMA`, and is rebuilt when that number does not match
      the running reducer. The mtime check alone is not enough: a sidecar built
      by an older reducer is always *newer* than the recording it derives from,

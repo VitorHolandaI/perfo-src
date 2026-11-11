@@ -370,14 +370,7 @@ impl JsonStreamMonitor {
         if let Self::Full(_, plan, _) = self {
             // Default is ALL, so start from nothing and turn on what the
             // client listed.
-            let mut mask = data::cpu::RecordingMask {
-                cpu: false,
-                mem: false,
-                io: false,
-                net: false,
-                gpu: false,
-                npu: false,
-            };
+            let mut mask = data::cpu::RecordingMask::NONE;
             for name in subsystems.split(',') {
                 match name.trim() {
                     "cpu" => mask.cpu = true,
@@ -386,6 +379,7 @@ impl JsonStreamMonitor {
                     "net" => mask.net = true,
                     "gpu" => mask.gpu = true,
                     "npu" => mask.npu = true,
+                    "temp" => mask.temp = true,
                     _ => {}
                 }
             }
@@ -500,7 +494,14 @@ mod tests {
         monitor.apply_control("mask cpu,net");
         let mask = plan_of(&monitor).recording_mask;
         assert!(mask.cpu && mask.net);
-        assert!(!mask.mem && !mask.io && !mask.gpu && !mask.npu);
+        assert!(!mask.mem && !mask.io && !mask.gpu && !mask.npu && !mask.temp);
+
+        // Every flag the mask carries needs a name the client can send, or the
+        // picker can tick something the stream has no way to hear about.
+        monitor.apply_control("mask temp");
+        let thermal_only = plan_of(&monitor).recording_mask;
+        assert!(thermal_only.temp);
+        assert_eq!(thermal_only.count(), 1);
     }
 
     #[test]
