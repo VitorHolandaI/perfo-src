@@ -38,9 +38,16 @@ readers.
 - **`nvidia.rs`** — NVML through `dlopen`: the full set, including
   per-process GPU utilisation. Only reachable from a dynamically linked
   build, so in the published binary it is the path that is never taken.
-- **`nvidia_smi.rs`** — the same metrics from the `nvidia-smi` that ships with
+- **`nvidia_smi/`** — the same metrics from the `nvidia-smi` that ships with
   every driver, as a child process that the refresh loop never waits on.
   This is what the released musl build actually uses, because a statically
   linked musl program has no dynamic loader and its `dlopen` always returns
   NULL. `gpu/monitor.rs` tries `nvidia.rs` first and falls through to here.
+  - `mod.rs` holds the process lifetime: one sample in flight at a time, each
+    bounded by a deadline. Both bounds exist because the driver is the thing
+    that wedges, and an unbounded wait here blocked the collector's first
+    snapshot, which blanked the whole widget rather than only the GPU.
+  - `rows.rs` parses the CSV. Split out because reading a driver's answer and
+    managing the process that asks for it fail in different ways and are
+    tested differently: `rows.rs` needs only strings.
 - **`npu.rs`** — Intel NPU utilisation from the accel sysfs tree.
