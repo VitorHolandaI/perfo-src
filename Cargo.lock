@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "perfo"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "crossterm",
  "libc",
