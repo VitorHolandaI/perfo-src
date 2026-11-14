@@ -5,6 +5,7 @@
 //! [`run`]. The TUI, data collectors (CPU/memory/disk/network), and the
 //! ptrace tracer live here.
 
+mod bounded_child;
 pub mod data;
 pub mod recordings;
 mod stream;

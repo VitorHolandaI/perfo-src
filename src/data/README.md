@@ -44,7 +44,7 @@ readers.
   linked musl program has no dynamic loader and its `dlopen` always returns
   NULL. `gpu/monitor.rs` tries `nvidia.rs` first and falls through to here.
   - `mod.rs` holds the process lifetime: one sample in flight at a time, each
-    bounded by a deadline. Both bounds exist because the driver is the thing
+    bounded by a deadline from `../bounded_child.rs`. Both bounds exist because the driver is the thing
     that wedges, and an unbounded wait here blocked the collector's first
     snapshot, which blanked the whole widget rather than only the GPU.
   - `rows.rs` parses the CSV. Split out because reading a driver's answer and
