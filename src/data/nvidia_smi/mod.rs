@@ -17,6 +17,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::gpu::{GpuInfo, GpuProcessInfo};
+use crate::bounded_child::wait_bounded;
 
 /// How often a new sample is started. The driver powers the card down
 /// between queries, which `nvidia-smi -l` would prevent, so this spawns a
@@ -197,26 +198,6 @@ fn abandon(pending: &mut PendingSample) {
     }
 }
 
-/// Waits for a child for at most `budget`, then kills and reaps it. `None`
-/// means it did not finish in time, which is the only honest answer about a
-/// query that may never return.
-fn wait_bounded(child: &mut Child, budget: Duration) -> Option<std::process::ExitStatus> {
-    let deadline = Instant::now() + budget;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Some(status),
-            Err(_) => return None,
-            Ok(None) => {}
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn spawn_query(query: &str) -> Option<Child> {
     Command::new("nvidia-smi")
         .args([query, &format!("--format={CSV_FORMAT}")])
@@ -243,40 +224,6 @@ fn read_stdout(child: &mut Child) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A child that never answers must not hold the thread. `discover` used
-    /// `Command::output()`, which has no deadline, so a wedged driver kept
-    /// `GpuMonitor::new` from returning and the collector never reached its
-    /// first snapshot.
-    #[test]
-    fn a_child_that_never_exits_is_killed_at_the_budget() {
-        let mut child = Command::new("sleep")
-            .arg("60")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("sleep is not available");
-        let started = Instant::now();
-        let status = wait_bounded(&mut child, Duration::from_millis(150));
-        assert!(status.is_none(), "a sleeping child must not report an exit");
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "waited {:?}, so the budget was not honoured",
-            started.elapsed()
-        );
-        // Reaped, not left as a zombie.
-        assert!(matches!(child.try_wait(), Ok(Some(_))));
-    }
-
-    #[test]
-    fn a_child_that_finishes_reports_its_status() {
-        let mut child = Command::new("true")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("true is not available");
-        assert!(wait_bounded(&mut child, Duration::from_secs(5)).is_some_and(|s| s.success()));
-    }
 
     /// The pending slot is single, so a stalled query that keeps it stops every
     /// later sample and freezes the series for the life of the process.

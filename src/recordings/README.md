@@ -70,7 +70,9 @@ freshness checks.
 
 `export.rs` — `record export`-style reports written to the user's home from a
 JSON payload on stdin. Independent of the store: it never touches the
-recordings directory.
+recordings directory. Ends by telling the desktop through `notify-send`, which
+goes through `../bounded_child.rs`: spawning it without waiting left one zombie
+per export, since nothing collected the exit status.
 
 ## Flow
 

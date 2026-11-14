@@ -4,8 +4,37 @@ use serde_json::Value;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use super::paths::get_home_dir;
+use crate::bounded_child::wait_bounded;
+
+/// How long the desktop notification may take. It is a courtesy, so the export
+/// never waits long for it; a host with no notification daemon fails fast.
+const NOTIFY_BUDGET: Duration = Duration::from_secs(2);
+
+/// Tells the desktop the export finished, and reaps the helper.
+///
+/// Spawning without waiting left a zombie for the life of the process, one per
+/// export, because nothing ever collected the exit status. The program is a
+/// parameter so a test can hand it one that exits.
+fn announce(program: &str, basename: &str) -> bool {
+    let Ok(mut child) = Command::new(program)
+        .args([
+            "-a",
+            "Perfo",
+            "History Exported",
+            &format!("Saved: ~/{basename}.{{txt,json}}"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    wait_bounded(&mut child, NOTIFY_BUDGET).is_some_and(|status| status.success())
+}
 
 // qual:allow(test_quality, untested) reason: "consumes the process's real stdin; the payload shape is covered by the store tests"
 pub fn export_from_stdin(basename: &str) -> io::Result<(String, String)> {
@@ -50,17 +79,42 @@ pub fn export_from_stdin(basename: &str) -> io::Result<(String, String)> {
         fs::write(&json_path, json_str)?;
     }
 
-    let _ = std::process::Command::new("notify-send")
-        .args([
-            "-a",
-            "Perfo",
-            "History Exported",
-            &format!("Saved: ~/{}.{{txt,json}}", basename),
-        ])
-        .spawn();
+    announce("notify-send", basename);
 
     Ok((
         txt_path.to_string_lossy().to_string(),
         json_path.to_string_lossy().to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The notification used to be spawned and never waited on, which left a
+    /// zombie for the life of the process, one per export.
+    #[test]
+    fn the_notification_helper_is_reaped() {
+        assert!(
+            announce("true", "report"),
+            "a helper that exits 0 succeeded"
+        );
+    }
+
+    /// A host with no notification daemon has no `notify-send`, and an export
+    /// is not a failure because nobody could be told about it.
+    #[test]
+    fn an_absent_notifier_is_not_an_error() {
+        assert!(!announce("perfo-no-such-notifier", "report"));
+    }
+
+    /// The budget itself is covered by `bounded_child`, with a child that
+    /// really does hang. It cannot be exercised from here: `announce` sends
+    /// fixed arguments, and a program that ignores them and still sleeps is not
+    /// available, so a test using `sleep` would pass because `sleep` rejects
+    /// `-a` rather than because any deadline was honoured.
+    #[test]
+    fn a_notifier_that_fails_is_not_reported_as_sent() {
+        assert!(!announce("false", "report"));
+    }
 }

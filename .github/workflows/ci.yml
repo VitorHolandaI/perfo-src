@@ -38,6 +38,13 @@ jobs:
           jq -e '.schemaVersion == 1 and .id == "vitor.perfo" and .entryPoints.barWidget == "BarWidget.qml"' manifest.json
           test -f BarWidget.qml
           test -f Panel.qml
+      - name: Third-party notices are current
+        run: |
+          # The notices travel inside a statically linked binary, so a
+          # dependency change that nobody regenerated ships an incomplete
+          # attribution. Cheap to check, invisible when it rots.
+          python3 scripts/third_party_notices.py --check
+
       - name: QML syntax
         run: |
           # Lint against the Qt that Omarchy actually ships, not the one the

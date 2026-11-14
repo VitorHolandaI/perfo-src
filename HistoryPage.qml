@@ -233,6 +233,30 @@ Column {
     }
   }
 
+  // A helper answers in one shot and its buffer is cleared before each run, so
+  // this is a ceiling on ONE answer, not a ring over a stream. The honest
+  // worst case is `record timeline` on a long recording: 733 KB for two hours,
+  // growing linearly. 32 MiB is far above any real answer and still bounds a
+  // binary that is the wrong version, corrupt, or answering something else.
+  readonly property int maxHelperAnswerBytes: 32 * 1024 * 1024
+
+  /// Appends to a helper's buffer, or reports the overrun once. Returns the
+  /// buffer to keep, so the caller stops growing it after the ceiling.
+  function appendBounded(buffer, line, label) {
+    if (buffer.length >= historyPage.maxHelperAnswerBytes) {
+      return buffer
+    }
+    var next = buffer + line
+    if (next.length >= historyPage.maxHelperAnswerBytes) {
+      console.warn("perfo: " + label + " answer passed "
+                   + historyPage.maxHelperAnswerBytes + " bytes; discarding it")
+      historyPage.sessionNotification = "Reply from perfo was too large"
+      sessionNotificationTimer.restart()
+      return ""
+    }
+    return next
+  }
+
   Process {
     id: loadTimelineProc
     property string pendingRecPath: ""
@@ -242,7 +266,8 @@ Column {
     property string outputBuffer: ""
     stdout: SplitParser {
       onRead: function(line) {
-        loadTimelineProc.outputBuffer += line
+        loadTimelineProc.outputBuffer =
+          historyPage.appendBounded(loadTimelineProc.outputBuffer, line, "record timeline")
       }
     }
     onExited: function(exitCode, exitStatus) {
@@ -268,7 +293,8 @@ Column {
     property string outputBuffer: ""
     stdout: SplitParser {
       onRead: function(line) {
-        inspectProc.outputBuffer += line
+        inspectProc.outputBuffer =
+          historyPage.appendBounded(inspectProc.outputBuffer, line, "record inspect")
       }
     }
     onExited: function(exitCode, exitStatus) {
@@ -2492,6 +2518,17 @@ Column {
     }
     saveSessionData(buf, buf.length)
   }
+
+
+  // One deadline per helper. `ProcessDeadline` arms itself from the process it
+  // watches, so adding a helper without a deadline is visible here rather than
+  // only when one wedges in the field.
+  ProcessDeadline { process: listRecordingsProc; label: "record list"; budgetMs: 10000 }
+  ProcessDeadline { process: loadTimelineProc; label: "record timeline"; budgetMs: 60000 }
+  ProcessDeadline { process: inspectProc; label: "record inspect"; budgetMs: 15000 }
+  ProcessDeadline { process: saveRecordingProc; label: "recording save"; budgetMs: 60000 }
+  ProcessDeadline { process: deleteRecordingProc; label: "record delete"; budgetMs: 10000 }
+  ProcessDeadline { process: exportProc; label: "export"; budgetMs: 30000 }
 
   function fetchProcessWindow(idx) {
     if (!loadedSessionPath || loadedSessionPath.length === 0) return

@@ -24,6 +24,12 @@ over a pipe. They share the collectors in `data/` and the recording format in
   stdin closing when a client was holding it, and a write failing because
   nobody reads the other end. `tests/stream_lifetime.rs` drives the real binary
   for those, because the bug they cover was in how the process ends.
+- `bounded_child.rs` — waiting for a child process with a budget, then killing
+  and reaping it. Shared because two unrelated places spawn a short-lived
+  helper that must not hold the caller: the `nvidia-smi` sampler in
+  `data/nvidia_smi/`, where a wedged driver kept the collector from its first
+  snapshot, and `tui/clipboard.rs`, which runs on a keypress. Both used a bare
+  `wait()`, which has no deadline at all.
 - `theme.rs` — reads the Omarchy theme so the TUI matches the desktop. Returns
   `None` when there is no theme to read, and every caller falls back to its own
   default rather than failing.
