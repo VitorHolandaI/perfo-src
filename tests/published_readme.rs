@@ -11,6 +11,37 @@ use std::path::Path;
 const RELEASE_WORKFLOW: &str = ".github/workflows/release.yml";
 const PUBLISHED_README: &str = "dist/README.md";
 
+/// Every path the bundle manifest records a digest for.
+///
+/// `release.yml` keeps that list by hand, separately from the `cp` allowlist,
+/// so the two drift: `ProcessDeadline.qml` and `THIRD_PARTY_NOTICES.md` were
+/// published with no digest until this test existed. The reviewer's evidence
+/// chain is "bundle.json lists a matching SHA-256 for each published file", so
+/// a gap there is a gap in the release's own provenance.
+fn bundled_paths(repo: &Path) -> HashSet<String> {
+    let workflow = std::fs::read_to_string(repo.join(RELEASE_WORKFLOW))
+        .unwrap_or_else(|e| panic!("cannot read {RELEASE_WORKFLOW}: {e}"));
+    let start = workflow
+        .find("tracked = [")
+        .unwrap_or_else(|| panic!("no `tracked = [` list in {RELEASE_WORKFLOW}"));
+    let end = workflow[start..]
+        .find(']')
+        .unwrap_or_else(|| panic!("unterminated `tracked` list in {RELEASE_WORKFLOW}"));
+
+    let mut bundled = HashSet::new();
+    for line in workflow[start..start + end].lines().skip(1) {
+        let Some(open_quote) = line.find('\'') else {
+            continue;
+        };
+        let rest = &line[open_quote + 1..];
+        let Some(close_quote) = rest.find('\'') else {
+            continue;
+        };
+        bundled.insert(rest[..close_quote].to_string());
+    }
+    bundled
+}
+
 /// Every path the release workflow copies into the distribution repository.
 ///
 /// Reads the two `cp` lines instead of hardcoding their arguments: the whole
@@ -130,4 +161,32 @@ fn published_readme_documents_the_marketplace_install_command() {
             "{PUBLISHED_README} still documents a manual install step: {manual:?}"
         );
     }
+}
+
+/// The published set and the digest set have to be the same set. They are kept
+/// in two places in one workflow, and nothing else notices when one moves.
+#[test]
+fn every_published_file_gets_a_digest_in_the_bundle() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut published = published_paths(repo);
+    let mut bundled = bundled_paths(repo);
+
+    // The binary is copied on its own line and recorded separately.
+    published.remove("bin/perfo");
+    bundled.remove("bin/perfo");
+    // bundle.json cannot carry its own digest: it is written after the others
+    // are hashed, and hashing it would change it.
+    published.remove("bundle.json");
+
+    let undigested: Vec<_> = published.difference(&bundled).cloned().collect();
+    assert!(
+        undigested.is_empty(),
+        "published with no bundle.json digest: {undigested:?}"
+    );
+
+    let unpublished: Vec<_> = bundled.difference(&published).cloned().collect();
+    assert!(
+        unpublished.is_empty(),
+        "bundle.json records a digest for files that are not published: {unpublished:?}"
+    );
 }
