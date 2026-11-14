@@ -29,7 +29,9 @@ over a pipe. They share the collectors in `data/` and the recording format in
   helper that must not hold the caller: the `nvidia-smi` sampler in
   `data/nvidia_smi/`, where a wedged driver kept the collector from its first
   snapshot, and `tui/clipboard.rs`, which runs on a keypress. Both used a bare
-  `wait()`, which has no deadline at all.
+  `wait()`, which has no deadline at all. The clipboard also writes its payload
+  from its own thread, because a helper that stops reading turns a write past
+  the pipe capacity into a block that the budget could never reach.
 - `theme.rs` — reads the Omarchy theme so the TUI matches the desktop. Returns
   `None` when there is no theme to read, and every caller falls back to its own
   default rather than failing.

@@ -65,9 +65,21 @@ fn offer_to_helper(program: &str, args: &[&str], text: &str, budget: Duration) -
         return false;
     };
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(text.as_bytes());
-        // Dropped here on purpose: the helper reads to end of input, so it
-        // cannot exit while this pipe is open.
+        // The helper may never read: a wl-copy wedged on the compositor does
+        // not, and a payload past the pipe capacity would block here before
+        // the budget below is armed. Writing from its own thread keeps the
+        // budget in charge.
+        let payload = text.as_bytes().to_vec();
+        let write = std::thread::spawn(move || {
+            let _ = stdin.write_all(&payload);
+            // Dropped here on purpose: the helper reads to end of input, so it
+            // cannot exit while this pipe is open.
+        });
+        let status = wait_bounded(&mut child, budget);
+        // Killing the child at the deadline closes the read end, so a blocked
+        // write fails with EPIPE instead of holding the keypress.
+        let _ = write.join();
+        return status.is_some_and(|status| status.success());
     }
     wait_bounded(&mut child, budget).is_some_and(|status| status.success())
 }
@@ -133,6 +145,28 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "took {:?}, so the budget was not honoured",
+            started.elapsed()
+        );
+    }
+
+    /// A helper that never reads its stdin used to block the caller inside
+    /// `write_all` once the payload passed the pipe capacity, and the budget
+    /// was armed only after that write returned. A wedged compositor client
+    /// does exactly that, so the write has to be bounded too.
+    #[test]
+    fn a_helper_that_never_reads_does_not_hold_a_large_payload() {
+        let payload = "x".repeat(1024 * 1024);
+        let started = Instant::now();
+
+        let took_it = offer_to_helper("sleep", &["5"], &payload, Duration::from_secs(1));
+
+        assert!(
+            !took_it,
+            "a helper that timed out did not take the selection"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "took {:?}, so the 1 s budget did not bound the write",
             started.elapsed()
         );
     }
